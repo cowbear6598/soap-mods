@@ -1,0 +1,11 @@
+{
+  "name": "soap-mods",
+  "owner": { "name": "CptSoap" },
+  "plugins": [
+    {
+      "name": "soap-mods",
+      "source": "./",
+      "description": "CptSoap 的 Claude Code mods（目前包含 Soap Panel）"
+    }
+  ]
+}
