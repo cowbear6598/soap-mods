@@ -1,9 +1,10 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, RenderChildren } from 'claude-code'
+import type { EngineInterface, ProcessRunResult, Register, RenderChildren } from 'claude-code'
 
-import type { GitBranch, GitSubTab, GitView, TabId } from '../types'
+import type { GitBranch, GitSubTab, GitView, ScanResult, Service, ServiceAction, ServicesView, TabId } from '../types'
 import type { FileEntry, FileGroupId, FileKind } from './git'
 import { BRANCH_FORMAT, fileKind, groupFiles, parseBranches, parseStatus, splitPath, toHunks } from './git'
+import { LAUNCH_ARGV, SCAN_ARGV, findServices } from './services'
 
 // ───── 想改面板標題或分頁，改這一區 ─────
 const PANE = 'soap-panel'
@@ -34,6 +35,10 @@ const ICONS = {
     '<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
   conflict:
     '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+  services:
+    '<rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/>',
+  restart: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
+  stop: '<rect width="14" height="14" x="5" y="5" rx="2"/>',
 }
 type IconName = keyof typeof ICONS
 
@@ -64,14 +69,17 @@ function stretchedSvg(heightPx: number, bars: { width: number; fill: string }[])
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${DIVIDER_PX}" height="${heightPx}" viewBox="0 0 100 1" preserveAspectRatio="none">${rects}</svg>`
 }
 
-function iconSvg(name: IconName, isActive: boolean) {
-  const color = isActive ? '#ffffff' : MUTED
+function iconSvg(name: IconName, isActive: boolean, tint?: string) {
+  const color = tint ?? (isActive ? '#ffffff' : MUTED)
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${ICON_PX}" height="${ICON_PX}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`
 }
 
 // 上層 Tab。之後要加新的 Tab，在這裡加一筆，再到畫面區塊補上它的內容。
-const TABS: { id: TabId; label: string; icon: IconName }[] = [{ id: 'git', label: 'Git', icon: 'git' }]
+const TABS: { id: TabId; label: string; icon: IconName }[] = [
+  { id: 'git', label: 'Git', icon: 'git' },
+  { id: 'services', label: 'Services', icon: 'services' },
+]
 
 // Git Tab 的子分頁。
 const SUB_TABS: { id: GitSubTab; label: string; icon: IconName }[] = [
@@ -94,6 +102,12 @@ const USAGE_TICK_MS = 60_000
 // bar 的高度（桌面版，px）；終端機的文字 bar 有幾格。
 const USAGE_BAR_PX = 4
 const USAGE_BAR_CELLS = 10
+// Services 分頁開著時多久重新掃一次程序（掃一次大約 1 秒）。
+const SERVICES_SCAN_MS = 5_000
+// 重跑：停掉之後等多久再開（讓 port 放出來）；開完之後在這些時間點檢查新程序還在不在（同時重掃，
+// 服務要一點時間才會 LISTEN）。這段時間內掛掉就算重跑失敗，在面板上提示。
+const RESTART_GAP_MS = 500
+const RESTART_CHECK_MS = [2_000, 5_000, 15_000, 30_000]
 // ───── 以下是運作邏輯 ─────
 
 const EMPTY: GitView = {
@@ -112,6 +126,8 @@ const tab = atom({ plugin: 'soap-mods', key: 'tab' } as const, 'git')
 const subTab = atom({ plugin: 'soap-mods', key: 'subTab' } as const, 'diff')
 const view = atom({ plugin: 'soap-mods', key: 'view' } as const, EMPTY)
 const showRemote = atom({ plugin: 'soap-mods', key: 'showRemote' } as const, false)
+const EMPTY_SERVICES: ServicesView = { isLoaded: false, items: [], error: '', actionError: '', pending: [] }
+const services = atom({ plugin: 'soap-mods', key: 'services' } as const, EMPTY_SERVICES)
 
 function usageLevel(remaining: number) {
   return remaining > 50 ? USAGE_GOOD : remaining > 20 ? USAGE_WARN : USAGE_LOW
@@ -131,6 +147,8 @@ function formatResetIn(resetsAt: string | undefined, now: number) {
 
   return `${m}m`
 }
+
+const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
 async function git($: EngineInterface, args: string[]) {
   return $.process.run(['git', '-c', 'core.quotepath=false', ...args])
@@ -168,7 +186,7 @@ async function readDiff($: EngineInterface, files: GitView['files'], path: strin
       }
     }
   } catch (err) {
-    error = `Failed to read diff: ${err instanceof Error ? err.message : String(err)}`
+    error = `Failed to read diff: ${errorText(err)}`
   }
 
   const { source, isTruncated } = toHunks(out)
@@ -294,6 +312,128 @@ async function switchBranch($: EngineInterface, name: string, isRemote: boolean)
   refocusUntil = (await $.clock.now()) + REFOCUS_AFTER_SWITCH_MS
 }
 
+// ───── Services 分頁 ─────
+
+async function setServices($: EngineInterface, patch: Partial<ServicesView>) {
+  await update($, services, v => ({ ...v, ...patch }))
+}
+
+// 指令失敗時的錯誤：stderr、stdout，都沒有就說它的結束碼。
+const failure = (r: ProcessRunResult, what: string) =>
+  new Error(r.stderr.trim() || r.stdout.trim() || `${what} exited with ${r.exitCode}`)
+
+// 掃一次：這個資料夾的服務，和目前所有活著的 PID（重跑後的檢查用）。
+async function scan($: EngineInterface) {
+  const [r, cwd] = await Promise.all([$.process.run(SCAN_ARGV), $.session.cwd()])
+  if (r.exitCode !== 0) throw failure(r, 'Process scan')
+  const result = JSON.parse(r.stdout) as ScanResult
+
+  return { items: findServices(result, cwd), alive: new Set(result.pids) }
+}
+
+// 同一時間只掃一次；掃到一半又被叫，掃完再補掃一次，畫面才不會停在舊的。
+let isScanning = false
+let isRescanWanted = false
+
+async function refreshServices($: EngineInterface) {
+  if (isScanning) {
+    isRescanWanted = true
+
+    return
+  }
+  isScanning = true
+  try {
+    do {
+      isRescanWanted = false
+      try {
+        await setServices($, { isLoaded: true, items: (await scan($)).items, error: '' })
+      } catch (err) {
+        const isMissing = /ENOENT|not found|cannot start/i.test(errorText(err))
+        await setServices($, {
+          isLoaded: true,
+          error: isMissing ? 'Services needs Windows PowerShell (Windows only for now).' : `Scan failed: ${errorText(err)}`,
+        })
+      }
+    } while (isRescanWanted)
+  } finally {
+    isScanning = false
+  }
+}
+
+async function setPending($: EngineInterface, pid: number, action: ServiceAction | undefined) {
+  await update($, services, v => ({
+    ...v,
+    pending: [...v.pending.filter(p => p.pid !== pid), ...(action === undefined ? [] : [{ pid, action }])],
+  }))
+}
+
+// 停掉／重跑一個服務。動手前重新掃一次，確認還是同一個程序（PID 沒有被別人拿去用），才砍整棵程序樹。
+async function runServiceAction($: EngineInterface, target: Service, action: ServiceAction) {
+  if ((await read($, services)).pending.some(p => p.pid === target.pid)) return
+  await setPending($, target.pid, action)
+  await setServices($, { actionError: '' })
+  try {
+    const current = (await scan($)).items.find(s => s.pid === target.pid && s.startedAt === target.startedAt)
+    if (current === undefined) throw new Error(`${target.tool} · ${target.name} already exited.`)
+    if (action === 'restart' && current.command === '') throw new Error(`Cannot read the command line of ${current.tool} · ${current.name}.`)
+
+    const kill = await $.process.run(['taskkill', '/PID', String(current.pid), '/T', '/F'])
+    if (kill.exitCode !== 0) throw failure(kill, 'taskkill')
+
+    if (action === 'restart') {
+      await $.clock.sleep(RESTART_GAP_MS)
+      const launch = await $.process.run(LAUNCH_ARGV, { env: { SOAP_CMD: current.command, SOAP_DIR: current.dir } })
+      if (launch.exitCode !== 0) throw failure(launch, 'Restart')
+      watchRestart($, `${current.tool} · ${current.name}`, Number(launch.stdout.trim()))
+      $.ui.toast(`Restarted ${current.tool} · ${current.name}`)
+    } else {
+      $.ui.toast(`Stopped ${current.tool} · ${current.name}`)
+    }
+  } catch (err) {
+    await setServices($, { actionError: `${action === 'stop' ? 'Stop' : 'Restart'} failed: ${errorText(err)}` })
+  } finally {
+    await setPending($, target.pid, undefined)
+  }
+  await refreshServices($)
+}
+
+// 重跑後的檢查：每個時間點重掃一次（順便更新清單），新程序已經不在了就算重跑失敗，在面板上提示
+// （沒存 log，原因要自己跑一次看）。
+function watchRestart($: EngineInterface, name: string, pid: number) {
+  let isDone = false
+  for (const ms of RESTART_CHECK_MS) {
+    $.clock.after(ms, async () => {
+      if (isDone) return
+      try {
+        const { items, alive } = await scan($)
+        isDone = !alive.has(pid)
+        await setServices($, {
+          isLoaded: true,
+          items,
+          error: '',
+          ...(isDone ? { actionError: `Restart failed: ${name} exited right after starting. Run its command yourself to see why.` } : {}),
+        })
+      } catch {
+        // 掃不了就算了，下一個時間點再看。
+      }
+    })
+  }
+}
+
+// Services 分頁看得到時才定時掃，看不到就不花那一秒。
+async function scanWhenShown($: EngineInterface) {
+  if ((await read($, tab)) !== 'services') return
+  const pane = (await $.ui.panes()).find(p => p.id === PANE)
+  if (pane?.isShown !== true) return
+  await refreshServices($)
+}
+
+async function selectTab($: EngineInterface, id: TabId) {
+  await Promise.all([update($, tab, () => id), clearBranchError($)])
+  // 掃描要一秒左右，不等它：先切過去畫「掃描中」或舊清單。
+  if (id === 'services') void refreshServices($).catch(() => undefined)
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
@@ -306,6 +446,7 @@ export const register: Register = on => {
     $.clock.every(FOCUS_WATCH_MS, () => void focusWhenShown($))
     // 用量直接跟引擎拿（不花錢），這裡只負責讓重置倒數每分鐘重畫一次。
     $.clock.every(USAGE_TICK_MS, () => $.ui.invalidate('ui.render'))
+    $.clock.every(SERVICES_SCAN_MS, () => void scanWhenShown($).catch(() => undefined))
 
     return next(e)
   })
@@ -354,11 +495,12 @@ export const register: Register = on => {
     // 終端機沒有 Svg，那邊退回文字按鈕。
     const Svg = 'Svg' in ui ? ui.Svg : undefined
     const isTerminal = e.surface === 'terminal'
-    const [activeTab, activeSub, v, isRemoteOpen, usage, now] = await Promise.all([
+    const [activeTab, activeSub, v, isRemoteOpen, sv, usage, now] = await Promise.all([
       read($, tab),
       read($, subTab),
       read($, view),
       read($, showRemote),
+      read($, services),
       // 讀不到用量就當作還沒有讀數，不要讓整個面板畫不出來。
       $.session.usage().catch(() => undefined),
       $.clock.now(),
@@ -369,14 +511,25 @@ export const register: Register = on => {
     // 1. 墊底的 Button 撐出外框大小，選中的底色畫在外框上；它被蓋住，點不到；
     // 2. Svg 那層鋪滿外框、置中；
     // 3. 最上層是一模一樣的 Button，剛好蓋滿外框，接點擊，hover 的亮底也就是外框大小。
-    const iconButton = (key: string, icon: IconName, label: string, isActive: boolean, onPress: () => void) =>
+    // tint：圖示固定用這個顏色（停止鈕的紅色）；終端機沒有 Svg，就在按鈕前面放一個同色的方塊。
+    const iconButton = (
+      key: string,
+      icon: IconName,
+      label: string,
+      isActive: boolean,
+      onPress: () => void,
+      tint?: { theme: string; hex: string },
+    ) =>
       Svg === undefined ? (
-        <Button key={key} label={label} variant={isActive ? 'primary' : 'secondary'} onPress={onPress} />
+        <Box key={`${key}:box`}>
+          {tint !== undefined && <Text color={tint.theme}>■</Text>}
+          <Button key={key} label={label} variant={isActive ? 'primary' : 'secondary'} onPress={onPress} />
+        </Box>
       ) : (
         <Box key={`${key}:box`} position="relative" backgroundColor={isActive ? ACTIVE_BG : undefined}>
           <Button key={`${key}:spacer`} label={ICON_BUTTON_LABEL} plain onPress={onPress} />
           <Box position="absolute" top={0} left={0} right={0} bottom={0} justifyContent="center" alignItems="center">
-            <Svg source={iconSvg(icon, isActive)} alt={label} width={ICON_PX} height={ICON_PX} />
+            <Svg source={iconSvg(icon, isActive, tint?.hex)} alt={label} width={ICON_PX} height={ICON_PX} />
           </Box>
           <Box position="absolute" top={0} left={0}>
             <Button key={key} label={ICON_BUTTON_LABEL} plain onPress={onPress} />
@@ -460,10 +613,56 @@ export const register: Register = on => {
         stretched(DIVIDER_SVG, 'Divider', 1)
       )
 
-    const error = v.error === '' ? null : <Text color="error">{v.error}</Text>
+    const error = activeTab === 'git' && v.error !== '' ? <Text color="error">{v.error}</Text> : null
 
     let body
-    if (!v.isLoaded) {
+    if (activeTab === 'services') {
+      // 一個服務一行：● 工具 · 專案名 · port，右邊重跑、停止（紅色）。
+      const serviceRow = (s: Service) => {
+        const pending = sv.pending.find(p => p.pid === s.pid)
+        const dot = <Text dimColor>{' · '}</Text>
+
+        return (
+          <Box key={`svc:${s.pid}`} gap={1} alignItems="center">
+            <Text color={pending === undefined ? 'success' : 'warning'}>●</Text>
+            <Box flexGrow={1} flexShrink={1} overflow="hidden">
+              <Text>{s.tool}</Text>
+              {dot}
+              <Text bold wrap="truncate-end">
+                {s.name}
+              </Text>
+              {s.ports.length > 0 && dot}
+              {s.ports.length > 0 && <Text color="suggestion">{s.ports.map(p => `:${p}`).join(' ')}</Text>}
+            </Box>
+            {pending === undefined ? (
+              <Box flexShrink={0}>
+                {iconButton(`svc:restart:${s.pid}`, 'restart', 'Restart', false, () => void runServiceAction($, s, 'restart'))}
+                {iconButton(`svc:stop:${s.pid}`, 'stop', 'Stop', false, () => void runServiceAction($, s, 'stop'), USAGE_LOW)}
+              </Box>
+            ) : (
+              <Text dimColor>{pending.action === 'stop' ? 'Stopping…' : 'Restarting…'}</Text>
+            )}
+          </Box>
+        )
+      }
+
+      body = (
+        <Box flexDirection="column" gap={1}>
+          {sv.error !== '' && <Text color="error">{sv.error}</Text>}
+          {sv.actionError !== '' && <Text color="error">{sv.actionError}</Text>}
+          {!sv.isLoaded ? (
+            <Text dimColor>Scanning…</Text>
+          ) : sv.items.length === 0 ? (
+            <Text dimColor>No services running in this folder.</Text>
+          ) : (
+            <Box flexDirection="column" gap={1}>
+              <Text bold dimColor>{`Running · ${sv.items.length}`}</Text>
+              {sv.items.map(serviceRow)}
+            </Box>
+          )}
+        </Box>
+      )
+    } else if (!v.isLoaded) {
       body = <Text dimColor>Loading…</Text>
     } else if (!v.isRepo) {
       body = <Text dimColor>This folder is not a git repo.</Text>
@@ -603,10 +802,11 @@ export const register: Register = on => {
       <Box flexDirection="column" minHeight={e.props.scroll.bodyRows}>
         <Box flexDirection="column" gap={1} flexGrow={1}>
           <Box flexDirection="column">
-            {iconBar('tab', TABS, activeTab, id => void Promise.all([update($, tab, () => id), clearBranchError($)]))}
+            {iconBar('tab', TABS, activeTab, id => void selectTab($, id))}
             {divider}
-            {iconBar('sub', SUB_TABS, activeSub, id => void Promise.all([update($, subTab, () => id), clearBranchError($)]))}
-            {divider}
+            {activeTab === 'git' &&
+              iconBar('sub', SUB_TABS, activeSub, id => void Promise.all([update($, subTab, () => id), clearBranchError($)]))}
+            {activeTab === 'git' && divider}
           </Box>
           {error}
           {body}
