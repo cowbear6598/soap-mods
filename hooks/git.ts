@@ -139,9 +139,9 @@ export function splitPath(path: string): { name: string; dir: string } {
   return slash === -1 ? { name: path, dir: '' } : { name: path.slice(slash + 1), dir: path.slice(0, slash) }
 }
 
-/** git's `[ahead 1, behind 2]` → `↑1 ↓2`; `[gone]` → `上游已刪除`; '' stays ''. */
+/** git's `[ahead 1, behind 2]` → `↑1 ↓2`; `[gone]` → `upstream gone`; '' stays ''. */
 export function formatTrack(track: string): string {
-  if (track === '[gone]') return '上游已刪除'
+  if (track === '[gone]') return 'upstream gone'
   const ahead = /ahead (\d+)/.exec(track)
   const behind = /behind (\d+)/.exec(track)
 

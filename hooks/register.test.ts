@@ -68,6 +68,8 @@ const ok = (stdout: string) => ({
   },
 })
 
+const SWITCH_FAILED = "fatal: a branch named 'main' already exists"
+
 test('the pane lists changes, shows a diff and the branches, and switches sub tabs', async ($, on) => {
   const diffOpens: string[] = []
   on('ui.open', (_$, e) => {
@@ -80,6 +82,7 @@ test('the pane lists changes, shows a diff and the branches, and switches sub ta
   on('clock.now', () => ({ value: 0 }))
   on('process.run', (_$, e) => {
     const cmd = e.argv.slice(3)
+    if (cmd[0] === 'switch') return { value: { ...ok('').value, exitCode: 128, stderr: SWITCH_FAILED } }
     if (cmd[0] === 'status') return ok('## main...origin/main [ahead 1]\0 M a.ts\0')
     if (cmd[0] === 'diff') return ok('diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-a\n+b\n')
     if (cmd[0] === 'for-each-ref') {
@@ -138,15 +141,24 @@ test('the pane lists changes, shows a diff and the branches, and switches sub ta
   expect(diffOpens).toEqual(['a.ts', 'a.ts'])
 
   await ui.press({ key: 'sub:branch' })
-  expect(await ui.find({ type: 'Text', text: /● main/ })).toBeDefined()
+  // 目前分支也算在 Local 裡，跟其他分支一樣是一列按鈕（點了不會被換掉，面板才不會丟焦點）。
+  expect(await ui.find({ type: 'Text', text: 'Local · 2' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '●' })).toBeDefined()
+  expect(await ui.find({ key: 'switch:l:main' })).toBeDefined()
   expect(await ui.find({ key: 'switch:l:dev' })).toBeDefined()
   // 遠端分支預設收起，按一下才展開。
   expect(await ui.find({ key: 'switch:r:origin/main' })).toBeUndefined()
   await ui.press({ key: 'remote:toggle' })
   expect(await ui.find({ key: 'switch:r:origin/main' })).toBeDefined()
+  // 切換失敗的訊息顯示在 branch 頁，換分頁就清掉。
+  await ui.press({ key: 'switch:r:origin/main' })
+  expect(await ui.find({ type: 'Text', text: SWITCH_FAILED })).toBeDefined()
+  await ui.press({ key: 'sub:diff' })
+  await ui.press({ key: 'sub:branch' })
+  expect(await ui.find({ type: 'Text', text: SWITCH_FAILED })).toBeUndefined()
 
   await ui.press({ key: 'sub:conflict' })
-  expect(await ui.find({ type: 'Text', text: /conflict 還沒做/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Conflict view is not implemented/ })).toBeDefined()
   await ui.unmount()
 })
 
@@ -206,6 +218,6 @@ test('splitPath and formatTrack', () => {
   expect(splitPath('README.md')).toEqual({ name: 'README.md', dir: '' })
   expect(formatTrack('[ahead 1, behind 2]')).toBe('↑1 ↓2')
   expect(formatTrack('[behind 3]')).toBe('↓3')
-  expect(formatTrack('[gone]')).toBe('上游已刪除')
+  expect(formatTrack('[gone]')).toBe('upstream gone')
   expect(formatTrack('')).toBe('')
 })

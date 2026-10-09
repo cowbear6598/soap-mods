@@ -33,6 +33,8 @@ export type GitView = {
   branches: GitBranch[]
   /** Last git error shown to the person, '' when none. */
   error: string
+  /** Why the last branch switch failed, '' when none; cleared on any tab change. */
+  branchError: string
 }
 
 declare module 'claude-code' {
