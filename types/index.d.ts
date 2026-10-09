@@ -25,8 +25,6 @@ export type GitView = {
   isLoaded: boolean
   /** False when the session folder is not inside a git work tree. */
   isRepo: boolean
-  /** The branch line of `git status -b`, e.g. `main...origin/main [ahead 1]`. */
-  head: string
   files: GitFile[]
   /** Path of the file whose diff is drawn, '' when none. */
   selected: string
@@ -39,6 +37,12 @@ export type GitView = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'soap-mods': { tab: TabId; subTab: GitSubTab; view: GitView }
+    'soap-mods': {
+      tab: TabId
+      subTab: GitSubTab
+      view: GitView
+      /** Whether the remote branches section is expanded. */
+      showRemote: boolean
+    }
   }
 }

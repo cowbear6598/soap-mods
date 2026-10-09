@@ -79,12 +79,71 @@ export function parseBranches(out: string): GitBranch[] {
   })
 }
 
-/** Two-letter status as a short label for a file row. */
-export function statusLabel(file: GitFile): string {
-  if (file.x === '?' && file.y === '?') return '??'
-  if (file.x === 'U' || file.y === 'U' || (file.x === 'A' && file.y === 'A') || (file.x === 'D' && file.y === 'D')) {
-    return 'UU'
+/** What happened to a file as a whole: the diff pane header. */
+export function fileKind(file: GitFile): FileKind {
+  if (isConflict(file)) return 'conflict'
+
+  return letterKind(file.x === ' ' ? file.y : file.x)
+}
+
+export type FileGroupId = 'staged' | 'unstaged' | 'untracked'
+export type FileKind = 'added' | 'modified' | 'deleted' | 'renamed' | 'conflict'
+
+export type FileEntry = {
+  file: GitFile
+  /** The one status letter that belongs to this group (X for staged, Y for unstaged). */
+  letter: string
+  kind: FileKind
+}
+
+function isConflict(file: GitFile): boolean {
+  return file.x === 'U' || file.y === 'U' || (file.x === 'A' && file.y === 'A') || (file.x === 'D' && file.y === 'D')
+}
+
+function letterKind(letter: string): FileKind {
+  if (letter === 'A' || letter === '?') return 'added'
+  if (letter === 'D') return 'deleted'
+  if (letter === 'R' || letter === 'C') return 'renamed'
+
+  return 'modified'
+}
+
+/**
+ * Files as the source control view groups them: staged (X), unstaged (Y) and
+ * untracked. A file changed on both sides is listed in both groups; a
+ * conflicted file is listed once, under unstaged.
+ */
+export function groupFiles(files: GitFile[]): Record<FileGroupId, FileEntry[]> {
+  const groups: Record<FileGroupId, FileEntry[]> = { staged: [], unstaged: [], untracked: [] }
+
+  for (const file of files) {
+    if (file.x === '?') {
+      groups.untracked.push({ file, letter: 'U', kind: 'added' })
+      continue
+    }
+    if (isConflict(file)) {
+      groups.unstaged.push({ file, letter: '!', kind: 'conflict' })
+      continue
+    }
+    if (file.x !== ' ') groups.staged.push({ file, letter: file.x, kind: letterKind(file.x) })
+    if (file.y !== ' ') groups.unstaged.push({ file, letter: file.y, kind: letterKind(file.y) })
   }
 
-  return `${file.x}${file.y}`.replace(/ /g, '·')
+  return groups
+}
+
+/** `dir/sub/name.ts` → `{ name: 'name.ts', dir: 'dir/sub' }`. */
+export function splitPath(path: string): { name: string; dir: string } {
+  const slash = path.lastIndexOf('/')
+
+  return slash === -1 ? { name: path, dir: '' } : { name: path.slice(slash + 1), dir: path.slice(0, slash) }
+}
+
+/** git's `[ahead 1, behind 2]` → `↑1 ↓2`; `[gone]` → `上游已刪除`; '' stays ''. */
+export function formatTrack(track: string): string {
+  if (track === '[gone]') return '上游已刪除'
+  const ahead = /ahead (\d+)/.exec(track)
+  const behind = /behind (\d+)/.exec(track)
+
+  return [ahead ? `↑${ahead[1]}` : '', behind ? `↓${behind[1]}` : ''].filter(s => s !== '').join(' ')
 }

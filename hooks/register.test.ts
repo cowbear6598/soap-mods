@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { parseBranches, parseStatus, statusLabel, toHunks } from './git'
+import { fileKind, formatTrack, groupFiles, parseBranches, parseStatus, splitPath, toHunks } from './git'
 
 test('the pane draws the Git tab with its three sub tabs on each surface', async $ => {
   for (const surface of ['terminal', 'desktop'] as const) {
@@ -30,13 +30,27 @@ const ok = (stdout: string) => ({
 })
 
 test('the pane lists changes, shows a diff and the branches, and switches sub tabs', async ($, on) => {
-  on('ui.open', () => ({ value: { isPlaced: true } }))
+  const diffOpens: string[] = []
+  on('ui.open', (_$, e) => {
+    if (e.id === 'soap-diff') diffOpens.push(e.title ?? '')
+
+    return { value: { isPlaced: true } }
+  })
+  on('ui.panes', () => ({ value: [] }))
+  on('ui.close', () => ({ value: undefined }))
   on('process.run', (_$, e) => {
     const cmd = e.argv.slice(3)
     if (cmd[0] === 'status') return ok('## main...origin/main [ahead 1]\0 M a.ts\0')
     if (cmd[0] === 'diff') return ok('diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-a\n+b\n')
     if (cmd[0] === 'for-each-ref') {
-      return ok('*\trefs/heads/main\tmain\torigin/main\t\t1 hour ago\tAdd panel\n')
+      return ok(
+        [
+          '*\trefs/heads/main\tmain\torigin/main\t\t1 hour ago\tAdd panel',
+          ' \trefs/heads/dev\tdev\t\t\t2 days ago\tWip',
+          ' \trefs/remotes/origin/main\torigin/main\t\t\t1 hour ago\tAdd panel',
+          '',
+        ].join('\n'),
+      )
     }
 
     return ok('')
@@ -50,11 +64,41 @@ test('the pane lists changes, shows a diff and the branches, and switches sub ta
     requestId: 'soap-panel',
     props: {},
   })
-  expect(await ui.find({ key: 'file:a.ts' })).toBeDefined()
-  expect(await ui.find({ type: 'Code' })).toBeDefined()
+  expect(await ui.find({ key: 'file:unstaged:a.ts' })).toBeDefined()
+
+  // 沒點之前不顯示差異；點了才在自己的面板裡看。
+  await ui.press({ key: 'file:unstaged:a.ts' })
+  const diff = await $.ui.mount({
+    plugin: 'soap-mods',
+    surface: 'terminal',
+    component: 'Pane',
+    requestId: 'soap-diff',
+    props: {},
+  })
+  expect(await diff.find({ type: 'Code' })).toBeDefined()
+  await diff.unmount()
+
+  // 桌面版整行都是按鈕：同一個 key 疊在整行上面，按下去一樣開差異面板。
+  const desk = await $.ui.mount({
+    plugin: 'soap-mods',
+    surface: 'desktop',
+    component: 'Pane',
+    requestId: 'soap-panel',
+    props: {},
+  })
+  expect(await desk.find({ type: 'Text', text: 'a.ts' })).toBeDefined()
+  await desk.press({ key: 'file:unstaged:a.ts' })
+  await desk.unmount()
+  // 同一個檔案點兩次，兩次都是打開（不會變成收起來）。
+  expect(diffOpens).toEqual(['a.ts', 'a.ts'])
 
   await ui.press({ key: 'sub:branch' })
   expect(await ui.find({ type: 'Text', text: /● main/ })).toBeDefined()
+  expect(await ui.find({ key: 'switch:l:dev' })).toBeDefined()
+  // 遠端分支預設收起，按一下才展開。
+  expect(await ui.find({ key: 'switch:r:origin/main' })).toBeUndefined()
+  await ui.press({ key: 'remote:toggle' })
+  expect(await ui.find({ key: 'switch:r:origin/main' })).toBeDefined()
 
   await ui.press({ key: 'sub:conflict' })
   expect(await ui.find({ type: 'Text', text: /conflict 還沒做/ })).toBeDefined()
@@ -74,7 +118,9 @@ test('parseStatus reads the branch line, changes, renames and untracked files', 
   const { head, files } = parseStatus(out)
   expect(head).toBe('main...origin/main [ahead 1]')
   expect(files.map(f => f.path)).toEqual(['src/a.ts', 'b c.ts', 'new.ts', 'notes.md'])
-  expect(files.map(statusLabel)).toEqual(['·M', 'A·', 'R·', '??'])
+  expect(files.map(f => `${f.x}${f.y}`)).toEqual([' M', 'A ', 'R ', '??'])
+  // 差異面板的標題和檔案列的狀態字母用同一套分類。
+  expect(files.map(fileKind)).toEqual(['modified', 'added', 'renamed', 'added'])
 })
 
 test('toHunks drops the diff header and cuts long diffs at a line end', () => {
@@ -99,4 +145,22 @@ test('parseBranches puts the current branch first, locals before remotes, and sk
   expect(branches.map(b => b.name)).toEqual(['main', 'zeta', 'origin/main'])
   expect(branches[0]).toMatchObject({ isCurrent: true, isRemote: false, track: '[ahead 1]', subject: 'Add panel' })
   expect(branches[2].isRemote).toBe(true)
+})
+
+test('groupFiles splits staged, unstaged and untracked, listing a file changed on both sides twice', () => {
+  const { files } = parseStatus(['MM both.ts', 'A  new.ts', ' D gone.ts', 'UU clash.ts', '?? notes.md', ''].join('\0'))
+  const groups = groupFiles(files)
+  const show = (id: 'staged' | 'unstaged' | 'untracked') => groups[id].map(e => `${e.letter} ${e.file.path} ${e.kind}`)
+  expect(show('staged')).toEqual(['M both.ts modified', 'A new.ts added'])
+  expect(show('unstaged')).toEqual(['M both.ts modified', 'D gone.ts deleted', '! clash.ts conflict'])
+  expect(show('untracked')).toEqual(['U notes.md added'])
+})
+
+test('splitPath and formatTrack', () => {
+  expect(splitPath('hooks/git.ts')).toEqual({ name: 'git.ts', dir: 'hooks' })
+  expect(splitPath('README.md')).toEqual({ name: 'README.md', dir: '' })
+  expect(formatTrack('[ahead 1, behind 2]')).toBe('↑1 ↓2')
+  expect(formatTrack('[behind 3]')).toBe('↓3')
+  expect(formatTrack('[gone]')).toBe('上游已刪除')
+  expect(formatTrack('')).toBe('')
 })
