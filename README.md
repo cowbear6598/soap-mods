@@ -1,9 +1,23 @@
 # soap-mods
 
-CptSoap 的第一個 Claude Code Panel mod。預設顯示：目錄、模型、Context 使用率、花費、回合數、工具次數、最近用的工具。
+CptSoap 的 Claude Code Panel mod。
 
-- 啟動 session 時自動開啟，也可以輸入 `/soap-panel` 開啟。
-- 要改面板內容：打開 `hooks/register.tsx`，只改最上面「想改面板內容」那一區（`PANEL_TITLE` 與 `LINES`）。
+## 目前的功能
+
+面板上方是 Tab，目前只有 **Git**。選到 Git 後有三個子分頁：
+
+- **diff**：列出目前資料夾的未提交變更（含未追蹤檔案），點檔案就在下面看它的差異。
+- **branch**：列出本地與遠端分支（目前分支在最上面，附上 ahead/behind、時間、最新 commit 訊息），點分支名稱可以切換。
+- **conflict**：還沒做。
+
+每個回合結束後會自動更新，也可以按「重新整理」。
+
+啟動 session 時自動開啟，也可以輸入 `/soap-panel`。
+
+## 想改的地方
+
+- 加新的 Tab 或子分頁：`hooks/register.tsx` 最上面的 `TABS`、`SUB_TABS`。
+- git 輸出的解析：`hooks/git.ts`（有單元測試在 `hooks/register.test.ts`）。
 
 ## 安裝（Claude Desktop，Code 分頁，需 v2.1.286 以上）
 
