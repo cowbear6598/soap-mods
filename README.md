@@ -10,6 +10,8 @@ CptSoap 的 Claude Code Panel mod。
 - **branch**：列出本地與遠端分支（目前分支在最上面，附上 ahead/behind、時間、最新 commit 訊息），點分支名稱可以切換。
 - **conflict**：還沒做。
 
+面板最底下固定顯示用量，左右各一半：`5h · 93% · 2h 26m` 和 `Weekly · 99% · 2d 18h 5m`（剩餘 %、離重置多久），下面一條剩餘量的 bar。多於 50% 綠、多於 20% 黃、其餘紅。只有訂閱帳號才有數字，送出第一則訊息前會顯示 `—`。
+
 每個回合結束後會自動更新，也可以按「重新整理」。
 
 啟動 session 時自動開啟，也可以輸入 `/soap-panel`。
@@ -17,6 +19,7 @@ CptSoap 的 Claude Code Panel mod。
 ## 想改的地方
 
 - 加新的 Tab 或子分頁：`hooks/register.tsx` 最上面的 `TABS`、`SUB_TABS`。
+- 用量的標題、顏色門檻：`hooks/register.tsx` 最上面的 `USAGE_WINDOWS`、`USAGE_GOOD` / `USAGE_WARN` / `USAGE_LOW`。
 - git 輸出的解析：`hooks/git.ts`（有單元測試在 `hooks/register.test.ts`）。
 
 ## 安裝（Claude Desktop，Code 分頁，需 v2.1.286 以上）

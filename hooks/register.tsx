@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register } from 'claude-code'
+import type { EngineInterface, Register, RenderChildren } from 'claude-code'
 
 import type { GitBranch, GitSubTab, GitView, TabId } from '../types'
 import type { FileEntry, FileGroupId, FileKind } from './git'
@@ -52,8 +52,15 @@ const MUTED = '#8b8b8b'
 // 分隔線。桌面版把 Svg 畫成 max-width:100% 的圖，寬度會被壓到面板寬、高度固定 1px；
 // preserveAspectRatio="none" 讓線跟著拉伸，不會被等比縮到看不見。終端機沒有 Svg，用一長串橫線字元。
 const DIVIDER_PX = 4000
-const DIVIDER_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="${DIVIDER_PX}" height="1" viewBox="0 0 ${DIVIDER_PX} 1" preserveAspectRatio="none"><rect width="${DIVIDER_PX}" height="1" fill="${MUTED}"/></svg>`
+const DIVIDER_SVG = stretchedSvg(1, [{ width: 100, fill: MUTED }])
 const DIVIDER_TEXT = '─'.repeat(400)
+
+// 拉滿整行寬的橫條圖：依序疊上幾條從左邊開始的色條，width 是佔整行的百分比。分隔線和用量 bar 都用它。
+function stretchedSvg(heightPx: number, bars: { width: number; fill: string }[]) {
+  const rects = bars.map(b => `<rect width="${b.width}" height="1" fill="${b.fill}"/>`).join('')
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${DIVIDER_PX}" height="${heightPx}" viewBox="0 0 100 1" preserveAspectRatio="none">${rects}</svg>`
+}
 
 function iconSvg(name: IconName, isActive: boolean) {
   const color = isActive ? '#ffffff' : MUTED
@@ -70,6 +77,21 @@ const SUB_TABS: { id: GitSubTab; label: string; icon: IconName }[] = [
   { id: 'branch', label: 'branch', icon: 'branch' },
   { id: 'conflict', label: 'conflict', icon: 'conflict' },
 ]
+
+// 面板最底下的用量：左邊 5h、右邊 weekly，各占一半。kind 是引擎回報的視窗名稱。
+const USAGE_WINDOWS = [
+  { kind: 'five_hour', label: '5h' },
+  { kind: 'seven_day', label: 'Weekly' },
+]
+// 剩餘量的顏色：多於 50% 綠、多於 20% 黃、其餘紅。bar 是 Svg，要用色碼。
+const USAGE_GOOD = { theme: 'success', hex: '#4eba65' }
+const USAGE_WARN = { theme: 'warning', hex: '#d4a72c' }
+const USAGE_LOW = { theme: 'error', hex: '#e5534b' }
+// 重置倒數多久重畫一次。
+const USAGE_TICK_MS = 60_000
+// bar 的高度（桌面版，px）；終端機的文字 bar 有幾格。
+const USAGE_BAR_PX = 4
+const USAGE_BAR_CELLS = 10
 // ───── 以下是運作邏輯 ─────
 
 const EMPTY: GitView = {
@@ -87,6 +109,25 @@ const tab = atom({ plugin: 'soap-mods', key: 'tab' } as const, 'git')
 const subTab = atom({ plugin: 'soap-mods', key: 'subTab' } as const, 'diff')
 const view = atom({ plugin: 'soap-mods', key: 'view' } as const, EMPTY)
 const showRemote = atom({ plugin: 'soap-mods', key: 'showRemote' } as const, false)
+
+function usageLevel(remaining: number) {
+  return remaining > 50 ? USAGE_GOOD : remaining > 20 ? USAGE_WARN : USAGE_LOW
+}
+
+// 離重置還有多久：「2d 18h 5m」「2h 26m」「12m」；沒有重置時間就回空字串。
+function formatResetIn(resetsAt: string | undefined, now: number) {
+  if (resetsAt === undefined) return ''
+  const ms = Date.parse(resetsAt) - now
+  if (Number.isNaN(ms)) return ''
+  const minutes = Math.max(0, Math.ceil(ms / 60_000))
+  const d = Math.floor(minutes / 1440)
+  const h = Math.floor((minutes % 1440) / 60)
+  const m = minutes % 60
+  if (d > 0) return `${d}d ${h}h ${m}m`
+  if (h > 0) return `${h}h ${m}m`
+
+  return `${m}m`
+}
 
 async function git($: EngineInterface, args: string[]) {
   return $.process.run(['git', '-c', 'core.quotepath=false', ...args])
@@ -241,6 +282,15 @@ export const register: Register = on => {
     void $.ui.open({ id: PANE, title: PANEL_TITLE })
     void refresh($).catch(() => undefined)
     $.clock.every(FOCUS_WATCH_MS, () => void focusWhenShown($))
+    // 用量直接跟引擎拿（不花錢），這裡只負責讓重置倒數每分鐘重畫一次。
+    $.clock.every(USAGE_TICK_MS, () => $.ui.invalidate('ui.render'))
+
+    return next(e)
+  })
+
+  // 某個用量視窗動了一整個百分點，就重畫底部的用量。
+  on('session.measure', ($, e, next) => {
+    if (e.changed.includes('rateLimits')) $.ui.invalidate('ui.render')
 
     return next(e)
   })
@@ -282,10 +332,16 @@ export const register: Register = on => {
     // 終端機沒有 Svg，那邊退回文字按鈕。
     const Svg = 'Svg' in ui ? ui.Svg : undefined
     const isTerminal = e.surface === 'terminal'
-    const activeTab = await read($, tab)
-    const activeSub = await read($, subTab)
-    const v = await read($, view)
-    const isRemoteOpen = await read($, showRemote)
+    const [activeTab, activeSub, v, isRemoteOpen, usage, now] = await Promise.all([
+      read($, tab),
+      read($, subTab),
+      read($, view),
+      read($, showRemote),
+      // 讀不到用量就當作還沒有讀數，不要讓整個面板畫不出來。
+      $.session.usage().catch(() => undefined),
+      $.clock.now(),
+    ])
+    const windows = usage?.rateLimits ?? []
 
     // 只有圖示的按鈕，三層疊起來（後畫的 absolute 疊在上面）：
     // 1. 墊底的 Button 撐出外框大小，選中的底色畫在外框上；它被蓋住，點不到；
@@ -315,8 +371,8 @@ export const register: Register = on => {
       label: string
       onPress: () => void
       isDim?: boolean
-      lead?: unknown
-      rest?: unknown
+      lead?: RenderChildren
+      rest?: RenderChildren
     }) =>
       isTerminal ? (
         <Box key={`${row.key}:row`} gap={1} paddingLeft={2} hover={{ backgroundColor: ACTIVE_BG }}>
@@ -338,7 +394,7 @@ export const register: Register = on => {
       )
 
     // 項目之間插入直線分隔。
-    const withDividers = (items: unknown[], prefix: string) =>
+    const withDividers = (items: RenderChildren[], prefix: string) =>
       items.flatMap((item, i) => (i === 0 ? [item] : [<Text key={`${prefix}:div:${i}`} dimColor>│</Text>, item]))
 
     // 一排置中的圖示分頁，中間用直線隔開。
@@ -356,16 +412,22 @@ export const register: Register = on => {
       </Box>
     )
 
-    // 分隔線：線落在這一列的正中間，夾在兩條線中間的東西就會上下對稱。
+    // 拉滿整行的橫條圖（stretchedSvg 畫的），落在這一列的正中間。
+    const stretched = (source: string, alt: string, heightPx: number) =>
+      Svg === undefined ? null : (
+        <Box width="100%" height={1} overflow="hidden" alignItems="center">
+          <Svg source={source} alt={alt} width={DIVIDER_PX} height={heightPx} />
+        </Box>
+      )
+
+    // 分隔線：夾在兩條線中間的東西就會上下對稱。
     const divider =
       Svg === undefined ? (
         <Box width="100%" height={1} overflow="hidden">
           <Text dimColor>{DIVIDER_TEXT}</Text>
         </Box>
       ) : (
-        <Box width="100%" height={1} overflow="hidden" alignItems="center">
-          <Svg source={DIVIDER_SVG} alt="分隔線" width={DIVIDER_PX} height={1} />
-        </Box>
+        stretched(DIVIDER_SVG, '分隔線', 1)
       )
 
     const error = v.error === '' ? null : <Text color="error">{v.error}</Text>
@@ -475,16 +537,63 @@ export const register: Register = on => {
       body = <Text dimColor>conflict 還沒做，下一步再來。</Text>
     }
 
-    return (
-      <Box flexDirection="column" gap={1}>
-        <Box flexDirection="column">
-          {iconBar('tab', TABS, activeTab, id => update($, tab, () => id))}
-          {divider}
-          {iconBar('sub', SUB_TABS, activeSub, id => update($, subTab, () => id))}
-          {divider}
+    // 底部用量的其中一半：「5h · 93% · 2h 26m」一行，下面一條剩餘用量的 bar；還沒有讀數就是「5h · —」。
+    const usageHalf = (w: (typeof USAGE_WINDOWS)[number]) => {
+      const reading = windows.find(r => r.kind === w.kind)
+      const remaining = reading === undefined ? 0 : Math.max(0, Math.min(100, 100 - reading.percentUsed))
+      const percent = `${Math.round(remaining)}%`
+      const resetIn = reading === undefined ? '' : formatResetIn(reading.resetsAt, now)
+      const level = usageLevel(remaining)
+      const cells = Math.round((remaining / 100) * USAGE_BAR_CELLS)
+
+      return (
+        <Box key={`usage:${w.kind}`} width="50%" flexDirection="column" paddingX={1}>
+          <Box>
+            <Text dimColor>{`${w.label} · `}</Text>
+            {reading === undefined ? (
+              <Text dimColor>—</Text>
+            ) : (
+              <Text bold color={level.theme}>
+                {percent}
+              </Text>
+            )}
+            {resetIn !== '' && <Text dimColor>{` · ${resetIn}`}</Text>}
+          </Box>
+          {reading !== undefined &&
+            (Svg === undefined ? (
+              <Text color={level.theme}>{`${'█'.repeat(cells)}${'░'.repeat(USAGE_BAR_CELLS - cells)}`}</Text>
+            ) : (
+              stretched(
+                stretchedSvg(USAGE_BAR_PX, [
+                  { width: 100, fill: ACTIVE_BG },
+                  { width: remaining, fill: level.hex },
+                ]),
+                `剩 ${percent}`,
+                USAGE_BAR_PX,
+              )
+            ))}
         </Box>
-        {error}
-        {body}
+      )
+    }
+
+    // 整棵樹至少跟面板一樣高、內容區撐滿剩下的高度，用量就會被推到面板最底下；
+    // 內容比面板還長時用量跟在後面。面板的高度只有引擎知道（bodyRows），百分比高度量不到。
+    return (
+      <Box flexDirection="column" minHeight={e.props.scroll.bodyRows}>
+        <Box flexDirection="column" gap={1} flexGrow={1}>
+          <Box flexDirection="column">
+            {iconBar('tab', TABS, activeTab, id => update($, tab, () => id))}
+            {divider}
+            {iconBar('sub', SUB_TABS, activeSub, id => update($, subTab, () => id))}
+            {divider}
+          </Box>
+          {error}
+          {body}
+        </Box>
+        <Box flexDirection="column" marginTop={1}>
+          {divider}
+          <Box width="100%">{USAGE_WINDOWS.map(usageHalf)}</Box>
+        </Box>
       </Box>
     )
   })

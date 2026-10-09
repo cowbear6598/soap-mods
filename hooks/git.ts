@@ -10,15 +10,15 @@ export function parseStatus(out: string): { head: string; files: GitFile[] } {
 
   for (let i = 0; i < parts.length; i += 1) {
     const entry = parts[i]
-    if (entry === '') continue
+    if (entry === undefined || entry === '') continue
 
     if (entry.startsWith('## ')) {
       head = entry.slice(3)
       continue
     }
 
-    const x = entry[0]
-    const y = entry[1]
+    const x = entry[0] ?? ' '
+    const y = entry[1] ?? ' '
     files.push({ path: entry.slice(3), x, y })
 
     // A rename or copy is followed by its source path as an entry of its own.
@@ -56,7 +56,7 @@ export function parseBranches(out: string): GitBranch[] {
 
   for (const line of out.split('\n')) {
     if (line === '') continue
-    const [head, ref, name, upstream, track, date, ...subject] = line.split('\t')
+    const [head = '', ref = '', name = '', upstream = '', track = '', date = '', ...subject] = line.split('\t')
     // `origin/HEAD` is a pointer, not a branch.
     if (ref.endsWith('/HEAD')) continue
 

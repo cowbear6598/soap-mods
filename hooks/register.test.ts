@@ -2,19 +2,58 @@ import { expect, test } from 'claude-code/testing'
 
 import { fileKind, formatTrack, groupFiles, parseBranches, parseStatus, splitPath, toHunks } from './git'
 
-test('the pane draws the Git tab with its three sub tabs on each surface', async $ => {
+// 面板的 props：引擎畫面板時一定會給，測試照實給一份。
+const PANE_PROPS = {
+  title: 'Soap Panel',
+  isFocused: true,
+  bodyColumns: 60,
+  placement: 'dock',
+  scroll: { offset: 0, bodyRows: 40 },
+  view: {},
+} as const
+
+test('the pane draws the Git tab with its three sub tabs on each surface', async ($, on) => {
+  on('clock.now', () => ({ value: 0 }))
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({
       plugin: 'soap-mods',
       surface,
       component: 'Pane',
       requestId: 'soap-panel',
-      props: {},
+      props: PANE_PROPS,
     })
     expect(await ui.find({ key: 'tab:git' })).toBeDefined()
     for (const sub of ['diff', 'branch', 'conflict']) {
       expect(await ui.find({ key: `sub:${sub}` })).toBeDefined()
     }
+    await ui.unmount()
+  }
+})
+
+test('the bottom of the pane shows 5h and weekly remaining, half each', async ($, on) => {
+  const now = Date.parse('2026-10-09T10:00:00Z')
+  on('clock.now', () => ({ value: now }))
+  on('session.usage', () => ({
+    value: {
+      startedAt: now,
+      context: { window: 200000 },
+      rateLimits: [
+        { kind: 'five_hour', percentUsed: 23.5, resetsAt: '2026-10-09T12:13:00Z' },
+        { kind: 'seven_day', percentUsed: 85, resetsAt: '2026-10-12T13:00:00Z' },
+      ],
+    },
+  }))
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'soap-mods', surface, component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+    expect(await ui.find({ key: 'usage:five_hour' })).toBeDefined()
+    expect(await ui.find({ key: 'usage:seven_day' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '5h · ' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '77%' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'Weekly · ' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '15%' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: ' · 2h 13m' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: ' · 3d 3h 0m' })).toBeDefined()
     await ui.unmount()
   }
 })
@@ -38,6 +77,7 @@ test('the pane lists changes, shows a diff and the branches, and switches sub ta
   })
   on('ui.panes', () => ({ value: [] }))
   on('ui.close', () => ({ value: undefined }))
+  on('clock.now', () => ({ value: 0 }))
   on('process.run', (_$, e) => {
     const cmd = e.argv.slice(3)
     if (cmd[0] === 'status') return ok('## main...origin/main [ahead 1]\0 M a.ts\0')
@@ -55,14 +95,19 @@ test('the pane lists changes, shows a diff and the branches, and switches sub ta
 
     return ok('')
   })
-  await $.command.run({ command: 'soap-panel', args: '' })
+  await $.command.run({
+    command: 'soap-panel',
+    args: '',
+    origin: { kind: 'composer' },
+    presentation: { isFullscreen: true, columns: 120 },
+  })
 
   const ui = await $.ui.mount({
     plugin: 'soap-mods',
     surface: 'terminal',
     component: 'Pane',
     requestId: 'soap-panel',
-    props: {},
+    props: PANE_PROPS,
   })
   expect(await ui.find({ key: 'file:unstaged:a.ts' })).toBeDefined()
 
@@ -73,7 +118,7 @@ test('the pane lists changes, shows a diff and the branches, and switches sub ta
     surface: 'terminal',
     component: 'Pane',
     requestId: 'soap-diff',
-    props: {},
+    props: PANE_PROPS,
   })
   expect(await diff.find({ type: 'Code' })).toBeDefined()
   await diff.unmount()
@@ -84,7 +129,7 @@ test('the pane lists changes, shows a diff and the branches, and switches sub ta
     surface: 'desktop',
     component: 'Pane',
     requestId: 'soap-panel',
-    props: {},
+    props: PANE_PROPS,
   })
   expect(await desk.find({ type: 'Text', text: 'a.ts' })).toBeDefined()
   await desk.press({ key: 'file:unstaged:a.ts' })
@@ -144,7 +189,7 @@ test('parseBranches puts the current branch first, locals before remotes, and sk
   const branches = parseBranches(out)
   expect(branches.map(b => b.name)).toEqual(['main', 'zeta', 'origin/main'])
   expect(branches[0]).toMatchObject({ isCurrent: true, isRemote: false, track: '[ahead 1]', subject: 'Add panel' })
-  expect(branches[2].isRemote).toBe(true)
+  expect(branches[2]?.isRemote).toBe(true)
 })
 
 test('groupFiles splits staged, unstaged and untracked, listing a file changed on both sides twice', () => {
