@@ -1,15 +1,59 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, ProcessRunResult, Register, RenderChildren } from 'claude-code'
+import type { EngineInterface, PaneOpenArgs, ProcessRunResult, Register, RenderChildren } from 'claude-code'
 
-import type { GitBranch, GitSubTab, GitView, ScanResult, Service, ServiceAction, ServicesView, TabId } from '../types'
+import type {
+  GitBranch,
+  GitFile,
+  GitSubTab,
+  GitView,
+  MergeChoice,
+  MergeChunk,
+  MergeOp,
+  MergeView,
+  ScanResult,
+  Service,
+  ServiceAction,
+  ServicesView,
+  TabId,
+} from '../types'
 import type { FileEntry, FileGroupId, FileKind } from './git'
-import { BRANCH_FORMAT, fileKind, groupFiles, parseBranches, parseStatus, splitPath, toHunks } from './git'
+import { BRANCH_FORMAT, fileKind, groupFiles, isConflict, parseBranches, parseStatus, splitPath, toHunks } from './git'
+import {
+  buildResult,
+  choose,
+  chooseAll,
+  chunkResult,
+  conflictLabel,
+  detectOp,
+  isResolved,
+  keepChoices,
+  merge3,
+  parseConflicts,
+  splitLines,
+  takesSide,
+  toggleApplied,
+} from './merge'
 import { LAUNCH_ARGV, SCAN_ARGV, findServices } from './services'
 
 // ───── 想改面板標題或分頁，改這一區 ─────
 const PANE = 'soap-panel'
 const PANEL_TITLE = 'Soap Panel'
 const DIFF_PANE = 'soap-diff'
+// 解衝突的三欄面板（左 Ours、中 Result、右 Theirs）。columns 是跟引擎要的寬度，人拖過的寬度優先。
+const MERGE_PANE = 'soap-merge'
+const MERGE_COLUMNS = 180
+// 兩邊都一樣的段落，衝突的前後各留幾行，其餘收成「⋯ N unchanged lines」。
+const MERGE_CONTEXT = 3
+// 合併面板每一欄的寬度；三欄加起來不到 100%，剩下的當欄距。
+const MERGE_COLUMN_WIDTH = '32%'
+
+// 進行中的操作在 conflict 分頁上的名稱。
+const OP_LABEL: Record<Exclude<MergeOp, ''>, string> = {
+  merge: 'Merge',
+  rebase: 'Rebase',
+  'cherry-pick': 'Cherry-pick',
+  revert: 'Revert',
+}
 
 // 檔案狀態的名稱和顏色：檔案列的狀態字母、差異面板的標題都用這張表。
 const KIND_STYLE: Record<FileKind, { label: string; theme: string }> = {
@@ -120,6 +164,9 @@ const EMPTY: GitView = {
   branches: [],
   error: '',
   branchError: '',
+  op: '',
+  opError: '',
+  isAbortArmed: false,
 }
 
 const tab = atom({ plugin: 'soap-mods', key: 'tab' } as const, 'git')
@@ -128,6 +175,19 @@ const view = atom({ plugin: 'soap-mods', key: 'view' } as const, EMPTY)
 const showRemote = atom({ plugin: 'soap-mods', key: 'showRemote' } as const, false)
 const EMPTY_SERVICES: ServicesView = { isLoaded: false, items: [], error: '', actionError: '', pending: [] }
 const services = atom({ plugin: 'soap-mods', key: 'services' } as const, EMPTY_SERVICES)
+const EMPTY_MERGE: MergeView = {
+  path: '',
+  hasMarkers: false,
+  hasStages: false,
+  chunks: [],
+  eol: '\n',
+  hasFinalEol: true,
+  oursLabel: '',
+  theirsLabel: '',
+  error: '',
+  isBusy: false,
+}
+const merge = atom({ plugin: 'soap-mods', key: 'merge' } as const, EMPTY_MERGE)
 
 function usageLevel(remaining: number) {
   return remaining > 50 ? USAGE_GOOD : remaining > 20 ? USAGE_WARN : USAGE_LOW
@@ -150,8 +210,37 @@ function formatResetIn(resetsAt: string | undefined, now: number) {
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
-async function git($: EngineInterface, args: string[]) {
-  return $.process.run(['git', '-c', 'core.quotepath=false', ...args])
+// repo 根目錄和 .git 資料夾：第一次 refresh 時問 git，之後不會變。status 給的路徑都相對根目錄，
+// 所以知道根目錄之後 git 一律在根目錄跑，讀寫檔案也接在根目錄後面。
+let repo: { root: string; gitDir: string } | undefined
+
+async function git($: EngineInterface, args: string[], init?: { env?: Record<string, string> }) {
+  return $.process.run(['git', '-c', 'core.quotepath=false', ...args], repo === undefined ? init : { cwd: repo.root, ...init })
+}
+
+// 跑 git，結束碼不是 0 就丟出它的錯誤訊息。
+async function gitOk($: EngineInterface, args: string[], init?: { env?: Record<string, string> }) {
+  const r = await git($, args, init)
+  if (r.exitCode !== 0) throw failure(r, `git ${args.join(' ')}`)
+
+  return r
+}
+
+const inRepo = (path: string) => (repo === undefined ? path : `${repo.root}/${path}`)
+
+// .git 資料夾裡有哪些檔案（看得出停在 merge 還是 rebase）；第一次順便記下 repo 的位置。
+async function readGitDir($: EngineInterface): Promise<string[]> {
+  if (repo === undefined) {
+    const r = await git($, ['rev-parse', '--show-toplevel', '--absolute-git-dir'])
+    const [root = '', gitDir = ''] = r.exitCode === 0 ? r.stdout.split('\n').map(s => s.trim()) : []
+    if (root === '' || gitDir === '') return []
+    repo = { root, gitDir }
+  }
+
+  return $.fs.list(repo.gitDir).then(
+    entries => entries.map(entry => entry.name),
+    () => [],
+  )
 }
 
 async function setView($: EngineInterface, patch: Partial<GitView>) {
@@ -194,24 +283,38 @@ async function readDiff($: EngineInterface, files: GitView['files'], path: strin
   return { selected: path, diff: source, isDiffTruncated: isTruncated, error }
 }
 
+// 每個面板 open 時要給的標題和寬度；每次 open 都會重設它們，所以一律從這裡拿。
+async function paneArgs($: EngineInterface, id: string): Promise<PaneOpenArgs> {
+  if (id === MERGE_PANE) return { id, title: `Merge · ${splitPath((await read($, merge)).path).name}`, columns: MERGE_COLUMNS }
+  if (id === DIFF_PANE) return { id, title: (await read($, view)).selected }
+
+  return { id: PANE, title: PANEL_TITLE }
+}
+
+// 開（或切到）一個面板並要焦點：已經開著的話先關再開，才會跳到最前面，而不是躲在別的分頁後面。
+async function bringToFront($: EngineInterface, id: string) {
+  const [panes, args] = await Promise.all([$.ui.panes(), paneArgs($, id)])
+  if (panes.some(p => p.id === id)) await $.ui.close({ id })
+  await $.ui.open({ ...args, focus: true })
+}
+
 // 點檔案：一定開一個獨立的 diff 面板並切過去；關掉面板交給面板自己的關閉鈕。
 async function openDiff($: EngineInterface, path: string) {
-  const [panes, v] = await Promise.all([$.ui.panes(), read($, view)])
-  const isOpen = panes.some(p => p.id === DIFF_PANE)
+  const v = await read($, view)
   await setView($, await readDiff($, v.files, path))
-  // 已經開著的話先關再開，才會跳到最前面，而不是躲在別的分頁後面。
-  if (isOpen) await $.ui.close({ id: DIFF_PANE })
-  await $.ui.open({ id: DIFF_PANE, title: path, focus: true })
+  await bringToFront($, DIFF_PANE)
 }
 
 // 重新讀 git 狀態、檔案清單、分支清單，保留原本點開的檔案；最後只寫一次 view，只重畫一次。
 async function refresh($: EngineInterface) {
   let status
   let refs
+  let names
   try {
-    ;[status, refs] = await Promise.all([
+    ;[status, refs, names] = await Promise.all([
       git($, ['status', '--porcelain=v1', '-b', '-z', '-uall']),
       git($, ['for-each-ref', `--format=${BRANCH_FORMAT}`, 'refs/heads', 'refs/remotes']),
+      readGitDir($),
     ])
   } catch {
     await setView($, { isLoaded: true, isRepo: false, error: NO_GIT })
@@ -243,42 +346,67 @@ async function refresh($: EngineInterface) {
     error: '',
     files,
     branches: refs.exitCode === 0 ? parseBranches(refs.stdout) : [],
+    op: detectOp(names),
     ...(await readDiff($, files, selected)),
   })
   // 原本看的檔案已經沒有變更了，把它的面板也關掉。
   if (current !== '' && selected === '') await $.ui.close({ id: DIFF_PANE })
+  await syncMerge($, files)
 }
 
 // 桌面版的面板沒有焦點時，按下滑鼠會先拿焦點、整個面板重畫，按到的按鈕被換掉，那一下就不算。
-// 點分頁標籤切回 Soap Panel 時引擎不會通知、也不給焦點，所以定時看一下：
+// 點分頁標籤切到 Soap Panel 或合併面板時引擎不會通知、也不給焦點，所以定時看一下：
 // 它「剛被切到前面」又沒焦點，就先把焦點給它，第一下點擊才點得到。
 // 只在從看不見變成看得見的那一刻給，平常在輸入框打字不會被搶。
-// 切完分支也會丟焦點（被點的那列搬到最上面，拿著焦點的按鈕被搬動），所以切完的一小段時間內也補。
+// 按完按鈕也可能丟焦點（切分支時被點的那列搬位置、abort 後整區消失），
+// 所以每個按鈕的動作做完後的一小段時間內也補（act）。
 const FOCUS_WATCH_MS = 200
-const REFOCUS_AFTER_SWITCH_MS = 600
-let wasShown = true
+const REFOCUS_AFTER_PRESS_MS = 600
+// 要補焦點的面板。diff 面板沒有按鈕，不用。
+const FOCUS_PANES = [PANE, MERGE_PANE]
+// 上一輪看的時候在不在前面；沒記錄當作在（剛啟動不搶焦點）。
+const wasShown = new Map<string, boolean>()
 let isWatching = false
-// 切完分支後，到這個時間點之前丟了焦點就補回來；0 是沒有要補。
-let refocusUntil = 0
+// 按完按鈕後，到這個時間點之前丟了焦點就補回來；沒有記錄是沒有要補。
+const refocusUntil = new Map<string, number>()
+
+async function focusPane($: EngineInterface, id: string) {
+  await $.ui.open({ ...(await paneArgs($, id)), focus: true })
+}
 
 async function focusPanel($: EngineInterface) {
-  await $.ui.open({ id: PANE, title: PANEL_TITLE, focus: true })
+  await focusPane($, PANE)
+}
+
+// 包住面板上按鈕的動作：動作做完（可能要跑 git 很久）才開始算補焦點的那段時間。
+function act($: EngineInterface, id: string, fn: () => unknown) {
+  return async () => {
+    try {
+      await fn()
+    } finally {
+      refocusUntil.set(id, (await $.clock.now()) + REFOCUS_AFTER_PRESS_MS)
+    }
+  }
 }
 
 async function focusWhenShown($: EngineInterface) {
   if (isWatching) return
   isWatching = true
   try {
-    const pane = (await $.ui.panes()).find(p => p.id === PANE)
-    const isShown = pane?.isShown === true
-    if (isShown && pane?.isFocused === false) {
-      const isJustSwitched = refocusUntil !== 0 && (await $.clock.now()) < refocusUntil
-      if (!wasShown || isJustSwitched) {
-        await focusPanel($)
-        refocusUntil = 0
+    const panes = await $.ui.panes()
+    for (const id of FOCUS_PANES) {
+      const pane = panes.find(p => p.id === id)
+      const isShown = pane?.isShown === true
+      if (isShown && pane?.isFocused === false) {
+        const until = refocusUntil.get(id)
+        const isJustPressed = until !== undefined && (await $.clock.now()) < until
+        if (wasShown.get(id) === false || isJustPressed) {
+          await focusPane($, id)
+          refocusUntil.delete(id)
+        }
       }
+      wasShown.set(id, isShown)
     }
-    wasShown = isShown
   } catch {
     // 讀不到就等下一輪。
   } finally {
@@ -286,9 +414,11 @@ async function focusWhenShown($: EngineInterface) {
   }
 }
 
-// 換分頁時清掉切換分支失敗的訊息；沒有訊息就不寫，免得兩個面板白白重畫。
-async function clearBranchError($: EngineInterface) {
-  await update($, view, v => (v.branchError === '' ? v : { ...v, branchError: '' }))
+// 換分頁時清掉切換分支、abort／continue 失敗的訊息和待確認的 abort；沒有要清的就不寫，免得面板白白重畫。
+async function clearGitMessages($: EngineInterface) {
+  await update($, view, v =>
+    v.branchError === '' && v.opError === '' && !v.isAbortArmed ? v : { ...v, branchError: '', opError: '', isAbortArmed: false },
+  )
 }
 
 async function switchBranch($: EngineInterface, name: string, isRemote: boolean) {
@@ -307,9 +437,185 @@ async function switchBranch($: EngineInterface, name: string, isRemote: boolean)
   }
 
   // 不跳 toast：目前分支的 ● 本來就會移過去。丟掉的焦點交給 focusWhenShown 補。
-  await clearBranchError($)
+  await clearGitMessages($)
   await refresh($)
-  refocusUntil = (await $.clock.now()) + REFOCUS_AFTER_SWITCH_MS
+}
+
+// ───── 解衝突 ─────
+
+async function setMerge($: EngineInterface, patch: Partial<MergeView>) {
+  await update($, merge, m => ({ ...m, ...patch }))
+}
+
+async function editChunks($: EngineInterface, edit: (chunks: MergeChunk[]) => MergeChunk[]) {
+  await update($, merge, m => ({ ...m, chunks: edit(m.chunks) }))
+}
+
+// git 為這個衝突檔案留了哪幾個版本（1 共同祖先、2 ours、3 theirs）。每列是「mode sha stage<TAB>path」，
+// 所以整段輸出也代表了這組版本：版本換了（例如 rebase 換到下一個 commit）它就跟著變。
+async function listStages($: EngineInterface, path: string) {
+  const r = await gitOk($, ['ls-files', '-u', '-z', '--', path])
+  const stages = new Set(r.stdout.split('\0').map(line => Number(line.split('\t')[0]?.split(' ')[2])))
+
+  return { key: r.stdout, stages }
+}
+
+type Stages = { path: string; key: string; base: string[] | null; ours: string[] | null; theirs: string[] | null }
+// 上一次讀到的三個版本：同一個檔案、同一組版本就不用再跑三次 git show。
+let stageCache: Stages | undefined
+
+// git 留著的某一個版本；那一邊沒有這個檔案就是 null。
+async function readStage($: EngineInterface, stage: 1 | 2 | 3, path: string) {
+  const r = await git($, ['show', `:${stage}:${path}`]).catch(() => null)
+
+  return r === null || r.exitCode !== 0 ? null : splitLines(r.stdout)
+}
+
+async function readStages($: EngineInterface, path: string, key: string | null): Promise<Stages> {
+  if (key !== null && stageCache?.path === path && stageCache.key === key) return stageCache
+  const [base, ours, theirs] = await Promise.all([readStage($, 1, path), readStage($, 2, path), readStage($, 3, path)])
+  const stages = { path, key: key ?? '', base, ours, theirs }
+  if (key !== null) stageCache = stages
+
+  return stages
+}
+
+// 讀衝突的檔案。檔案裡還有衝突標記，就拿 git 留著的三個版本自己做三方比對，
+// 分出沒動過的、只有一邊改（自動合入）的、真的衝突的段落；讀不到版本才退回只看衝突標記。
+// 同一個檔案重讀時，沒變的段落保留已經做的選擇；結果跟現在畫的一樣就不寫，面板不會白白重畫。
+async function loadMerge($: EngineInterface, path: string) {
+  const [text, listed, m] = await Promise.all([
+    $.fs.read(inRepo(path)).catch(() => null),
+    listStages($, path).catch(() => null),
+    read($, merge),
+  ])
+  const parsed = text === null ? null : parseConflicts(text)
+  let next: MergeView = { ...EMPTY_MERGE, path }
+  if (parsed !== null) {
+    const { base, ours, theirs } = await readStages($, path, listed?.key ?? null)
+    const chunks = ours !== null && theirs !== null ? merge3(base, ours, theirs) : parsed.chunks
+    next = {
+      ...next,
+      ...parsed,
+      hasMarkers: true,
+      hasStages: ours !== null && theirs !== null,
+      chunks: keepChoices(m.path === path ? m.chunks : [], chunks),
+    }
+  }
+  if (JSON.stringify(next) === JSON.stringify(m)) return
+  await update($, merge, () => next)
+}
+
+// 點衝突的檔案：開（或切到）三欄的合併面板。
+async function openMerge($: EngineInterface, path: string) {
+  await loadMerge($, path)
+  await bringToFront($, MERGE_PANE)
+}
+
+async function closeMerge($: EngineInterface) {
+  await update($, merge, () => EMPTY_MERGE)
+  await $.ui.close({ id: MERGE_PANE })
+}
+
+// refresh 之後：合併面板的檔案已經不是衝突了（解掉了、abort 了）就關掉，否則重讀一次（檔案可能被改過）。
+async function syncMerge($: EngineInterface, files: GitFile[]) {
+  const m = await read($, merge)
+  if (m.path === '' || m.isBusy) return
+  const file = files.find(f => f.path === m.path)
+  if (file === undefined || !isConflict(file)) {
+    await closeMerge($)
+
+    return
+  }
+  await loadMerge($, m.path)
+}
+
+// 解掉合併面板上的檔案：做事的期間面板顯示處理中；失敗把錯誤留在面板上，
+// 成功就關掉合併面板、重讀狀態，焦點交回 Soap Panel。
+async function resolveFile($: EngineInterface, what: string, work: (path: string) => Promise<unknown>) {
+  const m = await read($, merge)
+  if (m.isBusy || m.path === '') return
+  await setMerge($, { isBusy: true, error: '' })
+  try {
+    await work(m.path)
+  } catch (err) {
+    await setMerge($, { isBusy: false, error: `${what} failed: ${errorText(err)}` })
+
+    return
+  }
+  await closeMerge($)
+  await refresh($)
+  await focusPanel($)
+  $.ui.toast(`Resolved ${m.path}`)
+}
+
+// 把中間那欄寫回檔案並 git add（標成已解決）。每一段衝突都選好了才做。
+async function applyMerge($: EngineInterface) {
+  const m = await read($, merge)
+  if (!m.hasMarkers || !isResolved(m.chunks)) return
+  await resolveFile($, 'Apply', async path => {
+    await $.fs.write(inRepo(path), buildResult(m))
+    await gitOk($, ['add', '--', path])
+  })
+}
+
+// 沒有衝突標記的檔案（一邊刪掉、二進位檔）：整個檔案用某一邊，或照目前的樣子標成已解決。
+// 那一邊沒有這個檔案（被刪掉了）就 git rm。
+async function takeSide($: EngineInterface, side: 'ours' | 'theirs' | 'as-is') {
+  await resolveFile($, 'Resolve', async path => {
+    if (side === 'as-is') return gitOk($, ['add', '-A', '--', path])
+    const { stages } = await listStages($, path)
+    if (!stages.has(side === 'ours' ? 2 : 3)) return gitOk($, ['rm', '-q', '--', path])
+    await gitOk($, ['checkout', `--${side}`, '--', path])
+
+    return gitOk($, ['add', '--', path])
+  })
+}
+
+// 交給 Claude 解這個檔案：當作使用者自己打的訊息送出，session 空下來就會跑。
+async function askClaude($: EngineInterface) {
+  const [m, v] = await Promise.all([read($, merge), read($, view)])
+  if (m.path === '') return
+  const during = v.op === '' ? '' : ` (a ${v.op} is in progress; do not continue or abort it)`
+  await $.prompt.submit({
+    text: `Resolve the git conflicts in \`${m.path}\`${during}. Keep what both sides meant to do, remove every conflict marker, then run \`git add\` on the file.`,
+    asUser: true,
+  })
+  $.ui.toast('Sent to Claude')
+}
+
+// abort／continue：成功跳 toast，失敗把錯誤留在 conflict 分頁，最後重讀狀態。
+async function runOp($: EngineInterface, op: Exclude<MergeOp, ''>, args: string[], done: string, env?: Record<string, string>) {
+  let opError = ''
+  try {
+    await gitOk($, args, env === undefined ? undefined : { env })
+    $.ui.toast(`${OP_LABEL[op]} ${done}`)
+  } catch (err) {
+    opError = errorText(err)
+  }
+  await setView($, { isAbortArmed: false, opError })
+  await refresh($)
+}
+
+// abort 要按兩次：第一次只把按鈕換成確認。
+async function abortOp($: EngineInterface) {
+  const v = await read($, view)
+  if (v.op === '') return
+  if (!v.isAbortArmed) {
+    await setView($, { isAbortArmed: true, opError: '' })
+
+    return
+  }
+  await runOp($, v.op, [v.op, '--abort'], 'aborted')
+}
+
+// 所有衝突都解完後繼續：merge 是直接 commit（用預設訊息），其他是 --continue。
+// GIT_EDITOR=true 讓 git 不開編輯器、直接用預設的 commit 訊息。
+async function continueOp($: EngineInterface) {
+  const v = await read($, view)
+  if (v.op === '') return
+  const args = v.op === 'merge' ? ['commit', '--no-edit'] : [v.op, '--continue']
+  await runOp($, v.op, args, 'continued', { GIT_EDITOR: 'true' })
 }
 
 // ───── Services 分頁 ─────
@@ -429,7 +735,7 @@ async function scanWhenShown($: EngineInterface) {
 }
 
 async function selectTab($: EngineInterface, id: TabId) {
-  await Promise.all([update($, tab, () => id), clearBranchError($)])
+  await Promise.all([update($, tab, () => id), clearGitMessages($)])
   // 掃描要一秒左右，不等它：先切過去畫「掃描中」或舊清單。
   if (id === 'services') void refreshServices($).catch(() => undefined)
 }
@@ -485,6 +791,11 @@ export const register: Register = on => {
       await setView($, NO_DIFF)
       await focusPanel($)
     }
+    // 合併面板被按掉：放掉選到一半的結果（檔案沒動過，下次打開從頭選）。
+    if (e.id === MERGE_PANE && e.origin.kind === 'person') {
+      await update($, merge, () => EMPTY_MERGE)
+      await focusPanel($)
+    }
 
     return result
   }).catch(($, e, next) => next(e)) // 清不掉就算了，絕不能擋住關面板。
@@ -512,15 +823,18 @@ export const register: Register = on => {
     // 2. Svg 那層鋪滿外框、置中；
     // 3. 最上層是一模一樣的 Button，剛好蓋滿外框，接點擊，hover 的亮底也就是外框大小。
     // tint：圖示固定用這個顏色（停止鈕的紅色）；終端機沒有 Svg，就在按鈕前面放一個同色的方塊。
+    // 這個面板上的按鈕都經過 act：動作做完後丟了焦點會補回來。
     const iconButton = (
       key: string,
       icon: IconName,
       label: string,
       isActive: boolean,
-      onPress: () => void,
+      action: () => unknown,
       tint?: { theme: string; hex: string },
-    ) =>
-      Svg === undefined ? (
+    ) => {
+      const onPress = act($, PANE, action)
+
+      return Svg === undefined ? (
         <Box key={`${key}:box`}>
           {tint !== undefined && <Text color={tint.theme}>■</Text>}
           <Button key={key} label={label} variant={isActive ? 'primary' : 'secondary'} onPress={onPress} />
@@ -536,6 +850,7 @@ export const register: Register = on => {
           </Box>
         </Box>
       )
+    }
 
     // 整行都能點的列表項目；indent 是名稱前面空幾格（預設 2 給列表項目，標題列給 0）。
     // 桌面版：內容照常排，上面疊一顆透明按鈕。按鈕本身是 fit-content，靠一長串不換行空白撐開；
@@ -545,7 +860,7 @@ export const register: Register = on => {
     const pressRow = (row: {
       key: string
       label: string
-      onPress: () => void
+      onPress: () => unknown
       isDim?: boolean
       isBold?: boolean
       color?: string
@@ -556,7 +871,7 @@ export const register: Register = on => {
       isTerminal ? (
         <Box key={`${row.key}:row`} gap={1} paddingLeft={row.indent ?? 2} hover={{ backgroundColor: ACTIVE_BG }}>
           {row.lead}
-          <Button key={row.key} label={row.label} plain dimColor={row.isDim} onPress={row.onPress} />
+          <Button key={row.key} label={row.label} plain dimColor={row.isDim} onPress={act($, PANE, row.onPress)} />
           {row.rest}
         </Box>
       ) : (
@@ -570,7 +885,7 @@ export const register: Register = on => {
           </Box>
           <Box position="absolute" top={0} left={0} right={0} bottom={0} overflow="hidden">
             <Box width={ROW_OVERLAY_WIDTH} flexShrink={0}>
-              <Button key={row.key} label={ROW_BUTTON_LABEL} plain onPress={row.onPress} />
+              <Button key={row.key} label={ROW_BUTTON_LABEL} plain onPress={act($, PANE, row.onPress)} />
             </Box>
           </Box>
         </Box>
@@ -580,16 +895,17 @@ export const register: Register = on => {
     const withDividers = (items: RenderChildren[], prefix: string) =>
       items.flatMap((item, i) => (i === 0 ? [item] : [<Text key={`${prefix}:div:${i}`} dimColor>│</Text>, item]))
 
-    // 一排置中的圖示分頁，中間用直線隔開。
+    // 一排置中的圖示分頁，中間用直線隔開。tints：某幾個分頁的圖示固定用這個顏色（有衝突時 conflict 變紅）。
     const iconBar = <T extends string>(
       prefix: string,
       items: { id: T; label: string; icon: IconName }[],
       active: T,
-      select: (id: T) => void,
+      select: (id: T) => unknown,
+      tints: Partial<Record<T, { theme: string; hex: string }>> = {},
     ) => (
       <Box gap={1} alignItems="center" justifyContent="center" width="100%">
         {withDividers(
-          items.map(t => iconButton(`${prefix}:${t.id}`, t.icon, t.label, t.id === active, () => select(t.id))),
+          items.map(t => iconButton(`${prefix}:${t.id}`, t.icon, t.label, t.id === active, () => select(t.id), tints[t.id])),
           prefix,
         )}
       </Box>
@@ -675,7 +991,8 @@ export const register: Register = on => {
         return pressRow({
           key: `file:${group}:${entry.file.path}`,
           label: name,
-          onPress: () => openDiff($, entry.file.path),
+          // 衝突的檔案開合併面板，其他開差異面板。
+          onPress: () => (entry.kind === 'conflict' ? openMerge($, entry.file.path) : openDiff($, entry.file.path)),
           lead: (
             <Text bold color={KIND_STYLE[entry.kind].theme}>
               {entry.letter}
@@ -754,7 +1071,60 @@ export const register: Register = on => {
         </Box>
       )
     } else {
-      body = <Text dimColor>Conflict view is not implemented yet.</Text>
+      // 停在 merge／rebase 時：最上面是進行中的操作和 Abort／Continue（衝突全解完才有 Continue），
+      // 下面是還沒解的檔案，點了開三欄的合併面板。
+      const conflicts = v.files.filter(isConflict)
+      const opLabel = v.op === '' ? '' : OP_LABEL[v.op]
+      const conflictRow = (f: GitFile) => {
+        const { name, dir } = splitPath(f.path)
+
+        return pressRow({
+          key: `conflict:${f.path}`,
+          label: name,
+          onPress: () => openMerge($, f.path),
+          lead: (
+            <Text bold color={KIND_STYLE.conflict.theme}>
+              !
+            </Text>
+          ),
+          rest: (
+            <Text dimColor wrap="truncate-start">
+              {[conflictLabel(f), dir].filter(s => s !== '').join(' · ')}
+            </Text>
+          ),
+        })
+      }
+
+      body = (
+        <Box flexDirection="column" gap={1}>
+          {v.opError !== '' && <Text color="error">{v.opError}</Text>}
+          {v.op !== '' && (
+            <Box flexDirection="column">
+              <Text bold color="warning">{`${opLabel} in progress`}</Text>
+              <Box gap={1} flexWrap="wrap">
+                {conflicts.length === 0 && (
+                  <Button key="op:continue" label={`Continue ${v.op}`} variant="primary" onPress={act($, PANE, () => continueOp($))} />
+                )}
+                {v.isAbortArmed
+                  ? [
+                      <Button key="op:abort" label={`Yes, abort ${v.op}`} onPress={act($, PANE, () => abortOp($))} />,
+                      <Button key="op:abort-cancel" label="Cancel" onPress={act($, PANE, () => setView($, { isAbortArmed: false }))} />,
+                    ]
+                  : [<Button key="op:abort" label={`Abort ${v.op}`} onPress={act($, PANE, () => abortOp($))} />]}
+              </Box>
+              {v.isAbortArmed && <Text color="warning">Aborting throws away every resolution made so far.</Text>}
+            </Box>
+          )}
+          {conflicts.length === 0 ? (
+            <Text dimColor>{v.op === '' ? 'No conflicts.' : 'All conflicts resolved.'}</Text>
+          ) : (
+            <Box flexDirection="column">
+              <Text bold dimColor>{`Conflicts · ${conflicts.length}`}</Text>
+              {conflicts.map(conflictRow)}
+            </Box>
+          )}
+        </Box>
+      )
     }
 
     // 底部用量的其中一半：「5h · 93% · 2h 26m」一行，下面一條剩餘用量的 bar；還沒有讀數就是「5h · —」。
@@ -805,7 +1175,13 @@ export const register: Register = on => {
             {iconBar('tab', TABS, activeTab, id => void selectTab($, id))}
             {divider}
             {activeTab === 'git' &&
-              iconBar('sub', SUB_TABS, activeSub, id => void Promise.all([update($, subTab, () => id), clearBranchError($)]))}
+              iconBar(
+                'sub',
+                SUB_TABS,
+                activeSub,
+                id => void Promise.all([update($, subTab, () => id), clearGitMessages($)]),
+                v.files.some(isConflict) ? { conflict: USAGE_LOW } : {},
+              )}
             {activeTab === 'git' && divider}
           </Box>
           {error}
@@ -844,6 +1220,285 @@ export const register: Register = on => {
           <Code source={v.diff} format="diff" path={file.path} />
         )}
         {v.isDiffTruncated && <Text dimColor>Diff is too long; showing only the beginning.</Text>}
+      </Box>
+    )
+  })
+
+  // 解衝突的三欄面板，像 JetBrains 的合併視窗：左邊 Ours、右邊 Theirs、中間是結果。
+  // 每段衝突左邊按「Accept ≫」、右邊按「≪ Accept」把那一邊放進中間，中間也可以兩邊都要或重選；
+  // 全部選好才能 Apply（寫回檔案並 git add）。
+  // 只畫當下用得到的按鈕。按了之後按鈕被換掉（例如變成 Reset）會丟焦點，由 act 在之後補回來。
+  on('ui.render', { component: 'Pane', requestId: MERGE_PANE }, async ($, e) => {
+    const { Box, Button, Code, Text } = $.ui.resolve(e)
+    const [m, v] = await Promise.all([read($, merge), read($, view)])
+    const press = (fn: () => unknown) => act($, MERGE_PANE, fn)
+
+    if (m.path === '') return <Text dimColor>No conflicted file open.</Text>
+
+    const file = v.files.find(f => f.path === m.path)
+    const title = (
+      <Box gap={1}>
+        <Text bold color={KIND_STYLE.conflict.theme}>
+          {KIND_STYLE.conflict.label}
+        </Text>
+        <Text bold>{m.path}</Text>
+        {file !== undefined && <Text dimColor>{conflictLabel(file)}</Text>}
+      </Box>
+    )
+    const error = m.error !== '' ? <Text color="error">{m.error}</Text> : null
+    // rebase 時 ours／theirs 跟直覺相反，提醒一下。
+    const rebaseHint =
+      v.op === 'rebase' ? (
+        <Text dimColor>Rebasing: ours is the branch you are rebasing onto, theirs is your commit being replayed.</Text>
+      ) : null
+
+    // 沒有衝突標記可以一段一段選：整個檔案用某一邊，或照目前的樣子標成已解決。
+    if (!m.hasMarkers) {
+      return (
+        <Box flexDirection="column" gap={1}>
+          {title}
+          {error}
+          {rebaseHint}
+          <Text dimColor>
+            This file has no conflict markers to pick from (one side deleted it, it is binary, or the markers were already
+            removed). Choose the whole file:
+          </Text>
+          {m.isBusy ? (
+            <Text dimColor>Working…</Text>
+          ) : (
+            <Box gap={1} flexWrap="wrap">
+              <Button key="merge:take-ours" label="Use ours" onPress={press(() => takeSide($, 'ours'))} />
+              <Button key="merge:take-theirs" label="Use theirs" onPress={press(() => takeSide($, 'theirs'))} />
+              <Button key="merge:take-as-is" label="Mark resolved as is" onPress={press(() => takeSide($, 'as-is'))} />
+              <Button key="merge:claude" label="Ask Claude" onPress={press(() => askClaude($))} />
+            </Box>
+          )}
+        </Box>
+      )
+    }
+
+    const conflicts = m.chunks.filter(c => c.kind === 'conflict')
+    const done = conflicts.filter(c => c.choice !== 'none').length
+    const autos = m.chunks.filter(c => c.kind === 'auto').length
+    const isAllResolved = done === conflicts.length
+
+    // 程式碼一律包一層撐滿整格的 Box：桌面版的 Code 只跟內容一樣寬（有個最小寬度），
+    // 短的那幾格會比長的窄；要它跟著撐到整格寬，每一格的程式碼區塊才會一樣寬。
+    const code = (lines: string[], startLine?: number) =>
+      lines.length === 0 ? (
+        <Text dimColor>(nothing)</Text>
+      ) : (
+        <Box width="100%" flexDirection="column" alignItems="stretch">
+          <Code source={lines.join('\n')} path={m.path} startLine={startLine} />
+        </Box>
+      )
+
+    // 一格：外框的顏色（淡掉的沒框色）、框上一排標籤和按鈕（跟程式碼隔一行）、程式碼。null 是空格子。
+    type Cell = { color?: string; isDim?: boolean; bar?: RenderChildren; content: RenderChildren } | null
+    // 三欄一列，固定各占 MERGE_COLUMN_WIDTH（剩下的當欄距）。每一格都由這裡包上一樣的外框：
+    // 桌面版沒包框的 Code 會比有框的窄一點，全部同一種結構，每一列的欄寬才會一致。
+    // 左欄的那排按鈕靠右（靠近中間）、右欄的靠左；同一列的三格一樣高，所以每一段左右對齊。
+    const columns = (key: string, cells: RenderChildren[]) => (
+      <Box key={key} flexDirection="row" justifyContent="space-between" width="100%">
+        {cells.map((cell, i) => (
+          <Box key={`${key}:${i}`} flexDirection="column" width={MERGE_COLUMN_WIDTH} flexShrink={0} overflow="hidden">
+            {cell}
+          </Box>
+        ))}
+      </Box>
+    )
+    const BAR_ALIGN = ['flex-end', 'flex-start', 'flex-start'] as const
+    const row = (key: string, cells: [Cell, Cell, Cell]) =>
+      columns(
+        key,
+        cells.map((cell, i) =>
+          cell === null ? null : (
+            <Box
+              flexDirection="column"
+              alignItems="stretch"
+              gap={1}
+              paddingX={1}
+              borderStyle="round"
+              borderColor={cell.color}
+              borderDimColor={cell.isDim}
+            >
+              {cell.bar !== undefined && (
+                <Box gap={1} flexWrap="wrap" alignItems="center" justifyContent={BAR_ALIGN[i]}>
+                  {cell.bar}
+                </Box>
+              )}
+              {cell.content}
+            </Box>
+          ),
+        ),
+      )
+
+    // 三欄各自的下一個行號：左邊照 ours 的檔案算、右邊照 theirs、中間照結果（還沒選的衝突不佔行）。
+    const at = { ours: 1, result: 1, theirs: 1 }
+    const advance = (ours: number, result: number, theirs: number) => {
+      at.ours += ours
+      at.result += result
+      at.theirs += theirs
+    }
+    const rows: RenderChildren[] = []
+    const sameRows = (key: string, lines: string[]) => {
+      const cell = (startLine: number): Cell => ({ isDim: true, content: code(lines, startLine) })
+      rows.push(row(key, [cell(at.ours), cell(at.result), cell(at.theirs)]))
+      advance(lines.length, lines.length, lines.length)
+    }
+
+    m.chunks.forEach((c, k) => {
+      if (c.kind === 'same') {
+        // 檔頭只留下一段改動前的幾行、檔尾只留上一段改動後的幾行，中間的段落兩頭都留，其餘收起來。
+        const head = k === 0 ? 0 : MERGE_CONTEXT
+        const tail = k === m.chunks.length - 1 ? 0 : MERGE_CONTEXT
+        if (c.lines.length <= head + tail + 1) {
+          sameRows(`same:${k}`, c.lines)
+
+          return
+        }
+        if (head > 0) sameRows(`same:${k}:head`, c.lines.slice(0, head))
+        const hidden = c.lines.length - head - tail
+        rows.push(
+          <Box key={`same:${k}:gap`} justifyContent="center" width="100%">
+            <Text dimColor>{`⋯ ${hidden} unchanged line${hidden === 1 ? '' : 's'}`}</Text>
+          </Box>,
+        )
+        advance(hidden, hidden, hidden)
+        if (tail > 0) sameRows(`same:${k}:tail`, c.lines.slice(c.lines.length - tail))
+
+        return
+      }
+
+      const out = chunkResult(c) ?? []
+
+      // 只有一邊改的（或兩邊改得一樣）：git 會自己合，不用選。改的那邊和中間是藍框，
+      // 中間可以 Undo（結果留原本的樣子）再 Apply 回來；沒改的那邊淡掉，顯示原本的樣子。
+      if (c.kind === 'auto') {
+        const label = c.from === 'both' ? 'Same change on both sides' : `Auto-merged from ${c.from}`
+        const side = (lines: string[], startLine: number, isChanged: boolean): Cell =>
+          isChanged
+            ? { color: 'suggestion', bar: <Text color="suggestion">changed</Text>, content: code(lines, startLine) }
+            : lines.length === 0
+              ? null
+              : { isDim: true, content: code(lines, startLine) }
+        const middle: Cell = {
+          color: c.isApplied ? 'suggestion' : undefined,
+          isDim: !c.isApplied,
+          bar: [
+            <Text key="state" color={c.isApplied ? 'suggestion' : undefined} dimColor={!c.isApplied}>
+              {c.isApplied ? label : `${label} · undone`}
+            </Text>,
+            <Button
+              key={`merge:toggle:${k}`}
+              label={c.isApplied ? 'Undo' : 'Apply'}
+              onPress={press(() => editChunks($, cs => toggleApplied(cs, k)))}
+            />,
+          ],
+          content: code(out, at.result),
+        }
+        rows.push(
+          row(`auto:${k}`, [side(c.ours, at.ours, c.from !== 'theirs'), middle, side(c.theirs, at.theirs, c.from !== 'ours')]),
+        )
+        advance(c.ours.length, out.length, c.theirs.length)
+
+        return
+      }
+
+      const isOpen = c.choice === 'none'
+      const pick = (choice: MergeChoice) => press(() => editChunks($, cs => choose(cs, k, choice)))
+      // 還沒選：三格都是紅框。選好了：中間和被選進去的那邊綠框，沒被選的那邊淡掉。
+      const side = (which: 'ours' | 'theirs', lines: string[], startLine: number): Cell => {
+        const isTaken = takesSide(c.choice, which)
+
+        return {
+          color: isOpen ? 'error' : isTaken ? 'success' : undefined,
+          isDim: !isOpen && !isTaken,
+          bar: (
+            <Button
+              key={`merge:${which}:${k}`}
+              label={which === 'ours' ? 'Accept ≫' : '≪ Accept'}
+              dimColor={c.choice === which}
+              onPress={pick(which)}
+            />
+          ),
+          content: code(lines, startLine),
+        }
+      }
+      const middle: Cell = {
+        color: isOpen ? 'error' : 'success',
+        // 只放用得到的按鈕：還沒選時是「兩邊都要」，選好之後只剩 Reset。
+        bar: isOpen
+          ? [
+              <Text key="state" bold color="error">
+                Conflict
+              </Text>,
+              <Button key={`merge:both:${k}`} label="Ours + Theirs" onPress={pick('ours-theirs')} />,
+              <Button key={`merge:both-rev:${k}`} label="Theirs + Ours" onPress={pick('theirs-ours')} />,
+            ]
+          : [
+              <Text key="state" bold color="success">
+                Resolved
+              </Text>,
+              <Button key={`merge:reset:${k}`} label="Reset" onPress={pick('none')} />,
+            ],
+        // 還沒選時中間顯示兩邊改之前的樣子；原本那裡沒有東西，就是兩邊在同一處各自加了內容。
+        content: !isOpen ? (
+          code(out, at.result)
+        ) : c.base === null ? (
+          <Text dimColor>Pick a side, or both.</Text>
+        ) : c.base.length === 0 ? (
+          <Text dimColor>Both sides added lines here. Pick a side, or both.</Text>
+        ) : (
+          <Box flexDirection="column">
+            <Text dimColor>Base (before either side changed it):</Text>
+            {code(c.base)}
+          </Box>
+        ),
+      }
+
+      rows.push(row(`conflict:${k}`, [side('ours', c.ours, at.ours), middle, side('theirs', c.theirs, at.theirs)]))
+      advance(c.ours.length, out.length, c.theirs.length)
+    })
+
+    const columnTitle = (label: string, detail: string, align: 'flex-start' | 'center' | 'flex-end') => (
+      <Box justifyContent={align} gap={1}>
+        <Text bold>{label}</Text>
+        {detail !== '' && <Text dimColor>{detail}</Text>}
+      </Box>
+    )
+
+    return (
+      <Box flexDirection="column" gap={1}>
+        {title}
+        {error}
+        {rebaseHint}
+        <Box gap={1} flexWrap="wrap" alignItems="center">
+          <Text color={isAllResolved ? 'success' : 'warning'}>{`${done} of ${conflicts.length} conflicts resolved`}</Text>
+          {autos > 0 && <Text color="suggestion">{`· ${autos} auto-merged`}</Text>}
+          <Button key="merge:all-ours" label="All ours" onPress={press(() => editChunks($, cs => chooseAll(cs, 'ours')))} />
+          <Button key="merge:all-theirs" label="All theirs" onPress={press(() => editChunks($, cs => chooseAll(cs, 'theirs')))} />
+          <Button key="merge:claude" label="Ask Claude" onPress={press(() => askClaude($))} />
+          {/* 每段衝突都選好才能 Apply；套用中換成文字，不能再按一次。 */}
+          {m.isBusy ? (
+            <Text dimColor>Applying…</Text>
+          ) : isAllResolved ? (
+            <Button key="merge:apply" label="Apply & mark resolved" variant="primary" onPress={press(() => applyMerge($))} />
+          ) : null}
+        </Box>
+        {m.hasStages && (
+          <Text dimColor>
+            Built from the versions git kept, not from the file on disk: Apply replaces edits you made to the file by hand.
+          </Text>
+        )}
+        <Box flexDirection="column" gap={1}>
+          {columns('titles', [
+            columnTitle('Ours', m.oursLabel, 'flex-start'),
+            columnTitle('Result', '', 'center'),
+            columnTitle('Theirs', m.theirsLabel, 'flex-end'),
+          ])}
+          {rows}
+        </Box>
       </Box>
     )
   })

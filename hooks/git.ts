@@ -96,7 +96,8 @@ export type FileEntry = {
   kind: FileKind
 }
 
-function isConflict(file: GitFile): boolean {
+/** Unmerged: both sides changed the file and git left it for the person. */
+export function isConflict(file: GitFile): boolean {
   return file.x === 'U' || file.y === 'U' || (file.x === 'A' && file.y === 'A') || (file.x === 'D' && file.y === 'D')
 }
 

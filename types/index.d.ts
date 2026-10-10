@@ -35,6 +35,66 @@ export type GitView = {
   error: string
   /** Why the last branch switch failed, '' when none; cleared on any tab change. */
   branchError: string
+  /** The operation stopped for conflicts, '' when none. */
+  op: MergeOp
+  /** Why the last abort, continue or resolve failed, '' when none; cleared on any tab change. */
+  opError: string
+  /** The abort button was pressed once and now asks to confirm. */
+  isAbortArmed: boolean
+}
+
+export type MergeOp = 'merge' | 'rebase' | 'cherry-pick' | 'revert' | ''
+
+/** How one conflict is resolved: a side, both in either order, or not yet. */
+export type MergeChoice = 'none' | 'ours' | 'theirs' | 'ours-theirs' | 'theirs-ours'
+
+/**
+ * A piece of a conflicted file: lines neither side changed, a change only one
+ * side made (or both made alike) that merges by itself, or one conflict.
+ */
+export type MergeChunk =
+  | { kind: 'same'; lines: string[] }
+  | {
+      kind: 'auto'
+      /** Which side changed it: `both` when the two made the same change. */
+      from: 'ours' | 'theirs' | 'both'
+      base: string[]
+      ours: string[]
+      theirs: string[]
+      /** The change is in the result; false when the person undid it (the result keeps the base). */
+      isApplied: boolean
+    }
+  | {
+      kind: 'conflict'
+      ours: string[]
+      /** The common ancestor's lines when the markers carry them (diff3 / zdiff3), else null. */
+      base: string[] | null
+      theirs: string[]
+      choice: MergeChoice
+    }
+
+/** A conflicted file as pieces, and what writing it back needs: its line end, final newline and marker labels. */
+export type MergeText = {
+  chunks: MergeChunk[]
+  eol: '\n' | '\r\n'
+  hasFinalEol: boolean
+  /** The text after `<<<<<<<` and `>>>>>>>` on the first conflict: `HEAD`, `feature`. */
+  oursLabel: string
+  theirsLabel: string
+}
+
+/** The file open in the merge pane. */
+export type MergeView = MergeText & {
+  /** Repo-relative path, '' when no file is open. */
+  path: string
+  /** False when the file has no conflict markers to resolve line by line (delete/modify, binary). */
+  hasMarkers: boolean
+  /** The pieces come from a three-way merge of the versions git kept (`:1:` `:2:` `:3:`), not the markers on disk. */
+  hasStages: boolean
+  /** Why the last read or apply failed, '' when none. */
+  error: string
+  /** An apply or take-a-side is running. */
+  isBusy: boolean
 }
 
 /** One process as the scan script reports it. */
@@ -98,6 +158,7 @@ declare module 'claude-code' {
       /** Whether the remote branches section is expanded. */
       showRemote: boolean
       services: ServicesView
+      merge: MergeView
     }
   }
 }

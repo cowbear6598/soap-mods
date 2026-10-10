@@ -1,8 +1,10 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 
 import type { ScanProc, ScanResult } from '../types'
 import { fileKind, formatTrack, groupFiles, parseBranches, parseStatus, splitPath, toHunks } from './git'
 import { findServices, serviceIdentity, splitArgs } from './services'
+import type { DiffHunk } from './merge'
+import { buildResult, choose, conflictLabel, detectOp, diffLines, isResolved, keepChoices, merge3, parseConflicts, toggleApplied } from './merge'
 
 // 面板的 props：引擎畫面板時一定會給，測試照實給一份。
 const PANE_PROPS = {
@@ -160,7 +162,7 @@ test('the pane lists changes, shows a diff and the branches, and switches sub ta
   expect(await ui.find({ type: 'Text', text: SWITCH_FAILED })).toBeUndefined()
 
   await ui.press({ key: 'sub:conflict' })
-  expect(await ui.find({ type: 'Text', text: /Conflict view is not implemented/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'No conflicts.' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -481,4 +483,343 @@ test('a restart that dies right away says so, and the next scan does not wipe th
   await ui.press({ key: 'tab:services' })
   expect(await ui.find({ type: 'Text', text: /Restart failed/ })).toBeDefined()
   await ui.unmount()
+})
+
+// ───── 解衝突 ─────
+
+const CONFLICTED = ['import a', '<<<<<<< HEAD', 'const x = 1', '=======', 'const x = 2', '>>>>>>> feature', 'end', ''].join('\n')
+// git 留著的三個版本：1 共同祖先、2 ours、3 theirs（git show :n:path）。
+const STAGES: Record<string, string> = {
+  ':1:src/a.ts': 'import a\nconst x = 0\nend\n',
+  ':2:src/a.ts': 'import a\nconst x = 1\nend\n',
+  ':3:src/a.ts': 'import a\nconst x = 2\nend\n',
+}
+const showStage = (args: readonly string[]) => {
+  const blob = STAGES[args[1] ?? '']
+
+  return blob === undefined ? { value: { ...ok('').value, exitCode: 128 } } : ok(blob)
+}
+
+test('parseConflicts splits agreed lines from conflicts, with labels, base, CRLF and the final newline', () => {
+  const parsed = parseConflicts(CONFLICTED)
+  expect(parsed).toEqual({
+    chunks: [
+      { kind: 'same', lines: ['import a'] },
+      { kind: 'conflict', ours: ['const x = 1'], base: null, theirs: ['const x = 2'], choice: 'none' },
+      { kind: 'same', lines: ['end'] },
+    ],
+    eol: '\n',
+    hasFinalEol: true,
+    oursLabel: 'HEAD',
+    theirsLabel: 'feature',
+  })
+
+  // diff3：||||||| 後面是共同祖先；CRLF 和沒有結尾換行都照原樣寫回去。
+  const diff3 = ['<<<<<<< HEAD', 'a', '||||||| base', 'o', '=======', 'b', '>>>>>>> dev'].join('\r\n')
+  const d = parseConflicts(diff3)
+  if (d === null) throw new Error('parse failed')
+  expect(d.chunks).toEqual([{ kind: 'conflict', ours: ['a'], base: ['o'], theirs: ['b'], choice: 'none' }])
+  expect(d.eol).toBe('\r\n')
+  expect(d.hasFinalEol).toBe(false)
+  expect(buildResult({ ...d, chunks: choose(d.chunks, 0, 'theirs-ours') })).toBe('b\r\na')
+
+  // 沒有標記、或 <<<<<<< 沒有收尾，都不能一段一段選。
+  expect(parseConflicts('plain\ntext\n')).toBeNull()
+  expect(parseConflicts('<<<<<<< HEAD\na\n=======\nb\n')).toBeNull()
+})
+
+test('buildResult keeps the markers of a conflict still unresolved, and keepChoices carries unchanged conflicts', () => {
+  const parsed = parseConflicts(CONFLICTED)
+  if (parsed === null) throw new Error('parse failed')
+  expect(isResolved(parsed.chunks)).toBe(false)
+  expect(buildResult(parsed)).toBe(CONFLICTED)
+
+  const ours = choose(parsed.chunks, 1, 'ours')
+  expect(isResolved(ours)).toBe(true)
+  expect(buildResult({ ...parsed, chunks: ours })).toBe('import a\nconst x = 1\nend\n')
+  expect(buildResult({ ...parsed, chunks: choose(parsed.chunks, 1, 'ours-theirs') })).toBe('import a\nconst x = 1\nconst x = 2\nend\n')
+
+  // 重讀後同一段衝突沒變：保留選擇；內容變了：重新選。
+  expect(keepChoices(ours, parsed.chunks)).toEqual(ours)
+  const changed = parseConflicts(CONFLICTED.replace('const x = 2', 'const x = 3'))
+  if (changed === null) throw new Error('parse failed')
+  expect(keepChoices(ours, changed.chunks)).toEqual(changed.chunks)
+})
+
+// 照 diffLines 的結果把 a 改一遍，應該剛好變成 b。
+function applyHunks(a: string[], b: string[], hunks: DiffHunk[]) {
+  const out: string[] = []
+  let at = 0
+  for (const h of hunks) {
+    out.push(...a.slice(at, h.aStart), ...b.slice(h.bStart, h.bEnd))
+    at = h.aEnd
+  }
+
+  return [...out, ...a.slice(at)]
+}
+
+test('diffLines finds the changed places, and applying them turns one list into the other', () => {
+  expect(diffLines([], [])).toEqual([])
+  expect(diffLines(['a', 'b', 'c'], ['a', 'x', 'c'])).toEqual([{ aStart: 1, aEnd: 2, bStart: 1, bEnd: 2 }])
+  expect(diffLines(['a', 'b'], ['a', 'b', 'c'])).toEqual([{ aStart: 2, aEnd: 2, bStart: 2, bEnd: 3 }])
+  // 中間夾著沒變的行：是兩個分開的改動。
+  expect(diffLines(['a', 'b', 'c', 'd', 'e'], ['a', 'B', 'c', 'd', 'E'])).toEqual([
+    { aStart: 1, aEnd: 2, bStart: 1, bEnd: 2 },
+    { aStart: 4, aEnd: 5, bStart: 4, bEnd: 5 },
+  ])
+
+  // 亂數產生的清單：改完一定變成另一份，而且一行沒變的話一定沒有改動。
+  let seed = 7
+  const rand = (n: number) => {
+    seed = (seed * 1103515245 + 12345) % 2147483648
+    return seed % n
+  }
+  for (let round = 0; round < 200; round += 1) {
+    const a = Array.from({ length: rand(12) }, () => 'abcd'[rand(4)] ?? 'a')
+    const b = Array.from({ length: rand(12) }, () => 'abcd'[rand(4)] ?? 'a')
+    expect(applyHunks(a, b, diffLines(a, b))).toEqual(b)
+    expect(diffLines(a, a)).toEqual([])
+  }
+})
+
+test('merge3 tells changes one side made from conflicts, as git merges them', () => {
+  const base = ['a', 'b', 'c', 'd', 'e', 'f', 'g']
+  // 兩邊改不同的地方：各自自動合入。
+  const chunks = merge3(base, ['a', 'B', 'c', 'd', 'e', 'f', 'g'], ['a', 'b', 'c', 'd', 'e', 'F', 'g'])
+  expect(chunks).toEqual([
+    { kind: 'same', lines: ['a'] },
+    { kind: 'auto', from: 'ours', base: ['b'], ours: ['B'], theirs: ['b'], isApplied: true },
+    { kind: 'same', lines: ['c', 'd', 'e'] },
+    { kind: 'auto', from: 'theirs', base: ['f'], ours: ['f'], theirs: ['F'], isApplied: true },
+    { kind: 'same', lines: ['g'] },
+  ])
+  const merged = { chunks, eol: '\n' as const, hasFinalEol: true, oursLabel: '', theirsLabel: '' }
+  expect(isResolved(chunks)).toBe(true)
+  expect(buildResult(merged)).toBe('a\nB\nc\nd\ne\nF\ng\n')
+  // Undo 一個自動合入的改動：結果留原本的樣子。
+  expect(buildResult({ ...merged, chunks: toggleApplied(chunks, 1) })).toBe('a\nb\nc\nd\ne\nF\ng\n')
+
+  // 兩邊改得一樣：不算衝突。
+  expect(merge3(['a', 'b'], ['a', 'X'], ['a', 'X'])[1]).toEqual({
+    kind: 'auto',
+    from: 'both',
+    base: ['b'],
+    ours: ['X'],
+    theirs: ['X'],
+    isApplied: true,
+  })
+
+  // 改到同一行，或緊貼著（一邊改 c、一邊改 d）：衝突，跟 git 一樣。
+  expect(merge3(['a', 'b'], ['a', 'X'], ['a', 'Y'])[1]).toEqual({ kind: 'conflict', ours: ['X'], base: ['b'], theirs: ['Y'], choice: 'none' })
+  expect(merge3(['a', 'c', 'd', 'z'], ['a', 'C', 'd', 'z'], ['a', 'c', 'D', 'z'])).toEqual([
+    { kind: 'same', lines: ['a'] },
+    { kind: 'conflict', ours: ['C', 'd'], base: ['c', 'd'], theirs: ['c', 'D'], choice: 'none' },
+    { kind: 'same', lines: ['z'] },
+  ])
+
+  // 沒有共同祖先（兩邊都新增了這個檔案）：一樣的部分保留，不一樣的每一段都是衝突。
+  expect(merge3(null, ['a', 'b', 'c'], ['a', 'x', 'c'])).toEqual([
+    { kind: 'same', lines: ['a'] },
+    { kind: 'conflict', ours: ['b'], base: null, theirs: ['x'], choice: 'none' },
+    { kind: 'same', lines: ['c'] },
+  ])
+})
+
+test('detectOp and conflictLabel', () => {
+  expect(detectOp(['HEAD', 'MERGE_HEAD', 'index'])).toBe('merge')
+  expect(detectOp(['rebase-merge', 'ORIG_HEAD'])).toBe('rebase')
+  expect(detectOp(['CHERRY_PICK_HEAD'])).toBe('cherry-pick')
+  expect(detectOp(['REVERT_HEAD'])).toBe('revert')
+  expect(detectOp(['HEAD'])).toBe('')
+  expect(conflictLabel({ path: 'a', x: 'U', y: 'U' })).toBe('both modified')
+  expect(conflictLabel({ path: 'a', x: 'D', y: 'U' })).toBe('deleted by us')
+  expect(conflictLabel({ path: 'a', x: 'U', y: 'D' })).toBe('deleted by them')
+})
+
+type TestBody = Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>
+type TestEngine = Parameters<TestBody>[0]
+type TestOn = Parameters<TestBody>[1]
+
+// 停在 merge、src/a.ts 有一段衝突的 repo；git add 之後就沒有衝突了。
+function conflictRepo(on: TestOn) {
+  const calls: { args: string[]; cwd?: string; env?: Record<string, string> }[] = []
+  const writes: { path: string; text: string }[] = []
+  const prompts: string[] = []
+  let isAdded = false
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.panes', () => ({ value: [] }))
+  on('ui.close', () => ({ value: undefined }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('clock.now', () => ({ value: 0 }))
+  on('fs.list', () => ({ value: [{ name: 'MERGE_HEAD', kind: 'file', size: 0, mtimeMs: 0, isLink: false }] }))
+  on('fs.read', () => ({ value: CONFLICTED }))
+  on('fs.write', (_$, e) => {
+    writes.push({ path: e.path, text: e.text })
+
+    return { value: undefined }
+  })
+  on('prompt.submit', (_$, e) => {
+    prompts.push(e.text)
+
+    return { text: e.text }
+  })
+  on('process.run', (_$, e) => {
+    const args = e.argv.slice(3)
+    calls.push({ args, cwd: e.init?.cwd, env: e.init?.env })
+    if (args[0] === 'status') return ok(isAdded ? '## main\0M  src/a.ts\0' : '## main\0UU src/a.ts\0')
+    if (args[0] === 'rev-parse') return ok('C:/repo\nC:/repo/.git\n')
+    if (args[0] === 'show') return showStage(args)
+    if (args[0] === 'add') isAdded = true
+
+    return ok('')
+  })
+
+  return { calls, writes, prompts }
+}
+
+const openPanel = ($: TestEngine) =>
+  $.command.run({
+    command: 'soap-panel',
+    args: '',
+    origin: { kind: 'composer' },
+    presentation: { isFullscreen: true, columns: 120 },
+  })
+
+test('the conflict tab lists conflicted files, and the merge pane resolves one, git adds it, then continues', async ($, on) => {
+  const { calls, writes } = conflictRepo(on)
+  await openPanel($)
+
+  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'terminal', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  await ui.press({ key: 'sub:conflict' })
+  expect(await ui.find({ type: 'Text', text: 'Merge in progress' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Conflicts · 1' })).toBeDefined()
+  // 還有衝突時不能 continue。
+  expect(await ui.find({ key: 'op:continue' })).toBeUndefined()
+  await ui.press({ key: 'conflict:src/a.ts' })
+
+  // 三欄在兩種畫面上都畫得出來。
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const pane = await $.ui.mount({ plugin: 'soap-mods', surface, component: 'Pane', requestId: 'soap-merge', props: PANE_PROPS })
+    expect(await pane.find({ type: 'Text', text: '0 of 1 conflicts resolved' })).toBeDefined()
+    expect(await pane.find({ key: 'merge:ours:1' })).toBeDefined()
+    expect(await pane.find({ key: 'merge:theirs:1' })).toBeDefined()
+    expect(await pane.find({ key: 'merge:both:1' })).toBeDefined()
+    // 只畫用得到的按鈕：還沒選時沒有 Reset，還有衝突時沒有 Apply。
+    expect(await pane.find({ key: 'merge:reset:1' })).toBeUndefined()
+    expect(await pane.find({ key: 'merge:apply' })).toBeUndefined()
+    await pane.unmount()
+  }
+
+  const pane = await $.ui.mount({ plugin: 'soap-mods', surface: 'desktop', component: 'Pane', requestId: 'soap-merge', props: PANE_PROPS })
+  await pane.press({ key: 'merge:ours:1' })
+  expect(await pane.find({ type: 'Text', text: '1 of 1 conflicts resolved' })).toBeDefined()
+  // 選好之後中間只剩 Reset，Apply 出現。
+  expect(await pane.find({ key: 'merge:both:1' })).toBeUndefined()
+  expect(await pane.find({ key: 'merge:apply' })).toBeDefined()
+  await pane.press({ key: 'merge:reset:1' })
+  expect(await pane.find({ type: 'Text', text: '0 of 1 conflicts resolved' })).toBeDefined()
+  await pane.press({ key: 'merge:both:1' })
+  await pane.press({ key: 'merge:apply' })
+  await pane.unmount()
+
+  // 寫回 repo 根目錄底下的檔案，在根目錄 git add。
+  // Windows 上引擎會把路徑轉成反斜線。
+  expect(writes.map(w => ({ ...w, path: w.path.replace(/\\/g, '/') }))).toEqual([
+    { path: 'C:/repo/src/a.ts', text: 'import a\nconst x = 1\nconst x = 2\nend\n' },
+  ])
+  expect(calls.some(c => c.args.join(' ') === 'add -- src/a.ts' && c.cwd === 'C:/repo')).toBe(true)
+
+  // 衝突都解完了：可以 continue，merge 是直接用預設訊息 commit、不開編輯器。
+  expect(await ui.find({ type: 'Text', text: 'All conflicts resolved.' })).toBeDefined()
+  await ui.press({ key: 'op:continue' })
+  const commit = calls.find(c => c.args.join(' ') === 'commit --no-edit')
+  expect(commit?.env).toEqual({ GIT_EDITOR: 'true' })
+  await ui.unmount()
+})
+
+test('abort asks once more before running, and Ask Claude sends the file to the model', async ($, on) => {
+  const { calls, prompts } = conflictRepo(on)
+  await openPanel($)
+
+  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'terminal', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  await ui.press({ key: 'sub:conflict' })
+  await ui.press({ key: 'op:abort' })
+  expect(calls.some(c => c.args[1] === '--abort')).toBe(false)
+  expect(await ui.find({ key: 'op:abort-cancel' })).toBeDefined()
+  await ui.press({ key: 'op:abort-cancel' })
+  expect(await ui.find({ key: 'op:abort-cancel' })).toBeUndefined()
+
+  await ui.press({ key: 'conflict:src/a.ts' })
+  const pane = await $.ui.mount({ plugin: 'soap-mods', surface: 'desktop', component: 'Pane', requestId: 'soap-merge', props: PANE_PROPS })
+  await pane.press({ key: 'merge:claude' })
+  expect(prompts.length).toBe(1)
+  expect(prompts[0]).toContain('`src/a.ts`')
+  await pane.unmount()
+
+  await ui.press({ key: 'op:abort' })
+  await ui.press({ key: 'op:abort' })
+  expect(calls.some(c => c.args.join(' ') === 'merge --abort' && c.cwd === 'C:/repo')).toBe(true)
+  await ui.unmount()
+})
+
+test('a pane brought to the front, or one whose pressed button was swapped out, gets the keyboard back', async ($, on) => {
+  const clock = mock.clock(on)
+  const pane = (id: string, isShown: boolean, isFocused: boolean) => ({ id, title: id, isShown, isFocused, isPlaced: true })
+  let panes = [pane('soap-panel', true, false)]
+  const focused: string[] = []
+  on('ui.panes', () => ({ value: panes }))
+  on('ui.open', (_$, e) => {
+    if (e.focus === true) focused.push(e.id)
+
+    return { value: { isPlaced: true } }
+  })
+  on('ui.close', () => ({ value: undefined }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  on('command.register', (_$, e) => ({ value: { command: e.name } }))
+  on('fs.list', () => ({ value: [{ name: 'MERGE_HEAD', kind: 'file', size: 0, mtimeMs: 0, isLink: false }] }))
+  on('fs.read', () => ({ value: CONFLICTED }))
+  on('process.run', (_$, e) => {
+    const args = e.argv.slice(3)
+    if (args[0] === 'status') return ok('## main\0UU src/a.ts\0')
+    if (args[0] === 'rev-parse') return ok('C:/repo\nC:/repo/.git\n')
+    if (args[0] === 'show') return showStage(args)
+
+    return ok('')
+  })
+  await $.session.start({ cwd: 'C:/repo', surface: 'desktop', isInteractive: true })
+
+  // 剛啟動時 Soap Panel 在前面但沒焦點：不搶（人可能正在輸入框打字）。
+  await clock.advance(200)
+  expect(focused).toEqual([])
+
+  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'desktop', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  await ui.press({ key: 'sub:conflict' })
+  await ui.press({ key: 'conflict:src/a.ts' })
+  await ui.unmount()
+  focused.length = 0
+
+  // 合併面板被切到前面、沒拿到焦點：補給它。
+  panes = [pane('soap-panel', false, false), pane('soap-merge', true, false)]
+  await clock.advance(200)
+  expect(focused).toEqual(['soap-merge'])
+  focused.length = 0
+
+  // 按了 Accept，被按的按鈕被換掉而丟了焦點：剛按完的一小段時間內補回來。
+  panes = [pane('soap-panel', false, false), pane('soap-merge', true, true)]
+  const merge = await $.ui.mount({ plugin: 'soap-mods', surface: 'desktop', component: 'Pane', requestId: 'soap-merge', props: PANE_PROPS })
+  await merge.press({ key: 'merge:ours:1' })
+  panes = [pane('soap-panel', false, false), pane('soap-merge', true, false)]
+  await clock.advance(200)
+  expect(focused).toEqual(['soap-merge'])
+  focused.length = 0
+
+  // 過了那段時間才丟焦點（人自己點去輸入框）：不搶回來。
+  await clock.advance(1000)
+  panes = [pane('soap-panel', false, false), pane('soap-merge', true, true)]
+  await clock.advance(200)
+  panes = [pane('soap-panel', false, false), pane('soap-merge', true, false)]
+  await clock.advance(200)
+  expect(focused).toEqual([])
+  await merge.unmount()
 })
