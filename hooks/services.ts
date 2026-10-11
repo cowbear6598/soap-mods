@@ -115,6 +115,11 @@ function isUnder(path: string | null, root: string) {
   return p === root || p.startsWith(`${root}\\`)
 }
 
+// path 在 folder 底下（或就是它）；兩邊斜線方向、大小寫不同也算。
+export function isInFolder(path: string, folder: string) {
+  return isUnder(path, normPath(folder))
+}
+
 const SHELLS = ['cmd.exe', 'powershell.exe', 'pwsh.exe', 'bash.exe', 'sh.exe', 'zsh.exe', 'nu.exe']
 // 往上併的時候絕不併進去的程式：shell（你開的終端機）、編輯器、IDE、終端機視窗、桌面版 Claude。
 // 它們的工作目錄常常也在專案裡，併進去的話「停止」會把它們一起砍掉。
@@ -185,59 +190,106 @@ const NODE_CLIS: Record<string, string> = {
   'yarn.cjs': 'yarn',
 }
 
-// 指令拆成工具名稱（去掉路徑和 .exe；node npm-cli.js 算 npm）和後面的參數。
-function commandParts(cmd: string) {
-  const args = splitArgs(cmd)
-  let head = baseName(args[0] ?? '').replace(/\.exe$/i, '')
-  let rest = args.slice(1)
-  const cli = NODE_CLIS[baseName(rest[0] ?? '').toLowerCase()]
-  if (head.toLowerCase() === 'node' && cli !== undefined) {
-    head = cli
-    rest = rest.slice(1)
+// 工具名稱：指令的第一段，去掉路徑和 .exe；node npm-cli.js 算 npm。
+export function toolName(cmd: string) {
+  const [first = '', second = ''] = splitArgs(cmd)
+  const head = baseName(first).replace(/\.exe$/i, '')
+  const cli = NODE_CLIS[baseName(second).toLowerCase()]
+
+  return head.toLowerCase() === 'node' && cli !== undefined ? cli : head
+}
+
+// 參數裡某個旗標後面那一個值（-C X）。
+function flagValue(args: string[], name: string) {
+  const i = args.indexOf(name)
+
+  return i >= 0 ? args[i + 1] : undefined
+}
+
+// 建置產物、套件、虛擬環境的資料夾：路徑走到這裡就切掉，算它前面那一層（web/node_modules/vite → web、
+// api/bin/Debug/Api.exe → api、rs/target/debug → rs）。名稱開頭是 . 的資料夾（.venv、.next）也一樣。
+const OUTPUT_DIRS = ['bin', 'obj', 'target', 'build', 'dist', 'out']
+const BUILD_DIRS = [...OUTPUT_DIRS, 'node_modules', 'venv', '__pycache__']
+// 設定檔：--config conf/dev/app.json 這種不代表專案在哪，不算。
+const CONFIG_FILE = /\.(json|ya?ml|env|ini|conf|cfg|properties|xml|txt|log)$/i
+
+// 資料夾路徑拆成一段一段，處理 . 和 ..。
+function segments(path: string) {
+  const out: string[] = []
+  for (const s of path.split(/[\\/]+/)) {
+    if (s === '' || s === '.') continue
+    if (s === '..') out.pop()
+    else out.push(s)
   }
 
-  return { head, rest }
+  return out
 }
 
-// 參數裡某個旗標後面那一個值（--project X、-C X）。
-function flagValue(rest: string[], ...names: string[]) {
-  const i = rest.findIndex(a => names.includes(a))
+const isAbsolute = (p: string) => /^[A-Za-z]:[\\/]/.test(p)
 
-  return i >= 0 ? rest[i + 1] : undefined
+// 參數裡看起來像路徑的部分（--flag=值 取值；classpath 用 ; 分開）。網址、glob、Windows 的 /c 開關、
+// 沒有斜線的單字（run、dev、app.main:app）都不算。
+function pathArgs(args: string[]) {
+  return args
+    .flatMap(a => (a.includes('=') ? a.slice(a.indexOf('=') + 1) : a).split(';'))
+    .filter(a => {
+      if (a === '' || /[\s*?<>|"]/.test(a)) return false
+      // 冒號只能是磁碟代號（C:\），所以網址、app.main:app 都不算。
+      if (a.includes(':')) return isAbsolute(a) && a.indexOf(':', 2) < 0
+      if (a === '.' || a === '..') return true
+      // 相對路徑：要有斜線，而且不是斜線或 - 開頭（/c、/d 是 cmd 的開關）。
+      return /[\\/]/.test(a) && !/^[\\/-]/.test(a)
+    })
 }
 
-// 指名專案本身的檔案：名字就是專案名（InventoryApi.csproj → InventoryApi）。
-const PROJECT_FILE = /\.(csproj|fsproj|vbproj|dll|jar)$/i
-// 腳本：專案名是它所在的資料夾（node/notify-svc/server.js → notify-svc）。
-const SCRIPT_FILE = /\.(m?[jt]sx?|cjs|cts|py|rb|php|go|exs?)$/i
+// 切在 session 資料夾底下第一個建置產物資料夾前面（skip 是 session 資料夾本身有幾段，那幾段不看）。
+function cutBuildDirs(segs: string[], skip: number) {
+  const at = segs.findIndex((s, i) => i >= skip && (s.startsWith('.') || BUILD_DIRS.includes(s.toLowerCase())))
 
-// 面板上一個服務顯示成「工具 · 專案名」：專案名先看指令指到哪（--project、-C、腳本路徑），
-// 都沒有就用它跑在哪個資料夾。
-export function serviceIdentity(cmd: string, dir: string) {
-  const { head, rest } = commandParts(cmd)
-  const flag = (...names: string[]) => flagValue(rest, ...names)
-  const fromPath = (path: string) => {
-    const parts = path.split(/[\\/]/).filter(s => s !== '' && s !== '.')
-    const last = parts.at(-1)
-    if (last === undefined) return undefined
-    if (PROJECT_FILE.test(last)) return last.replace(PROJECT_FILE, '')
-    if (SCRIPT_FILE.test(last)) return parts.at(-2)
+  return at < 0 ? segs : segs.slice(0, at)
+}
 
-    return last
+// 面板上的服務名稱：從最上層到開著 port 的那串程序，收集它們碰到的資料夾（工作目錄、執行檔位置、
+// 參數裡的路徑），只留 session 資料夾底下的，切掉建置產物那幾層，取最深的那一個的名字。
+// 不看是什麼語言：go run ./inventory-service、cargo 的 target/debug/api.exe、IDE 跑 Java 的
+// target/classes、dotnet 的 bin/Debug/Api.exe 都會走到專案自己的資料夾。都沒有就是 session 資料夾的名字。
+export function serviceName(procs: ScanProc[], sessionCwd: string) {
+  const root = normPath(sessionCwd)
+  const skip = segments(sessionCwd).length
+  // 檔案算它所在的資料夾；最後一段有副檔名就當作檔案（Api.exe、server.js）。
+  const fileDir = (segs: string[]) => (/\.[A-Za-z0-9]+$/.test(segs.at(-1) ?? '') ? segs.slice(0, -1) : segs)
+
+  // 越深越好；一樣深時，建置輸出資料夾裡的執行檔（target/debug/api.exe、bin/Debug/Api.exe）優先，
+  // 名字用執行檔的名字：cargo workspace 的執行檔都在最外層的 target 裡，只有檔名分得出是哪個服務。
+  let best: { depth: number; isProduct: boolean; name: string } | undefined
+  const consider = (segs: string[], exeName?: string) => {
+    if (!isUnder(segs.join('\\'), root)) return
+    const dir = cutBuildDirs(segs, skip)
+    // 只算建置輸出（target、bin…）；node_modules、.venv 裡的是工具（esbuild、python），不是服務本身。
+    const isProduct = exeName !== undefined && OUTPUT_DIRS.includes(segs[dir.length]?.toLowerCase() ?? '')
+    const isBetter =
+      best === undefined || dir.length > best.depth || (dir.length === best.depth && isProduct && !best.isProduct)
+    if (isBetter) best = { depth: dir.length, isProduct, name: isProduct ? exeName : (dir.at(-1) ?? '') }
+  }
+  for (const p of procs) {
+    if (isCmdWrapper(p)) continue
+    if (p.cwd !== null) consider(segments(p.cwd))
+    if (p.exe !== null) consider(segments(p.exe).slice(0, -1), baseName(p.exe).replace(/\.[^.]+$/, ''))
+    for (const a of pathArgs(splitArgs(p.cmd ?? '').slice(1))) {
+      if (CONFIG_FILE.test(a) || (!isAbsolute(a) && p.cwd === null)) continue
+      consider(fileDir(segments(isAbsolute(a) ? a : `${p.cwd}\\${a}`)))
+    }
   }
 
-  const pkg = head.toLowerCase() === 'cargo' ? flag('-p', '--package') : undefined
-  const entry = flag('--project') ?? flag('-C') ?? rest.find(a => PROJECT_FILE.test(a) || SCRIPT_FILE.test(a))
-  const name = pkg ?? (entry === undefined ? undefined : fromPath(entry)) ?? baseName(trimSlash(dir))
-
-  return { tool: head, name: name === '' ? head : name }
+  return best?.name || baseName(trimSlash(sessionCwd))
 }
 
-// 從執行檔或腳本路徑猜專案資料夾：切在 node_modules、bin、obj 前面。
-function guessDir(path: string) {
-  const m = /^(.*?)\\(node_modules|bin|obj)\\/i.exec(path.replace(/\//g, '\\'))
+// 從執行檔路徑猜專案資料夾：切掉建置產物那幾層；不在建置產物裡就猜不到。
+function guessDir(path: string, skip: number) {
+  const segs = segments(path)
+  const dir = cutBuildDirs(segs, skip)
 
-  return m?.[1]
+  return dir.length < segs.length ? dir.join('\\') : undefined
 }
 
 // 指令當初是在哪個資料夾下的。go -C <dir> 會自己 cd 進去，讀到的工作目錄多了那一層，重跑前要退回來。
@@ -253,6 +305,7 @@ function startDir(top: ScanProc, dir: string) {
 // 整理掃描結果：屬於 session 資料夾的程序，往上併到同一個服務（npm → cmd /c → node vite 算一筆），附上 port。
 export function findServices(scan: ScanResult, sessionCwd: string): Service[] {
   const root = normPath(sessionCwd)
+  const skip = segments(sessionCwd).length
   const self = new Set(scan.self)
   const byPid = new Map(scan.procs.map(p => [p.pid, p]))
   const children = new Map<number, ScanProc[]>()
@@ -319,14 +372,15 @@ export function findServices(scan: ScanResult, sessionCwd: string): Service[] {
     const pids = new Set(tree.map(p => p.pid))
     const ports = [...new Set(scan.ports.filter(l => pids.has(l.pid)).map(l => l.port))].sort((a, b) => a - b)
     // 重跑就照最上層的指令原樣再跑一次（cmd /c "a && b" 這種包裝也保留）；
-    // 顯示的名字則從最上層往開著 port 的那個程序走，取第一個不是 cmd /c 包裝的，名字才不會是 cmd。
+    // 工具名稱從最上層往開著 port 的那個程序走，取第一個不是 cmd /c 包裝的，名字才不會是 cmd。
     const chain: ScanProc[] = []
     for (let p: ScanProc | undefined = listener; p !== undefined && p !== top; p = parentOf(p)) chain.unshift(p)
     const main = [top, ...chain].find(p => !isCmdWrapper(p)) ?? top
+    const tool = toolName(main.cmd ?? main.exe ?? main.name)
     const foundDir =
       (isUnder(top.cwd, root) ? top.cwd : null) ??
       tree.find(p => isUnder(p.cwd, root))?.cwd ??
-      tree.map(p => (p.exe !== null && isUnder(p.exe, root) ? guessDir(p.exe) : undefined)).find(d => d !== undefined) ??
+      tree.map(p => (p.exe !== null && isUnder(p.exe, root) ? guessDir(p.exe, skip) : undefined)).find(d => d !== undefined) ??
       top.cwd ??
       sessionCwd
     const dir = startDir(top, foundDir)
@@ -334,7 +388,8 @@ export function findServices(scan: ScanResult, sessionCwd: string): Service[] {
     return {
       pid: top.pid,
       startedAt: top.started,
-      ...serviceIdentity(main.cmd ?? main.exe ?? main.name, dir),
+      tool,
+      name: serviceName([top, ...chain], sessionCwd),
       command: top.cmd ?? '',
       dir,
       ports,

@@ -41,6 +41,24 @@ export type GitView = {
   opError: string
   /** The abort button was pressed once and now asks to confirm. */
   isAbortArmed: boolean
+  /**
+   * The repo bar: just the session folder's repo when it is one; else the repos one level down
+   * (`company/a`, `company/b`), by name. [] when there is none.
+   */
+  repos: RepoSummary[]
+  /** Folder name of the repo the Git tab shows, '' when none. */
+  repo: string
+}
+
+/** One repo under the session folder, as the repo bar shows it. */
+export type RepoSummary = {
+  /** Its folder's name. */
+  name: string
+  /** Absolute path of its work tree, as git prints it. */
+  root: string
+  /** Has uncommitted changes (untracked files too); the bar marks it with `*`. */
+  isDirty: boolean
+  hasConflict: boolean
 }
 
 export type MergeOp = 'merge' | 'rebase' | 'cherry-pick' | 'revert' | ''

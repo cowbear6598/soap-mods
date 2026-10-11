@@ -10,6 +10,7 @@ import type {
   MergeChunk,
   MergeOp,
   MergeView,
+  RepoSummary,
   ScanResult,
   Service,
   ServiceAction,
@@ -34,7 +35,7 @@ import {
   takesSide,
   toggleApplied,
 } from './merge'
-import { LAUNCH_ARGV, SCAN_ARGV, findServices } from './services'
+import { LAUNCH_ARGV, SCAN_ARGV, findServices, isInFolder } from './services'
 
 // ───── 想改面板標題或分頁，改這一區 ─────
 const PANE = 'soap-panel'
@@ -168,6 +169,8 @@ const EMPTY: GitView = {
   op: '',
   opError: '',
   isAbortArmed: false,
+  repos: [],
+  repo: '',
 }
 
 const tab = atom({ plugin: 'soap-mods', key: 'tab' } as const, 'git')
@@ -210,16 +213,83 @@ function formatResetIn(resetsAt: string | undefined, now: number) {
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err))
 
-// repo 根目錄和 .git 資料夾：第一次 refresh 時問 git，之後不會變。status 給的路徑都相對根目錄，
+// Git 分頁正在看的 repo：根目錄、.git 資料夾、資料夾名稱。status 給的路徑都相對根目錄，
 // 所以知道根目錄之後 git 一律在根目錄跑，讀寫檔案也接在根目錄後面。
-let repo: { root: string; gitDir: string } | undefined
+type Repo = { name: string; root: string; gitDir: string }
+let repo: Repo | undefined
+// 那排 repo 按鈕：session 資料夾本身是 repo 時只有它一個；不是的話（例如在 company/ 開，底下 a、b、c
+// 各是一個 repo）是下一層找到的 repo，照名稱排。每次 refresh 重找，新 clone 的也會出現。
+let repoList: Repo[] = []
 
-async function git($: EngineInterface, args: string[], init?: { env?: Record<string, string> }) {
-  return $.process.run(['git', '-c', 'core.quotepath=false', ...args], repo === undefined ? init : { cwd: repo.root, ...init })
+const REPO_ARGS = ['rev-parse', '--show-toplevel', '--absolute-git-dir']
+const STATUS_ARGS = ['status', '--porcelain=v1', '-b', '-z', '-uall']
+
+// 預設在選中的 repo 根目錄跑；init.cwd 指定別的資料夾（找 repo、看其他 repo 的狀態）。
+async function git($: EngineInterface, args: string[], init?: { cwd?: string; env?: Record<string, string> }) {
+  return $.process.run(['git', '-c', 'core.quotepath=false', ...args], { cwd: repo?.root, ...init })
+}
+
+const isNotRepo = (r: ProcessRunResult) => r.stderr.includes('not a git repository')
+
+// rev-parse 的輸出（根目錄一行、.git 資料夾一行）；不是 repo 或讀不到就是 undefined。名稱是根目錄的資料夾名。
+function parseRepo(r: ProcessRunResult): Repo | undefined {
+  const [root = '', gitDir = ''] = r.exitCode === 0 ? r.stdout.split('\n').map(s => s.trim()) : []
+
+  return root === '' || gitDir === '' ? undefined : { name: splitPath(root).name, root, gitDir }
+}
+
+// 找 repo：session 資料夾本身是 repo 就只有它；不是的話看下一層有 .git 的資料夾。
+// 已經找過的不再問 git，只有新的才跑一次 rev-parse。
+async function findRepos($: EngineInterface): Promise<Repo[]> {
+  const cwd = await $.session.cwd()
+  const self = await git($, REPO_ARGS, { cwd })
+  if (!isNotRepo(self)) {
+    const found = parseRepo(self)
+
+    return found === undefined ? [] : [found]
+  }
+  const entries = await $.fs.list(cwd).catch(() => [])
+  const found = await Promise.all(
+    entries
+      .filter(e => e.kind === 'dir' && !e.name.startsWith('.'))
+      .map(async e => {
+        const dir = `${cwd}/${e.name}`
+        if (!(await $.fs.exists(`${dir}/.git`).catch(() => false))) return undefined
+
+        return repoList.find(c => c.name === e.name) ?? parseRepo(await git($, REPO_ARGS, { cwd: dir }))
+      }),
+  )
+
+  return found.filter(c => c !== undefined).sort((a, b) => a.name.localeCompare(b.name))
+}
+
+const toSummary = (r: Repo, files: GitFile[]): RepoSummary => ({
+  name: r.name,
+  root: r.root,
+  isDirty: files.length > 0,
+  hasConflict: files.some(isConflict),
+})
+
+// 其他 repo 有沒有變更、有沒有衝突：不用分支、不展開未追蹤的資料夾，比較快；讀不到就當作沒有變更。
+async function summarize($: EngineInterface, r: Repo): Promise<RepoSummary> {
+  const status = await git($, ['status', '--porcelain=v1', '-z'], { cwd: r.root }).catch(() => undefined)
+
+  return toSummary(r, status?.exitCode === 0 ? parseStatus(status.stdout).files : [])
+}
+
+// 換 Git 分頁看的 repo：開著的 diff／合併面板是上一個 repo 的檔案，關掉；合併面板正在寫檔時不換。
+async function selectRepo($: EngineInterface, name: string) {
+  const next = repoList.find(c => c.name === name)
+  if (next === undefined || next === repo || (await read($, merge)).isBusy) return
+  repo = next
+  stageCache = undefined
+  await setView($, { ...NO_DIFF, repo: name, branchError: '', opError: '', isAbortArmed: false })
+  await Promise.all([closeMerge($), $.ui.close({ id: DIFF_PANE })])
+  await refresh($)
 }
 
 // 跑 git，結束碼不是 0 就丟出它的錯誤訊息。
-async function gitOk($: EngineInterface, args: string[], init?: { env?: Record<string, string> }) {
+async function gitOk($: EngineInterface, args: string[], init?: { cwd?: string; env?: Record<string, string> }) {
   const r = await git($, args, init)
   if (r.exitCode !== 0) throw failure(r, `git ${args.join(' ')}`)
 
@@ -228,14 +298,9 @@ async function gitOk($: EngineInterface, args: string[], init?: { env?: Record<s
 
 const inRepo = (path: string) => (repo === undefined ? path : `${repo.root}/${path}`)
 
-// .git 資料夾裡有哪些檔案（看得出停在 merge 還是 rebase）；第一次順便記下 repo 的位置。
+// .git 資料夾裡有哪些檔案（看得出停在 merge 還是 rebase）。
 async function readGitDir($: EngineInterface): Promise<string[]> {
-  if (repo === undefined) {
-    const r = await git($, ['rev-parse', '--show-toplevel', '--absolute-git-dir'])
-    const [root = '', gitDir = ''] = r.exitCode === 0 ? r.stdout.split('\n').map(s => s.trim()) : []
-    if (root === '' || gitDir === '') return []
-    repo = { root, gitDir }
-  }
+  if (repo === undefined) return []
 
   return $.fs.list(repo.gitDir).then(
     entries => entries.map(entry => entry.name),
@@ -310,11 +375,21 @@ async function refresh($: EngineInterface) {
   let status
   let refs
   let names
+  let others: (RepoSummary | undefined)[]
   try {
-    ;[status, refs, names] = await Promise.all([
-      git($, ['status', '--porcelain=v1', '-b', '-z', '-uall']),
+    repoList = await findRepos($)
+    // 選中的 repo 還在就留著，不在了（或還沒選過）就換成第一個。
+    repo = repoList.find(c => c.root === repo?.root) ?? repoList[0]
+    if (repo === undefined) {
+      await setView($, { ...EMPTY, isLoaded: true, isRepo: false })
+
+      return
+    }
+    ;[status, refs, names, others] = await Promise.all([
+      git($, STATUS_ARGS),
       git($, ['for-each-ref', `--format=${BRANCH_FORMAT}`, 'refs/heads', 'refs/remotes']),
       readGitDir($),
+      Promise.all(repoList.map(c => (c === repo ? undefined : summarize($, c)))),
     ])
   } catch {
     await setView($, { isLoaded: true, isRepo: false, error: NO_GIT })
@@ -322,15 +397,20 @@ async function refresh($: EngineInterface) {
     return
   }
 
+  // 那排 repo：選中的那個用下面完整讀到的狀態，其他的用 summarize 的。
+  const active = repo
+  const repos = (files: GitFile[]) => others.map(o => o ?? toSummary(active, files))
+
   if (status.exitCode !== 0) {
-    const isNotRepo = status.stderr.includes('not a git repository')
     await setView($, {
       ...NO_DIFF,
       isLoaded: true,
       isRepo: false,
-      error: isNotRepo ? '' : status.stderr.trim(),
+      error: isNotRepo(status) ? '' : status.stderr.trim(),
       files: [],
       branches: [],
+      repos: repos([]),
+      repo: active.name,
     })
 
     return
@@ -345,6 +425,8 @@ async function refresh($: EngineInterface) {
     isRepo: true,
     error: '',
     files,
+    repos: repos(files),
+    repo: active.name,
     branches: refs.exitCode === 0 ? parseBranches(refs.stdout) : [],
     op: detectOp(names),
     ...(await readDiff($, files, selected)),
@@ -591,7 +673,7 @@ async function askClaude($: EngineInterface) {
   if (m.path === '') return
   const during = v.op === '' ? '' : ` (a ${v.op} is in progress; do not continue or abort it)`
   await $.prompt.submit({
-    text: `Resolve the git conflicts in \`${m.path}\`${during}. Keep what both sides meant to do, remove every conflict marker, then run \`git add\` on the file.`,
+    text: `Resolve the git conflicts in \`${inRepo(m.path)}\`${during}. Keep what both sides meant to do, remove every conflict marker, then run \`git add\` on the file.`,
     asUser: true,
   })
   $.ui.toast('Sent to Claude')
@@ -944,6 +1026,22 @@ export const register: Register = on => {
 
     const error = activeTab === 'git' && v.error !== '' ? <Text color="error">{v.error}</Text> : null
 
+    // repo 排成一排：「a*」是有未提交的變更，「!」是有衝突。session 資料夾本身是 repo 時只有它一個；
+    // 不是的話是下一層的 repo，點了換 Git 分頁看的 repo；面板不會自己換。
+    const repoBar =
+      v.repos.length === 0 ? null : (
+        <Box gap={1} flexWrap="wrap" justifyContent="center" width="100%">
+          {v.repos.map(r => (
+            <Button
+              key={`repo:${r.name}`}
+              label={`${r.name}${r.isDirty ? '*' : ''}${r.hasConflict ? ' !' : ''}`}
+              variant={r.name === v.repo ? 'primary' : 'secondary'}
+              onPress={act($, PANE, () => selectRepo($, r.name))}
+            />
+          ))}
+        </Box>
+      )
+
     let body
     if (activeTab === 'services') {
       // 一個服務一行：● 工具 · 專案名 · port，右邊重跑、停止（紅色）。
@@ -952,7 +1050,7 @@ export const register: Register = on => {
         const dot = <Text dimColor>{' · '}</Text>
 
         return (
-          <Box key={`svc:${s.pid}`} gap={1} alignItems="center">
+          <Box key={`svc:${s.pid}`} gap={1} alignItems="center" paddingLeft={2}>
             <Text color={pending === undefined ? 'success' : 'warning'}>●</Text>
             <Box flexGrow={1} flexShrink={1} overflow="hidden">
               <Text>{s.tool}</Text>
@@ -975,6 +1073,16 @@ export const register: Register = on => {
         )
       }
 
+      // 照 repo 分組，跟 diff 分頁的 Staged／Unstaged 一樣：標題是 repo 名（不寫數量），下面是它的服務。
+      // 組的順序跟上面那排 repo 一樣；不在任何 repo 裡的放最後的 Other。還沒讀到 repo 時全部放在 Running。
+      const groupOf = new Map(sv.items.map(s => [s, v.repos.find(r => isInFolder(s.dir, r.root))?.name ?? 'Other']))
+      const serviceGroups =
+        v.repos.length === 0
+          ? [{ name: 'Running', items: sv.items }]
+          : [...v.repos.map(r => r.name), 'Other']
+              .map(name => ({ name, items: sv.items.filter(s => groupOf.get(s) === name) }))
+              .filter(g => g.items.length > 0)
+
       body = (
         <Box flexDirection="column" gap={1}>
           {sv.error !== '' && <Text color="error">{sv.error}</Text>}
@@ -985,8 +1093,12 @@ export const register: Register = on => {
             <Text dimColor>No services running in this folder.</Text>
           ) : (
             <Box flexDirection="column" gap={1}>
-              <Text bold dimColor>{`Running · ${sv.items.length}`}</Text>
-              {sv.items.map(serviceRow)}
+              {serviceGroups.map(g => (
+                <Box key={`svc-group:${g.name}`} flexDirection="column">
+                  <Text bold dimColor>{g.name}</Text>
+                  {g.items.map(serviceRow)}
+                </Box>
+              ))}
             </Box>
           )}
         </Box>
@@ -1187,6 +1299,8 @@ export const register: Register = on => {
           <Box flexDirection="column">
             {iconBar('tab', TABS, activeTab, id => void selectTab($, id))}
             {divider}
+            {activeTab === 'git' && repoBar}
+            {activeTab === 'git' && repoBar !== null && divider}
             {activeTab === 'git' &&
               iconBar(
                 'sub',

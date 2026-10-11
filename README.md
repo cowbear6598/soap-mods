@@ -6,7 +6,9 @@ CptSoap 的 Claude Code Panel mod。
 
 面板上方是 Tab：**Git** 和 **Services**。
 
-選到 Git 後有三個子分頁：
+選到 Git 後最上面是一排 repo 按鈕，例如 `a*`　`b`　`c* !`：`*` 是有未提交的變更，`!` 是有衝突。session 資料夾本身是 repo 時只有它一個；不是的話（例如在 `company/` 開，底下 `a`、`b`、`c` 各是一個 repo）列出下一層的 repo，點哪個，下面的 diff／branch／conflict 就看哪個。面板不會自己換（一個回合可能動到好幾個 repo），每個回合結束後所有 repo 的數字一起更新。只看下一層，名稱開頭是 `.` 的資料夾不算。
+
+下面有三個子分頁：
 
 - **diff**：列出目前資料夾的未提交變更（含未追蹤檔案），每一組照狀態排（衝突 → 新增 → 修改 → 改名 → 刪除），點檔案就在下面看它的差異。
 - **branch**：列出本地與遠端分支（目前分支在最上面），點分支名稱可以切換。
@@ -30,6 +32,8 @@ CptSoap 的 Claude Code Panel mod。
 
 - **重跑**：砍掉整棵程序樹，在同一個資料夾用同一個指令重開。重開的服務在背景執行、不開視窗，不存 log。新程序 30 秒內就結束的話，面板會顯示重跑失敗（原因要自己跑一次那個指令看）。
 - **停止**：砍掉整棵程序樹（`taskkill /T /F`）。
+
+服務照 repo 分組（跟 diff 分頁的 Staged／Unstaged 一樣），組的順序跟 Git 分頁那排 repo 一樣；不在任何 repo 裡的放在最後的 **Other**。
 
 判斷方式：**有開 port**，而且工作目錄或執行檔在 session 資料夾底下，就算一個服務。不看是什麼語言，所以 Node、.NET、Go、Rust、Python…都一樣。父子程序會併成一筆，例如 `npm → cmd /c → node vite`、`go run → go-server.exe`、`cargo run → app.exe`；往上併到你的終端機（shell）、編輯器或 IDE 就停，所以「停止」不會砍到它們。桌面版 `.claude/launch.json` 預覽開的伺服器也會列出。不會列出的有：沒開 port 的程式（language server、背景 script），以及 Claude Code 引擎自己和它直接開的程序（MCP server 等）。分頁開著時每 5 秒掃一次。
 
