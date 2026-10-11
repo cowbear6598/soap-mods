@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, PaneOpenArgs, ProcessRunResult, Register, RenderChildren } from 'claude-code'
+import type { EngineInterface, PaneOpenArgs, ProcessRunResult, Register, RenderChildren, Timer } from 'claude-code'
 
 import type {
   CommitFile,
@@ -107,6 +107,9 @@ const ICONS = {
     '<rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/>',
   restart: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
   stop: '<rect width="14" height="14" x="5" y="5" rx="2"/>',
+  trash:
+    '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
 }
 type IconName = keyof typeof ICONS
 
@@ -123,6 +126,8 @@ const ROW_OVERLAY_WIDTH = ROW_BUTTON_LABEL.length * 2
 
 // 沒選中的圖示和分隔線的顏色。
 const MUTED = '#8b8b8b'
+// 選中的圖示（和紅底上的圖示）的顏色。
+const ACTIVE_ICON = '#ffffff'
 
 // 分隔線。桌面版把 Svg 畫成 max-width:100% 的圖，寬度會被壓到面板寬、高度固定 1px；
 // preserveAspectRatio="none" 讓線跟著拉伸，不會被等比縮到看不見。終端機沒有 Svg，用一長串橫線字元。
@@ -138,7 +143,7 @@ function stretchedSvg(heightPx: number, bars: { width: number; fill: string }[])
 }
 
 function iconSvg(name: IconName, isActive: boolean, tint?: string) {
-  const color = tint ?? (isActive ? '#ffffff' : MUTED)
+  const color = tint ?? (isActive ? ACTIVE_ICON : MUTED)
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${ICON_PX}" height="${ICON_PX}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`
 }
@@ -169,6 +174,8 @@ const USAGE_WINDOWS = [
 const USAGE_GOOD = { theme: 'success', hex: '#4eba65' }
 const USAGE_WARN = { theme: 'warning', hex: '#d4a72c' }
 const USAGE_LOW = { theme: 'error', hex: '#e5534b' }
+// 分支的打勾：紅底白勾（終端機是按鈕前的紅色方塊），一看就知道再按會刪。
+const ARMED_TINT = { theme: USAGE_LOW.theme, hex: ACTIVE_ICON, background: USAGE_LOW.hex }
 // 重置倒數多久重畫一次。
 const USAGE_TICK_MS = 60_000
 // bar 的高度（桌面版，px）；終端機的文字 bar 有幾格。
@@ -180,6 +187,8 @@ const SERVICES_SCAN_MS = 5_000
 // 服務要一點時間才會 LISTEN）。這段時間內掛掉就算重跑失敗，在面板上提示。
 const RESTART_GAP_MS = 500
 const RESTART_CHECK_MS = [2_000, 5_000, 15_000, 30_000]
+// 分支的垃圾桶換成打勾後，多久沒再按就收回去。
+const DELETE_ARM_MS = 3_000
 // ───── 以下是運作邏輯 ─────
 
 const EMPTY: GitView = {
@@ -189,6 +198,7 @@ const EMPTY: GitView = {
   branches: [],
   error: '',
   branchError: '',
+  deleteArmed: null,
   op: '',
   opError: '',
   isAbortArmed: false,
@@ -327,7 +337,7 @@ async function selectRepo($: EngineInterface, name: string) {
   repo = next
   stageCache = undefined
   await Promise.all([
-    setView($, { repo: name, branchError: '', opError: '', isAbortArmed: false }),
+    setView($, { repo: name, ...NO_MESSAGES }),
     update($, diffPane, () => EMPTY_DIFF),
     // log 換成新 repo 的目前分支。
     update($, log, () => EMPTY_LOG),
@@ -552,10 +562,12 @@ async function focusWhenShown($: EngineInterface) {
   }
 }
 
-// 換分頁時清掉切換分支、abort／continue 失敗的訊息和待確認的 abort；沒有要清的就不寫，免得面板白白重畫。
+const NO_MESSAGES = { branchError: '', deleteArmed: null, opError: '', isAbortArmed: false } as const
+
+// 換分頁時清掉切換／刪除分支、abort／continue 失敗的訊息和待確認的刪除、abort；沒有要清的就不寫，免得面板白白重畫。
 async function clearGitMessages($: EngineInterface) {
   await update($, view, v =>
-    v.branchError === '' && v.opError === '' && !v.isAbortArmed ? v : { ...v, branchError: '', opError: '', isAbortArmed: false },
+    v.branchError === '' && v.deleteArmed === null && v.opError === '' && !v.isAbortArmed ? v : { ...v, ...NO_MESSAGES },
   )
 }
 
@@ -584,6 +596,40 @@ async function switchBranch($: EngineInterface, name: string, isRemote: boolean)
   }
 
   // 不跳 toast：目前分支的 ● 本來就會移過去。丟掉的焦點交給 focusWhenShown 補。
+  await clearGitMessages($)
+  await refresh($)
+}
+
+// 打勾 DELETE_ARM_MS 後收回去的計時；再按（刪掉或按了別的垃圾桶）就先停掉舊的。
+let disarmTimer: Timer | undefined
+
+async function armDelete($: EngineInterface, name: string, isForce: boolean) {
+  disarmTimer?.cancel()
+  await setView($, { ...NO_MESSAGES, deleteArmed: { name, isForce } })
+  disarmTimer = $.clock.after(DELETE_ARM_MS, () => void update($, view, v => (v.deleteArmed === null ? v : { ...v, deleteArmed: null })))
+}
+
+// 刪本地分支要按兩次：垃圾桶按了換成打勾，DELETE_ARM_MS 內再按才真的刪；按別的垃圾桶，原本的就收回。
+// 用 -d，有沒合併的 commit 時 git 不肯刪，換成強制刪除的打勾（-D），讓人決定要不要連那些 commit 一起丟掉。
+async function deleteBranch($: EngineInterface, name: string) {
+  const armed = (await read($, view)).deleteArmed
+  if (armed?.name !== name) {
+    await armDelete($, name, false)
+
+    return
+  }
+  disarmTimer?.cancel()
+  try {
+    await gitOk($, ['branch', armed.isForce ? '-D' : '-d', name])
+  } catch (err) {
+    const message = errorText(err)
+    if (!armed.isForce && message.includes('not fully merged')) await armDelete($, name, true)
+    else await setView($, { ...NO_MESSAGES, branchError: message })
+
+    return
+  }
+
+  $.ui.toast(`Deleted ${name}`)
   await clearGitMessages($)
   await refresh($)
 }
@@ -1124,6 +1170,7 @@ export const register: Register = on => {
     // 2. Svg 那層鋪滿外框、置中；
     // 3. 最上層是一模一樣的 Button，剛好蓋滿外框，接點擊，hover 的亮底也就是外框大小。
     // tint：圖示固定用這個顏色（停止鈕的紅色）；終端機沒有 Svg，就在按鈕前面放一個同色的方塊。
+    // tint.background：外框固定用這個底色（等著確認刪除的紅底），蓋過選中的底色。
     // 這個面板上的按鈕都經過 act：動作做完後丟了焦點會補回來。
     const iconButton = (
       key: string,
@@ -1131,7 +1178,7 @@ export const register: Register = on => {
       label: string,
       isActive: boolean,
       action: () => unknown,
-      tint?: { theme: string; hex: string },
+      tint?: { theme: string; hex: string; background?: string },
     ) => {
       const onPress = act($, PANE, action)
 
@@ -1141,7 +1188,7 @@ export const register: Register = on => {
           <Button key={key} label={label} variant={isActive ? 'primary' : 'secondary'} onPress={onPress} />
         </Box>
       ) : (
-        <Box key={`${key}:box`} position="relative" backgroundColor={isActive ? ACTIVE_BG : undefined}>
+        <Box key={`${key}:box`} position="relative" backgroundColor={tint?.background ?? (isActive ? ACTIVE_BG : undefined)}>
           <Button key={`${key}:spacer`} label={ICON_BUTTON_LABEL} plain onPress={onPress} />
           <Box position="absolute" top={0} left={0} right={0} bottom={0} justifyContent="center" alignItems="center">
             <Svg source={iconSvg(icon, isActive, tint?.hex)} alt={label} width={ICON_PX} height={ICON_PX} />
@@ -1417,9 +1464,22 @@ export const register: Register = on => {
         () => clearBranchQuery($),
       )
       // 目前分支的 ● 落在縮排的空位裡，名稱跟其他分支對齊；點它不做事。
-      // 右邊的 log 圖示按了到 log 分頁看這個分支。
+      // 右邊的 log 圖示按了到 log 分頁看這個分支；不是目前分支的本地分支前面多一個垃圾桶，按了換成打勾。
       const branchRow = (b: GitBranch) => {
         const id = `${b.isRemote ? 'r' : 'l'}:${b.name}`
+        const logButton = iconButton(`log:${id}`, 'log', 'Log', false, () => viewLog($, b))
+        const canDelete = !b.isRemote && !b.isCurrent
+        const armed = canDelete && v.deleteArmed?.name === b.name ? v.deleteArmed : null
+        const deleteButton =
+          canDelete &&
+          iconButton(
+            `delete:${id}`,
+            armed === null ? 'trash' : 'check',
+            armed === null ? 'Delete' : armed.isForce ? 'Force delete' : 'Confirm',
+            false,
+            () => deleteBranch($, b.name),
+            armed === null ? undefined : ARMED_TINT,
+          )
 
         return pressRow({
           key: `switch:${id}`,
@@ -1430,7 +1490,12 @@ export const register: Register = on => {
           indent: b.isCurrent ? 0 : undefined,
           lead: b.isCurrent ? <Text color="success">●</Text> : undefined,
           onPress: b.isCurrent ? () => undefined : () => switchBranch($, b.name, b.isRemote),
-          trailing: iconButton(`log:${id}`, 'log', 'Log', false, () => viewLog($, b)),
+          trailing: (
+            <Box key={`trailing:${id}`} gap={1} alignItems="center">
+              {deleteButton}
+              {logButton}
+            </Box>
+          ),
         })
       }
 
@@ -1438,6 +1503,9 @@ export const register: Register = on => {
       body = (
         <Box flexDirection="column" gap={1}>
           {v.branchError !== '' && <Text color="error">{v.branchError}</Text>}
+          {v.deleteArmed?.isForce === true && (
+            <Text color="error">{`${v.deleteArmed.name} has unmerged commits; press again to force delete and lose them.`}</Text>
+          )}
           {search}
           {isSearching && shown.length === 0 && <Text dimColor>No matching branches.</Text>}
           {(!isSearching || locals.length > 0) && (

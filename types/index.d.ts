@@ -29,8 +29,13 @@ export type GitView = {
   branches: GitBranch[]
   /** Last git error shown to the person, '' when none. */
   error: string
-  /** Why the last branch switch failed, '' when none; cleared on any tab change. */
+  /** Why the last branch switch or delete failed, '' when none; cleared on any tab change. */
   branchError: string
+  /**
+   * Local branch whose delete button was pressed once and now asks to confirm, null when none;
+   * isForce: the plain delete failed for unmerged commits and the next press forces it.
+   */
+  deleteArmed: { name: string; isForce: boolean } | null
   /** The operation stopped for conflicts, '' when none. */
   op: MergeOp
   /** Why the last abort, continue or resolve failed, '' when none; cleared on any tab change. */

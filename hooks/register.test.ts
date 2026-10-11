@@ -199,6 +199,68 @@ test('the pane lists changes, shows a diff and the branches, and switches sub ta
   await ui.unmount()
 })
 
+test('deleting a local branch turns its trash into a check that deletes, and gives up after 3s or on another trash', async ($, on) => {
+  const clock = mock.clock(on)
+  const deletes: string[] = []
+  const toasts: string[] = []
+  on('ui.panes', () => ({ value: [] }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.close', () => ({ value: undefined }))
+  on('ui.toast', (_$, e) => {
+    toasts.push(e.text)
+
+    return { value: undefined }
+  })
+  on('session.cwd', () => ({ value: 'C:/repo' }))
+  on('process.run', (_$, e) => {
+    const cmd = e.argv.slice(3)
+    if (cmd[0] === 'rev-parse') return ok('C:/repo\nC:/repo/.git\n')
+    if (cmd[0] === 'status') return ok('## main\0')
+    if (cmd[0] === 'branch') {
+      deletes.push(cmd.join(' '))
+      if (cmd[1] === '-d') return { value: { ...ok('').value, exitCode: 1, stderr: "error: the branch 'dev' is not fully merged" } }
+
+      return ok('')
+    }
+    if (cmd[0] === 'for-each-ref') {
+      const isGone = deletes.includes('branch -D dev')
+      const lines = ['*\trefs/heads/main\tmain\t\t\t1 hour ago\tAdd panel', ' \trefs/heads/feat\tfeat\t\t\t1 day ago\tTry']
+
+      return ok([...lines, ...(isGone ? [] : [' \trefs/heads/dev\tdev\t\t\t2 days ago\tWip']), ''].join('\n'))
+    }
+
+    return ok('')
+  })
+  await $.command.run({ command: 'soap-panel', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 120 } })
+
+  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'terminal', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  await ui.press({ key: 'sub:branch' })
+  // 目前分支沒有刪除鈕。
+  expect(await ui.find({ key: 'delete:l:main' })).toBeUndefined()
+
+  // 按一下只換成打勾；3 秒沒再按就收回，下一下又只是換成打勾。
+  await ui.press({ key: 'delete:l:dev' })
+  expect(deletes).toEqual([])
+  await clock.advance(3_000)
+  await ui.press({ key: 'delete:l:dev' })
+  expect(deletes).toEqual([])
+
+  // 按了別的垃圾桶，原本的收回：再按 dev 也只是換成打勾。
+  await ui.press({ key: 'delete:l:feat' })
+  await ui.press({ key: 'delete:l:dev' })
+  expect(deletes).toEqual([])
+
+  // 打勾再按才刪；-d 被拒（沒合併）就換成強制刪除的打勾，再按才 -D。
+  await ui.press({ key: 'delete:l:dev' })
+  expect(deletes).toEqual(['branch -d dev'])
+  expect(await ui.find({ type: 'Text', text: 'dev has unmerged commits; press again to force delete and lose them.' })).toBeDefined()
+  await ui.press({ key: 'delete:l:dev' })
+  expect(deletes).toEqual(['branch -d dev', 'branch -D dev'])
+  expect(toasts).toEqual(['Deleted dev'])
+  expect(await ui.find({ key: 'switch:l:dev' })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('a session folder holding several repos gets a repo bar with counts, and pressing one switches the Git tab to it', async ($, on) => {
   const dir = (name: string) => ({ name, kind: 'dir', size: 0, mtimeMs: 0, isLink: false }) as const
   const statusCwds: (string | undefined)[] = []
