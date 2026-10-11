@@ -1,4 +1,4 @@
-import type { GitBranch, GitFile } from '../types'
+import type { CommitFile, FileKind, GitBranch, GitCommit, GitFile } from '../types'
 
 export const MAX_DIFF_CHARS = 60000
 
@@ -79,21 +79,26 @@ export function parseBranches(out: string): GitBranch[] {
   })
 }
 
-/** The lowercased words of a branch search; none when it is blank. */
+/** The lowercased words of a search; none when it is blank. */
 export function searchWords(query: string): string[] {
   return query.toLowerCase().split(/\s+/).filter(w => w !== '')
 }
 
+/** Items whose `text` holds every word of `query`, ignoring case; all of them when it is blank. */
+function filterWords<T>(items: T[], query: string, text: (item: T) => string): T[] {
+  const words = searchWords(query)
+  if (words.length === 0) return items
+
+  return items.filter(item => {
+    const haystack = text(item).toLowerCase()
+
+    return words.every(w => haystack.includes(w))
+  })
+}
+
 /** Branches whose name holds every word of `query`, ignoring case; all of them when it is blank. */
 export function filterBranches(branches: GitBranch[], query: string): GitBranch[] {
-  const words = searchWords(query)
-  if (words.length === 0) return branches
-
-  return branches.filter(b => {
-    const name = b.name.toLowerCase()
-
-    return words.every(w => name.includes(w))
-  })
+  return filterWords(branches, query, b => b.name)
 }
 
 /** What happened to a file as a whole: the diff pane header. */
@@ -104,7 +109,7 @@ export function fileKind(file: GitFile): FileKind {
 }
 
 export type FileGroupId = 'staged' | 'unstaged' | 'untracked'
-export type FileKind = 'added' | 'modified' | 'deleted' | 'renamed' | 'conflict'
+export type { FileKind }
 
 export type FileEntry = {
   file: GitFile
@@ -118,7 +123,7 @@ export function isConflict(file: GitFile): boolean {
   return file.x === 'U' || file.y === 'U' || (file.x === 'A' && file.y === 'A') || (file.x === 'D' && file.y === 'D')
 }
 
-function letterKind(letter: string): FileKind {
+export function letterKind(letter: string): FileKind {
   if (letter === 'A' || letter === '?') return 'added'
   if (letter === 'D') return 'deleted'
   if (letter === 'R' || letter === 'C') return 'renamed'
@@ -169,4 +174,70 @@ export function formatTrack(track: string): string {
   const behind = /behind (\d+)/.exec(track)
 
   return [ahead ? `↑${ahead[1]}` : '', behind ? `↓${behind[1]}` : ''].filter(s => s !== '').join(' ')
+}
+
+export const LOG_FORMAT = ['%H', '%h', '%P', '%an', '%at', '%s'].join('%x09')
+
+/** `git log --format=LOG_FORMAT` output → commits, newest first. */
+export function parseLog(out: string): GitCommit[] {
+  const commits: GitCommit[] = []
+
+  for (const line of out.split('\n')) {
+    if (line === '') continue
+    const [sha = '', shortSha = '', parents = '', author = '', time = '', ...subject] = line.split('\t')
+
+    commits.push({
+      sha,
+      shortSha,
+      parents: parents.split(' ').filter(p => p !== ''),
+      author,
+      time: Number(time),
+      subject: subject.join('\t'),
+    })
+  }
+
+  return commits
+}
+
+/** Commits whose subject, author or sha holds every word of `query`, ignoring case; all of them when it is blank. */
+export function filterCommits(commits: GitCommit[], query: string): GitCommit[] {
+  return filterWords(commits, query, c => `${c.subject}\n${c.author}\n${c.sha}`)
+}
+
+/** `git diff-tree -r --name-status -z` output → files; a rename or copy carries its source path. */
+export function parseCommitFiles(out: string): CommitFile[] {
+  const parts = out.split('\0')
+  const files: CommitFile[] = []
+
+  for (let i = 0; i < parts.length; i += 1) {
+    const status = parts[i]
+    if (status === undefined || status === '') continue
+    const letter = status[0] ?? 'M'
+
+    if (letter === 'R' || letter === 'C') {
+      files.push({ path: parts[i + 2] ?? '', oldPath: parts[i + 1] ?? '', letter })
+      i += 2
+    } else {
+      files.push({ path: parts[i + 1] ?? '', oldPath: '', letter })
+      i += 1
+    }
+  }
+
+  return files
+}
+
+/** How long ago, short: `now`, `5m`, `3h`, `3d`, `2w`, `4mo`, `1y`. `time` is epoch seconds, `now` epoch ms. */
+export function formatAgo(time: number, now: number): string {
+  const seconds = Math.floor(now / 1000) - time
+  if (seconds < 60) return 'now'
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h`
+  const days = Math.floor(hours / 24)
+  if (days < 7) return `${days}d`
+  if (days < 30) return `${Math.floor(days / 7)}w`
+  if (days < 365) return `${Math.floor(days / 30)}mo`
+
+  return `${Math.floor(days / 365)}y`
 }

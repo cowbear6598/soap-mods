@@ -1,5 +1,5 @@
 export type TabId = 'git' | 'services'
-export type GitSubTab = 'diff' | 'branch' | 'conflict'
+export type GitSubTab = 'diff' | 'branch' | 'log' | 'conflict'
 
 export type GitFile = {
   path: string
@@ -26,10 +26,6 @@ export type GitView = {
   /** False when the session folder is not inside a git work tree. */
   isRepo: boolean
   files: GitFile[]
-  /** Path of the file whose diff is drawn, '' when none. */
-  selected: string
-  diff: string
-  isDiffTruncated: boolean
   branches: GitBranch[]
   /** Last git error shown to the person, '' when none. */
   error: string
@@ -48,6 +44,67 @@ export type GitView = {
   repos: RepoSummary[]
   /** Folder name of the repo the Git tab shows, '' when none. */
   repo: string
+}
+
+/** One commit in the log tab. */
+export type GitCommit = {
+  sha: string
+  shortSha: string
+  /** Parent shas; the first is the one the commit's files and diff are compared with. [] for a root commit. */
+  parents: string[]
+  author: string
+  /** Author time, epoch seconds. */
+  time: number
+  subject: string
+}
+
+/** A file a commit changed, from `git diff-tree --name-status`. */
+export type CommitFile = {
+  path: string
+  /** Where a rename or copy came from, '' otherwise. */
+  oldPath: string
+  /** Status letter: A, M, D, R, C or T. */
+  letter: string
+}
+
+/** What happened to a file as a whole: the diff pane header, a file row's letter color. */
+export type FileKind = 'added' | 'modified' | 'deleted' | 'renamed' | 'conflict'
+
+/** What the diff pane shows: a work tree file (diff tab), or a file in a commit (log tab). */
+export type DiffPaneView = {
+  /** Repo-relative path, '' when nothing is shown. */
+  path: string
+  kind: FileKind
+  /** Short sha of the commit for a commit file, '' for a work tree file. */
+  at: string
+  diff: string
+  isTruncated: boolean
+  /** Why reading the diff failed, '' when none. */
+  error: string
+}
+
+/** The log tab: one branch's commits, and the commit opened to its files. */
+export type LogView = {
+  /** Full ref of the branch picked with a branch row's log button (`refs/heads/dev`); '' follows the current branch. */
+  ref: string
+  isLoaded: boolean
+  commits: GitCommit[]
+  /** Shas of the listed commits not pushed yet. */
+  unpushed: string[]
+  /** How many commits to list; Load more raises it. */
+  limit: number
+  /** There are older commits than the listed ones (more matches, when searching). */
+  hasMore: boolean
+  /** The search covered only the newest commits: git's output hit the size cap. */
+  isTruncated: boolean
+  /** Why the last log read failed, '' when none. */
+  error: string
+  /** The commit whose files are listed instead of the commits, null when none. */
+  commit: GitCommit | null
+  /** The opened commit's files, null while they are read. */
+  files: CommitFile[] | null
+  /** Why reading the commit's files failed, '' when none. */
+  commitError: string
 }
 
 /** One repo under the session folder, as the repo bar shows it. */
@@ -175,8 +232,12 @@ declare module 'claude-code' {
       showRemote: boolean
       /** Text in the branch tab's search field, '' when not searching. */
       branchQuery: string
+      /** Text in the log tab's search field, '' when not searching. */
+      logQuery: string
       services: ServicesView
       merge: MergeView
+      log: LogView
+      diffPane: DiffPaneView
     }
   }
 }

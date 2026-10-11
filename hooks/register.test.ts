@@ -1,7 +1,20 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import type { MergeChunk, ScanProc, ScanResult } from '../types'
-import { fileKind, filterBranches, formatTrack, groupFiles, parseBranches, parseStatus, splitPath, toHunks } from './git'
+import {
+  fileKind,
+  filterBranches,
+  filterCommits,
+  formatAgo,
+  formatTrack,
+  groupFiles,
+  parseBranches,
+  parseCommitFiles,
+  parseLog,
+  parseStatus,
+  splitPath,
+  toHunks,
+} from './git'
 import { findServices, serviceName, splitArgs, toolName } from './services'
 import type { DiffHunk } from './merge'
 import { buildResult, choose, chooseAll, conflictLabel, detectOp, diffLines, isResolved, keepChoices, merge3, nextConflict, parseConflicts, toggleApplied } from './merge'
@@ -16,7 +29,7 @@ const PANE_PROPS = {
   view: {},
 } as const
 
-test('the pane draws the Git tab with its three sub tabs on each surface', async ($, on) => {
+test('the pane draws the Git tab with its four sub tabs on each surface', async ($, on) => {
   on('clock.now', () => ({ value: 0 }))
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({
@@ -27,7 +40,7 @@ test('the pane draws the Git tab with its three sub tabs on each surface', async
       props: PANE_PROPS,
     })
     expect(await ui.find({ key: 'tab:git' })).toBeDefined()
-    for (const sub of ['diff', 'branch', 'conflict']) {
+    for (const sub of ['diff', 'branch', 'log', 'conflict']) {
       expect(await ui.find({ key: `sub:${sub}` })).toBeDefined()
     }
     await ui.unmount()
@@ -189,6 +202,7 @@ test('the pane lists changes, shows a diff and the branches, and switches sub ta
 test('a session folder holding several repos gets a repo bar with counts, and pressing one switches the Git tab to it', async ($, on) => {
   const dir = (name: string) => ({ name, kind: 'dir', size: 0, mtimeMs: 0, isLink: false }) as const
   const statusCwds: (string | undefined)[] = []
+  const logCwds: (string | undefined)[] = []
   // Windows 上引擎會把路徑轉成反斜線，比對前轉回來。
   const slash = (p: string | undefined) => p?.replace(/\\/g, '/')
   on('ui.open', () => ({ value: { isPlaced: true } }))
@@ -207,6 +221,7 @@ test('a session folder holding several repos gets a repo bar with counts, and pr
 
       return ok(`${cwd}\n${cwd}/.git\n`)
     }
+    if (args[0] === 'log') logCwds.push(cwd)
     if (args[0] === 'status') {
       statusCwds.push(cwd)
       if (cwd === 'C:/company/a') return ok('## main\0 M a1.ts\0 M a2.ts\0')
@@ -225,8 +240,16 @@ test('a session folder holding several repos gets a repo bar with counts, and pr
   expect(await ui.find({ key: 'file:unstaged:a1.ts' })).toBeDefined()
   expect(statusCwds.every(c => c !== undefined)).toBe(true)
 
+  // log 只在 log 分頁時讀。
+  expect(logCwds).toEqual([])
+  await ui.press({ key: 'sub:log' })
+  expect(logCwds.at(-1)).toBe('C:/company/a')
+
   await ui.press({ key: 'repo:b' })
   expect((await ui.find({ key: 'repo:b' }))?.props).toMatchObject({ variant: 'primary' })
+  // log 也換成 b 的。
+  expect(logCwds.at(-1)).toBe('C:/company/b')
+  await ui.press({ key: 'sub:diff' })
   expect(await ui.find({ key: 'file:unstaged:a1.ts' })).toBeUndefined()
   await ui.press({ key: 'sub:conflict' })
   expect(await ui.find({ key: 'conflict:b1.ts' })).toBeDefined()
@@ -307,6 +330,185 @@ test('splitPath and formatTrack', () => {
   expect(formatTrack('[behind 3]')).toBe('↓3')
   expect(formatTrack('[gone]')).toBe('upstream gone')
   expect(formatTrack('')).toBe('')
+})
+
+test('parseLog reads commits, parents and a subject holding a tab', () => {
+  const out = [
+    'aaa111\taaa\tppp111 qqq222\tCptSoap\t1791716789\tMerge dev\tinto main',
+    'bbb222\tbbb\t\tSomeone Else\t1791700000\tFirst commit',
+    '',
+  ].join('\n')
+  expect(parseLog(out)).toEqual([
+    { sha: 'aaa111', shortSha: 'aaa', parents: ['ppp111', 'qqq222'], author: 'CptSoap', time: 1791716789, subject: 'Merge dev\tinto main' },
+    { sha: 'bbb222', shortSha: 'bbb', parents: [], author: 'Someone Else', time: 1791700000, subject: 'First commit' },
+  ])
+  expect(parseLog('')).toEqual([])
+})
+
+test('parseCommitFiles reads letters and keeps where a rename came from', () => {
+  const out = ['M', 'src/a.ts', 'R100', 'old name.ts', 'new name.ts', 'A', 'b.ts', 'D', 'c.ts', ''].join('\0')
+  expect(parseCommitFiles(out)).toEqual([
+    { path: 'src/a.ts', oldPath: '', letter: 'M' },
+    { path: 'new name.ts', oldPath: 'old name.ts', letter: 'R' },
+    { path: 'b.ts', oldPath: '', letter: 'A' },
+    { path: 'c.ts', oldPath: '', letter: 'D' },
+  ])
+  expect(parseCommitFiles('')).toEqual([])
+})
+
+test('filterCommits keeps commits whose subject, author or sha holds every word, ignoring case', () => {
+  const commits = parseLog(
+    [
+      'abc1234fff\tabc1234\t\tCptSoap\t0\tAdd log tab',
+      'def5678fff\tdef5678\t\tSomeone\t0\tFix branch search',
+      '',
+    ].join('\n'),
+  )
+  const subjects = (q: string) => filterCommits(commits, q).map(c => c.subject)
+  expect(subjects(' ')).toEqual(['Add log tab', 'Fix branch search'])
+  expect(subjects('LOG')).toEqual(['Add log tab'])
+  expect(subjects('someone search')).toEqual(['Fix branch search'])
+  expect(subjects('def56')).toEqual(['Fix branch search'])
+  expect(subjects('log someone')).toEqual([])
+})
+
+test('formatAgo is short: now, minutes, hours, days, weeks, months, years', () => {
+  const now = 1_000_000_000_000
+  const ago = (seconds: number) => formatAgo(now / 1000 - seconds, now)
+  expect(ago(30)).toBe('now')
+  expect(ago(-5)).toBe('now')
+  expect(ago(5 * 60)).toBe('5m')
+  expect(ago(3 * 3600)).toBe('3h')
+  expect(ago(3 * 86400)).toBe('3d')
+  expect(ago(15 * 86400)).toBe('2w')
+  expect(ago(120 * 86400)).toBe('4mo')
+  expect(ago(400 * 86400)).toBe('1y')
+})
+
+test('the log tab lists the branch commits, marks unpushed ones, loads more, and opens a commit file diff', async ($, on) => {
+  const now = Date.parse('2026-10-11T00:00:00Z')
+  const time = now / 1000 - 3 * 86400
+  const sha = (i: number) => `${String(i).padStart(7, '0')}${'f'.repeat(33)}`
+  const short = (i: number) => String(i).padStart(7, '0')
+  const logArgs: string[][] = []
+  const revListArgs: string[][] = []
+  const diffOpens: string[] = []
+  on('ui.open', (_$, e) => {
+    if (e.id === 'soap-diff') diffOpens.push(e.title ?? '')
+
+    return { value: { isPlaced: true } }
+  })
+  on('ui.panes', () => ({ value: [] }))
+  on('ui.close', () => ({ value: undefined }))
+  on('clock.now', () => ({ value: now }))
+  on('session.cwd', () => ({ value: 'C:/repo' }))
+  on('process.run', (_$, e) => {
+    const cmd = e.argv.slice(3)
+    if (cmd[0] === 'rev-parse') return ok('C:/repo\nC:/repo/.git\n')
+    if (cmd[0] === 'status') return ok('## main...origin/main [ahead 2]\0')
+    if (cmd[0] === 'for-each-ref') {
+      return ok(
+        [
+          '*\trefs/heads/main\tmain\torigin/main\t[ahead 2]\t1 hour ago\tCommit 0',
+          ' \trefs/heads/dev\tdev\t\t\t2 days ago\tWip',
+          ' \trefs/remotes/origin/main\torigin/main\t\t\t1 hour ago\tCommit 2',
+          '',
+        ].join('\n'),
+      )
+    }
+    if (cmd[0] === 'log') {
+      logArgs.push(cmd)
+      // 這個分支有 40 筆 commit，照 --max-count 給；沒給就是整條（搜尋）。
+      const max = cmd.find(a => a.startsWith('--max-count='))?.split('=')[1]
+      const count = Math.min(max === undefined ? Infinity : Number(max), 40)
+      const lines = Array.from({ length: count }, (_, i) => `${sha(i)}\t${short(i)}\t${sha(i + 1)}\tCptSoap\t${time}\tCommit ${i}`)
+
+      return ok(`${lines.join('\n')}\n`)
+    }
+    if (cmd[0] === 'rev-list') {
+      revListArgs.push(cmd)
+
+      return ok(`${sha(0)}\n${sha(1)}\n`)
+    }
+    if (cmd[0] === 'diff-tree' && cmd.includes('--name-status')) return ok(['M', 'src/a.ts', 'R100', 'old.ts', 'new.ts', ''].join('\0'))
+    if (cmd[0] === 'diff-tree') return ok('diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-a\n+b\n')
+
+    return ok('')
+  })
+  await openPanel($)
+
+  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'terminal', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  await ui.press({ key: 'sub:log' })
+  // 預設看目前分支：先列 30 筆，還有更多；標題寫分支名稱。
+  expect(await ui.find({ type: 'Text', text: 'main · 30+' })).toBeDefined()
+  expect(await ui.find({ key: `commit:${sha(29)}` })).toBeDefined()
+  expect(await ui.find({ key: `commit:${sha(30)}` })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: short(0) })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'CptSoap · 3d' })).toBeDefined()
+  // 有 upstream：跟 upstream 比哪些還沒 push，那兩筆標 ↑。
+  expect(revListArgs.at(-1)).toEqual(['rev-list', '--max-count=30', 'HEAD', '--not', 'origin/main'])
+  expect(await ui.findAll({ type: 'Text', text: '↑' })).toHaveLength(2)
+  // 桌面版：subject 是文字、整行是按鈕。
+  const desk = await $.ui.mount({ plugin: 'soap-mods', surface: 'desktop', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  expect(await desk.find({ type: 'Text', text: 'Commit 0' })).toBeDefined()
+  expect(await desk.find({ key: `commit:${sha(0)}` })).toBeDefined()
+  await desk.unmount()
+
+  await ui.press({ key: 'log:more' })
+  expect(await ui.find({ type: 'Text', text: 'main · 40' })).toBeDefined()
+  expect(await ui.find({ key: 'log:more' })).toBeUndefined()
+
+  // 點 commit：列表換成它改了哪些檔案；點檔案在 diff 面板看它在這個 commit 的差異，改名兩個路徑都給。
+  await ui.press({ key: `commit:${sha(0)}` })
+  expect(await ui.find({ type: 'Text', text: 'Files · 2' })).toBeDefined()
+  expect(await ui.find({ key: `commit:${sha(1)}` })).toBeUndefined()
+  await ui.press({ key: 'commit-file:src/a.ts' })
+  expect(diffOpens).toEqual([`src/a.ts @ ${short(0)}`])
+  const diff = await $.ui.mount({ plugin: 'soap-mods', surface: 'terminal', component: 'Pane', requestId: 'soap-diff', props: PANE_PROPS })
+  expect(await diff.find({ type: 'Code' })).toBeDefined()
+  expect(await diff.find({ type: 'Text', text: `@ ${short(0)}` })).toBeDefined()
+  await diff.unmount()
+  await ui.press({ key: 'log:back' })
+  expect(await ui.find({ key: `commit:${sha(1)}` })).toBeDefined()
+
+  // 搜尋：搜整條分支（包括還沒列出來的），每個字都要有、不分大小寫；整條歷史只讀一次，打字時直接過濾。
+  const fullReads = () => logArgs.filter(a => !a.some(x => x.startsWith('--max-count='))).length
+  await ui.input({ key: 'log:search', text: 'COMMIT 3', kind: 'change' })
+  // 3、13、23、30–39。
+  expect(await ui.find({ type: 'Text', text: 'main · 13' })).toBeDefined()
+  expect(await ui.find({ key: `commit:${sha(39)}` })).toBeDefined()
+  expect(await ui.find({ key: `commit:${sha(1)}` })).toBeUndefined()
+  await ui.input({ key: 'log:search', text: 'commit 39', kind: 'change' })
+  expect(await ui.find({ type: 'Text', text: 'main · 1' })).toBeDefined()
+  await ui.input({ key: 'log:search', text: 'nope', kind: 'change' })
+  expect(await ui.find({ type: 'Text', text: 'No matching commits.' })).toBeDefined()
+  // 符合的超過 30 筆一樣分頁。
+  await ui.input({ key: 'log:search', text: 'cptsoap', kind: 'change' })
+  expect(await ui.find({ type: 'Text', text: 'main · 30+' })).toBeDefined()
+  await ui.press({ key: 'log:more' })
+  expect(await ui.find({ type: 'Text', text: 'main · 40' })).toBeDefined()
+  expect(fullReads()).toBe(1)
+  // Clear（Enter）清空，回到最近 30 筆。
+  await ui.input({ key: 'log:search', text: 'cptsoap' })
+  expect(await ui.find({ type: 'Text', text: 'main · 30+' })).toBeDefined()
+  // 換分頁也清掉。
+  await ui.input({ key: 'log:search', text: 'commit 39', kind: 'change' })
+  await ui.press({ key: 'sub:diff' })
+  await ui.press({ key: 'sub:log' })
+  expect(await ui.find({ type: 'Text', text: 'main · 30+' })).toBeDefined()
+
+  // branch 分頁每一列右邊的 log：跳到 log 分頁看那個分支。沒有 upstream 就跟所有遠端分支比。
+  await ui.press({ key: 'sub:branch' })
+  await ui.press({ key: 'log:l:dev' })
+  expect(await ui.find({ type: 'Text', text: 'dev · 30+' })).toBeDefined()
+  expect(logArgs.at(-1)?.[1]).toBe('refs/heads/dev')
+  expect(revListArgs.at(-1)).toEqual(['rev-list', '--max-count=30', 'refs/heads/dev', '--not', '--remotes'])
+  // 按目前分支那列的 log：回到跟著目前分支。
+  await ui.press({ key: 'sub:branch' })
+  await ui.press({ key: 'log:l:main' })
+  expect(await ui.find({ type: 'Text', text: 'main · 30+' })).toBeDefined()
+  expect(logArgs.at(-1)?.[1]).toBe('HEAD')
+  await ui.unmount()
 })
 
 // ───── Services ─────

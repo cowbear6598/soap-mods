@@ -2,10 +2,14 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, PaneOpenArgs, ProcessRunResult, Register, RenderChildren } from 'claude-code'
 
 import type {
+  CommitFile,
+  DiffPaneView,
   GitBranch,
+  GitCommit,
   GitFile,
   GitSubTab,
   GitView,
+  LogView,
   MergeChoice,
   MergeChunk,
   MergeOp,
@@ -18,7 +22,24 @@ import type {
   TabId,
 } from '../types'
 import type { FileEntry, FileGroupId, FileKind } from './git'
-import { BRANCH_FORMAT, fileKind, filterBranches, groupFiles, isConflict, parseBranches, parseStatus, searchWords, splitPath, toHunks } from './git'
+import {
+  BRANCH_FORMAT,
+  LOG_FORMAT,
+  fileKind,
+  filterBranches,
+  filterCommits,
+  formatAgo,
+  groupFiles,
+  isConflict,
+  letterKind,
+  parseBranches,
+  parseCommitFiles,
+  parseLog,
+  parseStatus,
+  searchWords,
+  splitPath,
+  toHunks,
+} from './git'
 import {
   buildResult,
   choose,
@@ -79,6 +100,7 @@ const ICONS = {
   diff: '<path d="M12 3v14"/><path d="M5 10h14"/><path d="M5 21h14"/>',
   branch:
     '<line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
+  log: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
   conflict:
     '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
   services:
@@ -131,8 +153,12 @@ const TABS: { id: TabId; label: string; icon: IconName }[] = [
 const SUB_TABS: { id: GitSubTab; label: string; icon: IconName }[] = [
   { id: 'diff', label: 'diff', icon: 'diff' },
   { id: 'branch', label: 'branch', icon: 'branch' },
+  { id: 'log', label: 'log', icon: 'log' },
   { id: 'conflict', label: 'conflict', icon: 'conflict' },
 ]
+
+// log 分頁一次列幾筆 commit；Load more 再多列這麼多筆。
+const LOG_PAGE = 30
 
 // 面板最底下的用量：左邊 5h、右邊 weekly，各占一半。kind 是引擎回報的視窗名稱。
 const USAGE_WINDOWS = [
@@ -160,9 +186,6 @@ const EMPTY: GitView = {
   isLoaded: false,
   isRepo: true,
   files: [],
-  selected: '',
-  diff: '',
-  isDiffTruncated: false,
   branches: [],
   error: '',
   branchError: '',
@@ -179,6 +202,8 @@ const view = atom({ plugin: 'soap-mods', key: 'view' } as const, EMPTY)
 const showRemote = atom({ plugin: 'soap-mods', key: 'showRemote' } as const, false)
 // branch 分頁搜尋框裡的字，換分頁就清掉。
 const branchQuery = atom({ plugin: 'soap-mods', key: 'branchQuery' } as const, '')
+// log 分頁搜尋框裡的字，一樣換分頁就清掉。
+const logQuery = atom({ plugin: 'soap-mods', key: 'logQuery' } as const, '')
 const EMPTY_SERVICES: ServicesView = { isLoaded: false, items: [], error: '', actionError: '', pending: [] }
 const services = atom({ plugin: 'soap-mods', key: 'services' } as const, EMPTY_SERVICES)
 const EMPTY_MERGE: MergeView = {
@@ -193,6 +218,22 @@ const EMPTY_MERGE: MergeView = {
   isBusy: false,
 }
 const merge = atom({ plugin: 'soap-mods', key: 'merge' } as const, EMPTY_MERGE)
+const EMPTY_LOG: LogView = {
+  ref: '',
+  isLoaded: false,
+  commits: [],
+  unpushed: [],
+  limit: LOG_PAGE,
+  hasMore: false,
+  isTruncated: false,
+  error: '',
+  commit: null,
+  files: null,
+  commitError: '',
+}
+const log = atom({ plugin: 'soap-mods', key: 'log' } as const, EMPTY_LOG)
+const EMPTY_DIFF: DiffPaneView = { path: '', kind: 'modified', at: '', diff: '', isTruncated: false, error: '' }
+const diffPane = atom({ plugin: 'soap-mods', key: 'diffPane' } as const, EMPTY_DIFF)
 
 function usageLevel(remaining: number) {
   return remaining > 50 ? USAGE_GOOD : remaining > 20 ? USAGE_WARN : USAGE_LOW
@@ -285,7 +326,12 @@ async function selectRepo($: EngineInterface, name: string) {
   if (next === undefined || next === repo || (await read($, merge)).isBusy) return
   repo = next
   stageCache = undefined
-  await setView($, { ...NO_DIFF, repo: name, branchError: '', opError: '', isAbortArmed: false })
+  await Promise.all([
+    setView($, { repo: name, branchError: '', opError: '', isAbortArmed: false }),
+    update($, diffPane, () => EMPTY_DIFF),
+    // log 換成新 repo 的目前分支。
+    update($, log, () => EMPTY_LOG),
+  ])
   await Promise.all([closeMerge($), $.ui.close({ id: DIFF_PANE })])
   await refresh($)
 }
@@ -314,46 +360,51 @@ async function setView($: EngineInterface, patch: Partial<GitView>) {
   await update($, view, v => ({ ...v, ...patch }))
 }
 
-const NO_DIFF: Partial<GitView> = { selected: '', diff: '', isDiffTruncated: false }
 const NO_GIT = 'git not found. Make sure it is installed and on your PATH.'
+const DIFF_FLAGS = ['--no-color', '--no-ext-diff', '--no-textconv']
 
-// 讀一個檔案的 diff，回傳要寫進 view 的那幾欄；已追蹤的對 HEAD，未追蹤的對空檔案。
-async function readDiff($: EngineInterface, files: GitView['files'], path: string): Promise<Partial<GitView>> {
-  if (path === '') return NO_DIFF
-
-  const file = files.find(f => f.path === path)
-  const isUntracked = file !== undefined && file.x === '?'
-  const flags = ['--no-color', '--no-ext-diff', '--no-textconv']
+// 跑一次 diff，只留 hunk（Code format="diff" 要的）；讀不到就帶著錯誤訊息。
+// fallback：結束碼不是 0 時改跑的另一個 diff（還沒有任何 commit 時沒有 HEAD，改看已暫存的內容）。
+async function runDiff($: EngineInterface, args: string[], fallback?: string[]) {
   let out = ''
   let error = ''
-
   try {
-    if (isUntracked) {
-      out = (await git($, ['diff', ...flags, '--no-index', '--', '/dev/null', path])).stdout
+    const r = await git($, args)
+    if (r.exitCode === 0 || fallback === undefined) {
+      out = r.stdout
+      if (r.exitCode !== 0) error = r.stderr.trim()
     } else {
-      const r = await git($, ['diff', ...flags, 'HEAD', '--', path])
-      if (r.exitCode === 0) {
-        out = r.stdout
-      } else {
-        // 還沒有任何 commit 時沒有 HEAD，改看已暫存的內容。
-        const cached = await git($, ['diff', ...flags, '--cached', '--', path])
-        out = cached.stdout
-        if (cached.exitCode !== 0) error = cached.stderr.trim() || r.stderr.trim()
-      }
+      const again = await git($, fallback)
+      out = again.stdout
+      if (again.exitCode !== 0) error = again.stderr.trim() || r.stderr.trim()
     }
   } catch (err) {
     error = `Failed to read diff: ${errorText(err)}`
   }
-
   const { source, isTruncated } = toHunks(out)
 
-  return { selected: path, diff: source, isDiffTruncated: isTruncated, error }
+  return { diff: source, isTruncated, error }
+}
+
+// 讀工作區一個檔案的 diff，給差異面板：已追蹤的對 HEAD，未追蹤的對空檔案。
+async function readDiff($: EngineInterface, files: GitView['files'], path: string): Promise<DiffPaneView> {
+  const file = files.find(f => f.path === path)
+  if (file === undefined) return EMPTY_DIFF
+  const result = await (file.x === '?'
+    ? runDiff($, ['diff', ...DIFF_FLAGS, '--no-index', '--', '/dev/null', path])
+    : runDiff($, ['diff', ...DIFF_FLAGS, 'HEAD', '--', path], ['diff', ...DIFF_FLAGS, '--cached', '--', path]))
+
+  return { path, kind: fileKind(file), at: '', ...result }
 }
 
 // 每個面板 open 時要給的標題和寬度；每次 open 都會重設它們，所以一律從這裡拿。
 async function paneArgs($: EngineInterface, id: string): Promise<PaneOpenArgs> {
   if (id === MERGE_PANE) return { id, title: `Merge · ${splitPath((await read($, merge)).path).name}`, columns: MERGE_COLUMNS }
-  if (id === DIFF_PANE) return { id, title: (await read($, view)).selected }
+  if (id === DIFF_PANE) {
+    const d = await read($, diffPane)
+
+    return { id, title: d.at === '' ? d.path : `${d.path} @ ${d.at}` }
+  }
 
   return { id: PANE, title: PANEL_TITLE }
 }
@@ -367,8 +418,8 @@ async function bringToFront($: EngineInterface, id: string) {
 
 // 點檔案：一定開一個獨立的 diff 面板並切過去；關掉面板交給面板自己的關閉鈕。
 async function openDiff($: EngineInterface, path: string) {
-  const v = await read($, view)
-  await setView($, await readDiff($, v.files, path))
+  const pane = await readDiff($, (await read($, view)).files, path)
+  await update($, diffPane, () => pane)
   await bringToFront($, DIFF_PANE)
 }
 
@@ -404,8 +455,8 @@ async function refresh($: EngineInterface) {
   const repos = (files: GitFile[]) => others.map(o => o ?? toSummary(active, files))
 
   if (status.exitCode !== 0) {
+    await update($, diffPane, d => (d.at === '' ? EMPTY_DIFF : d))
     await setView($, {
-      ...NO_DIFF,
       isLoaded: true,
       isRepo: false,
       error: isNotRepo(status) ? '' : status.stderr.trim(),
@@ -419,23 +470,26 @@ async function refresh($: EngineInterface) {
   }
 
   const { files } = parseStatus(status.stdout)
-  const current = (await read($, view)).selected
-  // 原本點開的檔案還在清單裡才保留。
-  const selected = files.some(f => f.path === current) ? current : ''
-  await setView($, {
-    isLoaded: true,
-    isRepo: true,
-    error: '',
-    files,
-    repos: repos(files),
-    repo: active.name,
-    branches: refs.exitCode === 0 ? parseBranches(refs.stdout) : [],
-    op: detectOp(names),
-    ...(await readDiff($, files, selected)),
-  })
-  // 原本看的檔案已經沒有變更了，把它的面板也關掉。
-  if (current !== '' && selected === '') await $.ui.close({ id: DIFF_PANE })
-  await syncMerge($, files)
+  // 差異面板開著工作區的檔案就重讀；那個檔案已經沒有變更了（readDiff 給空的），把面板也關掉。
+  // 開著的是 commit 裡的檔案就不用動，commit 不會變。
+  const shown = await read($, diffPane)
+  const pane = shown.at === '' && shown.path !== '' ? await readDiff($, files, shown.path) : shown
+  await Promise.all([
+    setView($, {
+      isLoaded: true,
+      isRepo: true,
+      error: '',
+      files,
+      repos: repos(files),
+      repo: active.name,
+      branches: refs.exitCode === 0 ? parseBranches(refs.stdout) : [],
+      op: detectOp(names),
+    }),
+    pane === shown ? undefined : update($, diffPane, () => pane),
+  ])
+  if (shown.path !== '' && pane.path === '') await $.ui.close({ id: DIFF_PANE })
+  // log 只在看得到時重讀（換到 log 分頁時也會讀）。
+  await Promise.all([syncMerge($, files), (await read($, subTab)) === 'log' ? loadLog($) : undefined])
 }
 
 // 桌面版的面板沒有焦點時，按下滑鼠會先拿焦點、整個面板重畫，按到的按鈕被換掉，那一下就不算。
@@ -505,9 +559,9 @@ async function clearGitMessages($: EngineInterface) {
   )
 }
 
-// 換分頁（上層 Tab 或子分頁）時清掉的東西：錯誤訊息、待確認的 abort、branch 的搜尋。
+// 換分頁（上層 Tab 或子分頁）時清掉的東西：錯誤訊息、待確認的 abort、branch 和 log 的搜尋。
 async function leaveTab($: EngineInterface) {
-  await Promise.all([clearGitMessages($), clearBranchQuery($)])
+  await Promise.all([clearGitMessages($), clearBranchQuery($), clearLogQuery($)])
 }
 
 async function clearBranchQuery($: EngineInterface) {
@@ -532,6 +586,144 @@ async function switchBranch($: EngineInterface, name: string, isRemote: boolean)
   // 不跳 toast：目前分支的 ● 本來就會移過去。丟掉的焦點交給 focusWhenShown 補。
   await clearGitMessages($)
   await refresh($)
+}
+
+// ───── log 分頁 ─────
+
+async function setLog($: EngineInterface, patch: Partial<LogView>) {
+  await update($, log, l => ({ ...l, ...patch }))
+}
+
+const NO_COMMIT: Partial<LogView> = { commit: null, files: null, commitError: '' }
+
+// 分支的完整 ref：本地和遠端可能同名，用完整的才不會認錯。
+const branchRef = (b: GitBranch) => `refs/${b.isRemote ? 'remotes' : 'heads'}/${b.name}`
+
+// log 分頁看的分支：按過 log 的那個；沒按過（或那個分支已經不在了）就是目前分支；detached 時沒有。
+function logBranch(v: GitView, l: LogView) {
+  return v.branches.find(b => l.ref !== '' && branchRef(b) === l.ref) ?? v.branches.find(b => b.isCurrent)
+}
+
+type LogRead = { commits: GitCommit[]; unpushed: string[]; isTruncated: boolean; error: string }
+
+// 讀 ref 的 commit（limit 沒給就是整條），和其中哪些還沒 push：有 upstream 比 upstream；
+// 沒有的話比所有遠端分支，新分支從 main 分出來後加的才算。遠端分支本身都在遠端上，不會有標記。
+async function readLog($: EngineInterface, ref: string, upstream: string, limit?: number): Promise<LogRead> {
+  const [r, ahead] = await Promise.all([
+    git($, ['log', ref, ...(limit === undefined ? [] : [`--max-count=${limit + 1}`]), `--format=${LOG_FORMAT}`]),
+    git($, ['rev-list', ...(limit === undefined ? [] : [`--max-count=${limit}`]), ref, '--not', upstream === '' ? '--remotes' : upstream]),
+  ])
+  if (r.exitCode !== 0) {
+    // 還沒有任何 commit 不算錯。
+    const isEmpty = r.stderr.includes('does not have any commits')
+
+    return { commits: [], unpushed: [], isTruncated: false, error: isEmpty ? '' : r.stderr.trim() }
+  }
+  // 輸出被截斷時最後一行可能不完整，丟掉。
+  const out = r.isStdoutTruncated ? r.stdout.slice(0, r.stdout.lastIndexOf('\n') + 1) : r.stdout
+  const unpushed = ahead.exitCode === 0 ? ahead.stdout.split('\n').map(s => s.trim()).filter(s => s !== '') : []
+
+  return { commits: parseLog(out), unpushed, isTruncated: r.isStdoutTruncated, error: '' }
+}
+
+// 搜尋用的整條分支歷史：打字、Load more 時從這裡過濾，不用每次都跑 git。換 repo 或分支就重讀，
+// refresh（回合結束）也重讀，歷史可能變了。git 最多給 4 MiB（大約兩萬多筆），超過的只搜最新的那些。
+let history: { key: string; load: Promise<LogRead> } | undefined
+
+function readHistory($: EngineInterface, ref: string, upstream: string, isFresh: boolean) {
+  const key = `${repo?.root ?? ''}\n${ref}`
+  if (isFresh || history?.key !== key) history = { key, load: readLog($, ref, upstream) }
+
+  return history.load
+}
+
+// 讀 log 分頁的 commit，列前 limit 筆（沒給就是目前的筆數）；有搜尋時從整條分支的歷史裡挑出符合的。
+// isFresh 是 false 時（打字、Load more）沿用讀過的歷史。
+async function loadLog($: EngineInterface, { isFresh = true, limit }: { isFresh?: boolean; limit?: number } = {}) {
+  const [v, l, query] = await Promise.all([read($, view), read($, log), read($, logQuery)])
+  const branch = logBranch(v, l)
+  // 按過的分支已經不在了：回到目前分支。
+  const isPicked = branch !== undefined && l.ref !== '' && branchRef(branch) === l.ref
+  const ref = isPicked ? l.ref : 'HEAD'
+  const upstream = branch !== undefined && !branch.isRemote && branch.track !== '[gone]' ? branch.upstream : ''
+  const count = limit ?? l.limit
+  const isSearching = searchWords(query).length > 0
+  if (!isSearching) history = undefined
+  try {
+    const found = isSearching
+      ? await readHistory($, ref, upstream, isFresh).then(h => ({ ...h, commits: filterCommits(h.commits, query) }))
+      : await readLog($, ref, upstream, count)
+    // 讀的時候搜尋的字又變了：交給後面那次。
+    if ((await read($, logQuery)) !== query) return
+    const commits = found.commits.slice(0, count)
+    const ahead = new Set(found.unpushed)
+    await setLog($, {
+      ref: isPicked ? l.ref : '',
+      isLoaded: true,
+      limit: count,
+      commits,
+      hasMore: found.commits.length > count,
+      isTruncated: found.isTruncated,
+      // 只留列出來的那些，整條歷史的可能很多。
+      unpushed: commits.filter(c => ahead.has(c.sha)).map(c => c.sha),
+      error: found.error,
+    })
+  } catch {
+    await setLog($, { isLoaded: true, error: NO_GIT })
+  }
+}
+
+// log 搜尋框打字：從第一頁開始重新過濾；整條分支的歷史只在第一次搜的時候讀。清空就回到最近的 commit。
+async function searchLog($: EngineInterface, text: string) {
+  await update($, logQuery, () => text)
+  await loadLog($, { isFresh: false, limit: LOG_PAGE })
+}
+
+// 換分頁時清掉搜尋；不在這裡重讀，回到 log 分頁時才讀。
+async function clearLogQuery($: EngineInterface) {
+  history = undefined
+  await update($, logQuery, () => '')
+}
+
+// 換子分頁。log 不在看的時候不讀，換過來才讀。
+async function selectSubTab($: EngineInterface, id: GitSubTab) {
+  await Promise.all([update($, subTab, () => id), leaveTab($)])
+  if (id === 'log') await loadLog($)
+}
+
+// branch 分頁的 log 按鈕：換到 log 分頁看那個分支，從最近的 LOG_PAGE 筆開始。
+// 按目前分支那列就是回到「跟著目前分支」，之後切分支 log 也跟著換。
+async function viewLog($: EngineInterface, b: GitBranch) {
+  await update($, log, () => ({ ...EMPTY_LOG, ref: b.isCurrent ? '' : branchRef(b) }))
+  await selectSubTab($, 'log')
+}
+
+async function loadMoreLog($: EngineInterface) {
+  await loadLog($, { isFresh: false, limit: (await read($, log)).limit + LOG_PAGE })
+}
+
+// commit 跟誰比：merge commit 比第一個 parent（這次 merge 帶進來什麼），第一個 commit 比空的。
+const commitRange = (c: GitCommit) => (c.parents[0] === undefined ? ['--root', c.sha] : [c.parents[0], c.sha])
+
+// 點 commit：列表換成它改了哪些檔案。讀到的時候已經換成別筆（或按了 Back）就丟掉。
+async function openCommit($: EngineInterface, c: GitCommit) {
+  await setLog($, { ...NO_COMMIT, commit: c })
+  let patch: Partial<LogView>
+  try {
+    const r = await git($, ['diff-tree', '-r', '-M', '--name-status', '-z', '--no-commit-id', ...commitRange(c)])
+    patch = r.exitCode === 0 ? { files: parseCommitFiles(r.stdout) } : { files: [], commitError: r.stderr.trim() }
+  } catch {
+    patch = { files: [], commitError: NO_GIT }
+  }
+  await update($, log, l => (l.commit?.sha === c.sha ? { ...l, ...patch } : l))
+}
+
+// 點 commit 裡的檔案：在 diff 面板看它在這個 commit 的差異。改名的檔案兩個路徑都要給，git 才認得出是改名。
+async function openCommitDiff($: EngineInterface, c: GitCommit, f: CommitFile) {
+  const paths = f.oldPath === '' ? [f.path] : [f.oldPath, f.path]
+  const result = await runDiff($, ['diff-tree', '-p', '-M', ...DIFF_FLAGS, '--no-commit-id', ...commitRange(c), '--', ...paths])
+  await update($, diffPane, () => ({ path: f.path, kind: letterKind(f.letter), at: c.shortSha, ...result }))
+  await bringToFront($, DIFF_PANE)
 }
 
 // ───── 解衝突 ─────
@@ -894,7 +1086,7 @@ export const register: Register = on => {
   on('ui.close', async ($, e, next) => {
     const result = await next(e)
     if (e.id === DIFF_PANE && e.origin.kind === 'person') {
-      await setView($, NO_DIFF)
+      await update($, diffPane, () => EMPTY_DIFF)
       await focusPanel($)
     }
     // 合併面板被按掉：放掉選到一半的結果（檔案沒動過，下次打開從頭選）。
@@ -912,13 +1104,15 @@ export const register: Register = on => {
     // 終端機沒有 Svg，那邊退回文字按鈕。
     const Svg = 'Svg' in ui ? ui.Svg : undefined
     const isTerminal = e.surface === 'terminal'
-    const [activeTab, activeSub, v, isRemoteOpen, query, sv, usage, now] = await Promise.all([
+    const [activeTab, activeSub, v, isRemoteOpen, query, sv, lg, lq, usage, now] = await Promise.all([
       read($, tab),
       read($, subTab),
       read($, view),
       read($, showRemote),
       read($, branchQuery),
       read($, services),
+      read($, log),
+      read($, logQuery),
       // 讀不到用量就當作還沒有讀數，不要讓整個面板畫不出來。
       $.session.usage().catch(() => undefined),
       $.clock.now(),
@@ -964,30 +1158,48 @@ export const register: Register = on => {
     // 包它的那層比整行寬很多、超出的部分被裁掉，按鈕就不會被壓到整行寬而在最右邊畫出「…」，
     // 看得到的 hover 亮底剛好是整行。
     // 終端機：疊上去的空白會蓋掉底下的字，所以只有名稱是按鈕。
+    // isTruncated：名稱太長時在桌面版截成「…」，讓 rest 留在同一行（commit 的 subject）。
+    // trailing：放在整行最右邊、自己能按的東西（branch 列的 log 圖示），不在透明按鈕底下，才按得到。
     const pressRow = (row: {
       key: string
       label: string
       onPress: () => unknown
       isDim?: boolean
       isBold?: boolean
+      isTruncated?: boolean
       color?: string
       indent?: number
       lead?: RenderChildren
       rest?: RenderChildren
-    }) =>
-      isTerminal ? (
-        <Box key={`${row.key}:row`} gap={1} paddingLeft={row.indent ?? 2} hover={{ backgroundColor: ACTIVE_BG }}>
-          {row.lead}
-          <Button key={row.key} label={row.label} plain dimColor={row.isDim} onPress={act($, PANE, row.onPress)} />
-          {row.rest}
-        </Box>
-      ) : (
-        <Box key={`${row.key}:row`} position="relative">
+      trailing?: RenderChildren
+    }) => {
+      if (isTerminal) {
+        return (
+          <Box key={`${row.key}:row`} gap={1} paddingLeft={row.indent ?? 2} hover={{ backgroundColor: ACTIVE_BG }}>
+            {row.lead}
+            <Button key={row.key} label={row.label} plain dimColor={row.isDim} onPress={act($, PANE, row.onPress)} />
+            {row.rest}
+            {row.trailing}
+          </Box>
+        )
+      }
+      const label = (
+        <Text bold={row.isBold} color={row.color} dimColor={row.isDim} wrap={row.isTruncated ? 'truncate-end' : undefined}>
+          {row.label}
+        </Text>
+      )
+      const hasTrailing = row.trailing !== undefined
+      const pressable = (
+        <Box key={`${row.key}:row`} position="relative" flexGrow={hasTrailing ? 1 : undefined} flexShrink={hasTrailing ? 1 : undefined}>
           <Box gap={1} paddingLeft={row.indent ?? 2}>
             {row.lead}
-            <Text bold={row.isBold} color={row.color} dimColor={row.isDim}>
-              {row.label}
-            </Text>
+            {row.isTruncated ? (
+              <Box flexShrink={1} overflow="hidden">
+                {label}
+              </Box>
+            ) : (
+              label
+            )}
             {row.rest}
           </Box>
           <Box position="absolute" top={0} left={0} right={0} bottom={0} overflow="hidden">
@@ -997,6 +1209,54 @@ export const register: Register = on => {
           </Box>
         </Box>
       )
+
+      return hasTrailing ? (
+        <Box key={`${row.key}:line`} gap={1} alignItems="center">
+          {pressable}
+          <Box flexShrink={0}>{row.trailing}</Box>
+        </Box>
+      ) : (
+        pressable
+      )
+    }
+
+    // 一個檔案一列：彩色狀態字母、檔名、淡色資料夾。diff 分頁和 log 分頁點開的 commit 共用。
+    const pathRow = (key: string, path: string, letter: string, kind: FileKind, onPress: () => unknown) => {
+      const { name, dir } = splitPath(path)
+
+      return pressRow({
+        key,
+        label: name,
+        onPress,
+        lead: (
+          <Text bold color={KIND_STYLE[kind].theme}>
+            {letter}
+          </Text>
+        ),
+        rest:
+          dir === '' ? null : (
+            <Text dimColor wrap="truncate-start">
+              {dir}
+            </Text>
+          ),
+      })
+    }
+
+    // branch、log 分頁最上面的搜尋框。手機版沒有 Input，就不畫。邊打邊過濾；桌面版拔不掉框旁邊的 submit 按鈕，
+    // 就讓它（和 Enter）清空搜尋。框不能設寬度、撐不滿，所以整組水平置中。
+    const searchField = (key: string, value: string, onInput: (text: string) => unknown, onClear: () => unknown) =>
+      'Input' in ui ? (
+        <Box key={`${key}:row`} width="100%" justifyContent="center">
+          <ui.Input
+            key={key}
+            placeholder="Search"
+            value={value}
+            submitLabel="Clear"
+            onInput={text => void onInput(text)}
+            onSubmit={() => void onClear()}
+          />
+        </Box>
+      ) : null
 
     // 項目之間插入直線分隔。
     const withDividers = (items: RenderChildren[], prefix: string) =>
@@ -1121,28 +1381,11 @@ export const register: Register = on => {
       body = <Text dimColor>This folder is not a git repo.</Text>
     } else if (activeSub === 'diff') {
       const groups = groupFiles(v.files)
-      // 一個檔案一列：彩色狀態字母、檔名（點了看差異）、淡色資料夾。
-      const fileRow = (group: FileGroupId, entry: FileEntry) => {
-        const { name, dir } = splitPath(entry.file.path)
-
-        return pressRow({
-          key: `file:${group}:${entry.file.path}`,
-          label: name,
-          // 衝突的檔案開合併面板，其他開差異面板。
-          onPress: () => (entry.kind === 'conflict' ? openMerge($, entry.file.path) : openDiff($, entry.file.path)),
-          lead: (
-            <Text bold color={KIND_STYLE[entry.kind].theme}>
-              {entry.letter}
-            </Text>
-          ),
-          rest:
-            dir === '' ? null : (
-              <Text dimColor wrap="truncate-start">
-                {dir}
-              </Text>
-            ),
-        })
-      }
+      // 點檔案：衝突的開合併面板，其他開差異面板。
+      const fileRow = (group: FileGroupId, entry: FileEntry) =>
+        pathRow(`file:${group}:${entry.file.path}`, entry.file.path, entry.letter, entry.kind, () =>
+          entry.kind === 'conflict' ? openMerge($, entry.file.path) : openDiff($, entry.file.path),
+        )
 
       body =
         v.files.length === 0 ? (
@@ -1167,22 +1410,14 @@ export const register: Register = on => {
       const locals = shown.filter(b => !b.isRemote)
       const remotes = shown.filter(b => b.isRemote)
       const hasCurrent = locals[0]?.isCurrent === true
-      // 手機版沒有 Input，就不畫搜尋框。邊打邊過濾；桌面版拔不掉框旁邊的 submit 按鈕，
-      // 就讓它（和 Enter）清空搜尋。框不能設寬度、撐不滿，所以整組水平置中。
-      const search =
-        'Input' in ui ? (
-          <Box key="branch:search:row" width="100%" justifyContent="center">
-            <ui.Input
-              key="branch:search"
-              placeholder="Search"
-              value={query}
-              submitLabel="Clear"
-              onInput={text => void update($, branchQuery, () => text)}
-              onSubmit={() => void clearBranchQuery($)}
-            />
-          </Box>
-        ) : null
+      const search = searchField(
+        'branch:search',
+        query,
+        text => update($, branchQuery, () => text),
+        () => clearBranchQuery($),
+      )
       // 目前分支的 ● 落在縮排的空位裡，名稱跟其他分支對齊；點它不做事。
+      // 右邊的 log 圖示按了到 log 分頁看這個分支。
       const branchRow = (b: GitBranch) => {
         const id = `${b.isRemote ? 'r' : 'l'}:${b.name}`
 
@@ -1195,6 +1430,7 @@ export const register: Register = on => {
           indent: b.isCurrent ? 0 : undefined,
           lead: b.isCurrent ? <Text color="success">●</Text> : undefined,
           onPress: b.isCurrent ? () => undefined : () => switchBranch($, b.name, b.isRemote),
+          trailing: iconButton(`log:${id}`, 'log', 'Log', false, () => viewLog($, b)),
         })
       }
 
@@ -1232,6 +1468,89 @@ export const register: Register = on => {
               {isRemoteShown && remotes.map(branchRow)}
             </Box>
           )}
+        </Box>
+      )
+    } else if (activeSub === 'log' && lg.commit !== null) {
+      // 點開的 commit：最上面 ← Back，下面是它改了哪些檔案，點了在 diff 面板看差異。
+      const c = lg.commit
+      const commitFileRow = (f: CommitFile) =>
+        pathRow(`commit-file:${f.path}`, f.path, f.letter, letterKind(f.letter), () => openCommitDiff($, c, f))
+
+      body = (
+        <Box flexDirection="column" gap={1}>
+          {pressRow({ key: 'log:back', label: '← Back', isDim: true, isBold: true, indent: 0, onPress: () => setLog($, NO_COMMIT) })}
+          <Box flexDirection="column">
+            <Text bold>{c.subject}</Text>
+            <Text dimColor>
+              {[c.shortSha, c.author, formatAgo(c.time, now), c.parents.length > 1 ? 'merge, vs first parent' : '']
+                .filter(s => s !== '')
+                .join(' · ')}
+            </Text>
+          </Box>
+          {lg.commitError !== '' && <Text color="error">{lg.commitError}</Text>}
+          {lg.files === null ? (
+            <Text dimColor>Loading…</Text>
+          ) : lg.files.length === 0 ? (
+            lg.commitError === '' && <Text dimColor>No files changed.</Text>
+          ) : (
+            <Box flexDirection="column">
+              <Text bold dimColor>{`Files · ${lg.files.length}`}</Text>
+              {lg.files.map(commitFileRow)}
+            </Box>
+          )}
+        </Box>
+      )
+    } else if (activeSub === 'log') {
+      // 一筆 commit 一列：短 sha、subject、作者 · 多久前；還沒 push 的在 sha 前面標黃色 ↑（落在縮排的空位裡）。
+      const unpushed = new Set(lg.unpushed)
+      const commitRow = (c: GitCommit) => {
+        const isUnpushed = unpushed.has(c.sha)
+
+        return pressRow({
+          key: `commit:${c.sha}`,
+          label: c.subject,
+          isTruncated: true,
+          indent: isUnpushed ? 0 : undefined,
+          lead: [
+            isUnpushed && (
+              <Text key={`commit:${c.sha}:unpushed`} color="warning">
+                ↑
+              </Text>
+            ),
+            <Text key={`commit:${c.sha}:sha`} color="suggestion">
+              {c.shortSha}
+            </Text>,
+          ],
+          rest: (
+            <Box flexShrink={0}>
+              <Text dimColor>{`${c.author} · ${formatAgo(c.time, now)}`}</Text>
+            </Box>
+          ),
+          onPress: () => openCommit($, c),
+        })
+      }
+
+      // 搜尋時標題的數字是符合的筆數（超過列出的就加 +）。
+      const isSearching = searchWords(lq).length > 0
+      body = (
+        <Box flexDirection="column" gap={1}>
+          {lg.error !== '' && <Text color="error">{lg.error}</Text>}
+          {searchField('log:search', lq, text => searchLog($, text), () => searchLog($, ''))}
+          {!lg.isLoaded ? (
+            <Text dimColor>Loading…</Text>
+          ) : (
+            <Box flexDirection="column">
+              <Text bold dimColor>{`${logBranch(v, lg)?.name ?? 'HEAD (detached)'} · ${lg.commits.length}${lg.hasMore ? '+' : ''}`}</Text>
+              {lg.commits.length === 0 && lg.error === '' && (
+                <Box paddingLeft={2}>
+                  <Text dimColor>{isSearching ? 'No matching commits.' : 'No commits yet.'}</Text>
+                </Box>
+              )}
+              {lg.commits.map(commitRow)}
+            </Box>
+          )}
+          {isSearching && lg.isTruncated && <Text dimColor>History is too long; searched only the newest commits.</Text>}
+          {lg.hasMore && <Button key="log:more" label="Load more" onPress={act($, PANE, () => loadMoreLog($))} />}
         </Box>
       )
     } else {
@@ -1345,7 +1664,7 @@ export const register: Register = on => {
                 'sub',
                 SUB_TABS,
                 activeSub,
-                id => void Promise.all([update($, subTab, () => id), leaveTab($)]),
+                id => void selectSubTab($, id),
                 v.files.some(isConflict) ? { conflict: USAGE_LOW } : {},
               )}
             {activeTab === 'git' && divider}
@@ -1361,15 +1680,14 @@ export const register: Register = on => {
     )
   })
 
-  // 選中檔案的差異，開在自己的面板裡。
+  // 選中檔案的差異，開在自己的面板裡：diff 分頁的未提交變更，或 log 分頁某個 commit 裡的檔案（標題後面加 @ sha）。
   on('ui.render', { component: 'Pane', requestId: DIFF_PANE }, async ($, e) => {
     const { Box, Code, Text } = $.ui.resolve(e)
-    const v = await read($, view)
-    const file = v.files.find(f => f.path === v.selected)
+    const shown = await read($, diffPane)
 
-    if (file === undefined) return <Text dimColor>No file selected.</Text>
+    if (shown.path === '') return <Text dimColor>No file selected.</Text>
 
-    const kind = KIND_STYLE[fileKind(file)]
+    const kind = KIND_STYLE[shown.kind]
 
     return (
       <Box flexDirection="column" gap={1}>
@@ -1377,15 +1695,16 @@ export const register: Register = on => {
           <Text bold color={kind.theme}>
             {kind.label}
           </Text>
-          <Text bold>{file.path}</Text>
+          <Text bold>{shown.path}</Text>
+          {shown.at !== '' && <Text dimColor>{`@ ${shown.at}`}</Text>}
         </Box>
-        {v.error !== '' && <Text color="error">{v.error}</Text>}
-        {v.diff === '' ? (
+        {shown.error !== '' && <Text color="error">{shown.error}</Text>}
+        {shown.diff === '' ? (
           <Text dimColor>No text diff to show (binary file, or only the mode changed).</Text>
         ) : (
-          <Code source={v.diff} format="diff" path={file.path} />
+          <Code source={shown.diff} format="diff" path={shown.path} />
         )}
-        {v.isDiffTruncated && <Text dimColor>Diff is too long; showing only the beginning.</Text>}
+        {shown.isTruncated && <Text dimColor>Diff is too long; showing only the beginning.</Text>}
       </Box>
     )
   })
