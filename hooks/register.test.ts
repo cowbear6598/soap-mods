@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import type { MergeChunk, ScanProc, ScanResult } from '../types'
-import { fileKind, formatTrack, groupFiles, parseBranches, parseStatus, splitPath, toHunks } from './git'
+import { fileKind, filterBranches, formatTrack, groupFiles, parseBranches, parseStatus, splitPath, toHunks } from './git'
 import { findServices, serviceName, splitArgs, toolName } from './services'
 import type { DiffHunk } from './merge'
 import { buildResult, choose, chooseAll, conflictLabel, detectOp, diffLines, isResolved, keepChoices, merge3, nextConflict, parseConflicts, toggleApplied } from './merge'
@@ -163,6 +163,24 @@ test('the pane lists changes, shows a diff and the branches, and switches sub ta
   await ui.press({ key: 'sub:branch' })
   expect(await ui.find({ type: 'Text', text: SWITCH_FAILED })).toBeUndefined()
 
+  // 搜尋：只留名稱符合的分支，Remote 收著也直接列出來；換分頁就清掉。
+  await ui.press({ key: 'remote:toggle' })
+  await ui.input({ key: 'branch:search', text: 'MAIN', kind: 'change' })
+  expect(await ui.find({ key: 'switch:l:main' })).toBeDefined()
+  expect(await ui.find({ key: 'switch:l:dev' })).toBeUndefined()
+  expect(await ui.find({ key: 'switch:r:origin/main' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Local · 1' })).toBeDefined()
+  await ui.input({ key: 'branch:search', text: 'nope', kind: 'change' })
+  expect(await ui.find({ type: 'Text', text: 'No matching branches.' })).toBeDefined()
+  // Clear（Enter）清空搜尋，全部分支回來。
+  await ui.input({ key: 'branch:search', text: 'nope' })
+  expect(await ui.find({ key: 'switch:l:dev' })).toBeDefined()
+  await ui.input({ key: 'branch:search', text: 'dev', kind: 'change' })
+  await ui.press({ key: 'sub:diff' })
+  await ui.press({ key: 'sub:branch' })
+  expect(await ui.find({ key: 'switch:l:dev' })).toBeDefined()
+  expect(await ui.find({ key: 'switch:r:origin/main' })).toBeUndefined()
+
   await ui.press({ key: 'sub:conflict' })
   expect(await ui.find({ type: 'Text', text: 'No conflicts.' })).toBeDefined()
   await ui.unmount()
@@ -255,6 +273,22 @@ test('parseBranches puts the current branch first, locals before remotes, and sk
   expect(branches.map(b => b.name)).toEqual(['main', 'zeta', 'origin/main'])
   expect(branches[0]).toMatchObject({ isCurrent: true, isRemote: false, track: '[ahead 1]', subject: 'Add panel' })
   expect(branches[2]?.isRemote).toBe(true)
+})
+
+test('filterBranches keeps names holding every word, ignoring case', () => {
+  const branches = parseBranches(
+    [
+      '*\trefs/heads/main\tmain\t\t\t1 hour ago\ta',
+      ' \trefs/heads/feature/login-page\tfeature/login-page\t\t\t1 hour ago\tb',
+      ' \trefs/remotes/origin/feature/login-api\torigin/feature/login-api\t\t\t1 hour ago\tc',
+      '',
+    ].join('\n'),
+  )
+  const names = (q: string) => filterBranches(branches, q).map(b => b.name)
+  expect(names('  ')).toEqual(['main', 'feature/login-page', 'origin/feature/login-api'])
+  expect(names('LOGIN')).toEqual(['feature/login-page', 'origin/feature/login-api'])
+  expect(names('login page')).toEqual(['feature/login-page'])
+  expect(names('xyz')).toEqual([])
 })
 
 test('groupFiles splits staged, unstaged and untracked, listing a file changed on both sides twice', () => {

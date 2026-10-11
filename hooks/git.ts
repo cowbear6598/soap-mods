@@ -79,6 +79,23 @@ export function parseBranches(out: string): GitBranch[] {
   })
 }
 
+/** The lowercased words of a branch search; none when it is blank. */
+export function searchWords(query: string): string[] {
+  return query.toLowerCase().split(/\s+/).filter(w => w !== '')
+}
+
+/** Branches whose name holds every word of `query`, ignoring case; all of them when it is blank. */
+export function filterBranches(branches: GitBranch[], query: string): GitBranch[] {
+  const words = searchWords(query)
+  if (words.length === 0) return branches
+
+  return branches.filter(b => {
+    const name = b.name.toLowerCase()
+
+    return words.every(w => name.includes(w))
+  })
+}
+
 /** What happened to a file as a whole: the diff pane header. */
 export function fileKind(file: GitFile): FileKind {
   if (isConflict(file)) return 'conflict'

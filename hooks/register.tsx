@@ -18,7 +18,7 @@ import type {
   TabId,
 } from '../types'
 import type { FileEntry, FileGroupId, FileKind } from './git'
-import { BRANCH_FORMAT, fileKind, groupFiles, isConflict, parseBranches, parseStatus, splitPath, toHunks } from './git'
+import { BRANCH_FORMAT, fileKind, filterBranches, groupFiles, isConflict, parseBranches, parseStatus, searchWords, splitPath, toHunks } from './git'
 import {
   buildResult,
   choose,
@@ -177,6 +177,8 @@ const tab = atom({ plugin: 'soap-mods', key: 'tab' } as const, 'git')
 const subTab = atom({ plugin: 'soap-mods', key: 'subTab' } as const, 'diff')
 const view = atom({ plugin: 'soap-mods', key: 'view' } as const, EMPTY)
 const showRemote = atom({ plugin: 'soap-mods', key: 'showRemote' } as const, false)
+// branch 分頁搜尋框裡的字，換分頁就清掉。
+const branchQuery = atom({ plugin: 'soap-mods', key: 'branchQuery' } as const, '')
 const EMPTY_SERVICES: ServicesView = { isLoaded: false, items: [], error: '', actionError: '', pending: [] }
 const services = atom({ plugin: 'soap-mods', key: 'services' } as const, EMPTY_SERVICES)
 const EMPTY_MERGE: MergeView = {
@@ -501,6 +503,15 @@ async function clearGitMessages($: EngineInterface) {
   await update($, view, v =>
     v.branchError === '' && v.opError === '' && !v.isAbortArmed ? v : { ...v, branchError: '', opError: '', isAbortArmed: false },
   )
+}
+
+// 換分頁（上層 Tab 或子分頁）時清掉的東西：錯誤訊息、待確認的 abort、branch 的搜尋。
+async function leaveTab($: EngineInterface) {
+  await Promise.all([clearGitMessages($), clearBranchQuery($)])
+}
+
+async function clearBranchQuery($: EngineInterface) {
+  await update($, branchQuery, () => '')
 }
 
 async function switchBranch($: EngineInterface, name: string, isRemote: boolean) {
@@ -830,7 +841,7 @@ async function scanWhenShown($: EngineInterface) {
 }
 
 async function selectTab($: EngineInterface, id: TabId) {
-  await Promise.all([update($, tab, () => id), clearGitMessages($)])
+  await Promise.all([update($, tab, () => id), leaveTab($)])
   // 掃描要一秒左右，不等它：先切過去畫「掃描中」或舊清單。
   if (id === 'services') void refreshServices($).catch(() => undefined)
 }
@@ -901,11 +912,12 @@ export const register: Register = on => {
     // 終端機沒有 Svg，那邊退回文字按鈕。
     const Svg = 'Svg' in ui ? ui.Svg : undefined
     const isTerminal = e.surface === 'terminal'
-    const [activeTab, activeSub, v, isRemoteOpen, sv, usage, now] = await Promise.all([
+    const [activeTab, activeSub, v, isRemoteOpen, query, sv, usage, now] = await Promise.all([
       read($, tab),
       read($, subTab),
       read($, view),
       read($, showRemote),
+      read($, branchQuery),
       read($, services),
       // 讀不到用量就當作還沒有讀數，不要讓整個面板畫不出來。
       $.session.usage().catch(() => undefined),
@@ -1148,9 +1160,28 @@ export const register: Register = on => {
     } else if (activeSub === 'branch') {
       // parseBranches 已經排好：目前分支第一個，其餘照名稱。切換後被點的那列會搬位置、面板丟掉焦點，
       // 由 focusWhenShown 補回來。
-      const locals = v.branches.filter(b => !b.isRemote)
-      const remotes = v.branches.filter(b => b.isRemote)
+      // 搜尋時只留名稱符合的分支，Remote 直接展開（不用再按 ▸），沒有符合的那組整組不畫。
+      const isSearching = searchWords(query).length > 0
+      const isRemoteShown = isSearching || isRemoteOpen
+      const shown = filterBranches(v.branches, query)
+      const locals = shown.filter(b => !b.isRemote)
+      const remotes = shown.filter(b => b.isRemote)
       const hasCurrent = locals[0]?.isCurrent === true
+      // 手機版沒有 Input，就不畫搜尋框。邊打邊過濾；桌面版拔不掉框旁邊的 submit 按鈕，
+      // 就讓它（和 Enter）清空搜尋。框不能設寬度、撐不滿，所以整組水平置中。
+      const search =
+        'Input' in ui ? (
+          <Box key="branch:search:row" width="100%" justifyContent="center">
+            <ui.Input
+              key="branch:search"
+              placeholder="Search"
+              value={query}
+              submitLabel="Clear"
+              onInput={text => void update($, branchQuery, () => text)}
+              onSubmit={() => void clearBranchQuery($)}
+            />
+          </Box>
+        ) : null
       // 目前分支的 ● 落在縮排的空位裡，名稱跟其他分支對齊；點它不做事。
       const branchRow = (b: GitBranch) => {
         const id = `${b.isRemote ? 'r' : 'l'}:${b.name}`
@@ -1171,26 +1202,34 @@ export const register: Register = on => {
       body = (
         <Box flexDirection="column" gap={1}>
           {v.branchError !== '' && <Text color="error">{v.branchError}</Text>}
-          <Box flexDirection="column">
-            <Text bold dimColor>{`Local · ${locals.length}`}</Text>
-            {!hasCurrent && (
-              <Box paddingLeft={2}>
-                <Text dimColor>No current branch (detached HEAD?)</Text>
-              </Box>
-            )}
-            {locals.map(branchRow)}
-          </Box>
+          {search}
+          {isSearching && shown.length === 0 && <Text dimColor>No matching branches.</Text>}
+          {(!isSearching || locals.length > 0) && (
+            <Box flexDirection="column">
+              <Text bold dimColor>{`Local · ${locals.length}`}</Text>
+              {!isSearching && !hasCurrent && (
+                <Box paddingLeft={2}>
+                  <Text dimColor>No current branch (detached HEAD?)</Text>
+                </Box>
+              )}
+              {locals.map(branchRow)}
+            </Box>
+          )}
           {remotes.length > 0 && (
             <Box flexDirection="column">
-              {pressRow({
-                key: 'remote:toggle',
-                label: `Remote · ${remotes.length} ${isRemoteOpen ? '▾' : '▸'}`,
-                isDim: true,
-                isBold: true,
-                indent: 0,
-                onPress: () => update($, showRemote, open => !open),
-              })}
-              {isRemoteOpen && remotes.map(branchRow)}
+              {isSearching ? (
+                <Text bold dimColor>{`Remote · ${remotes.length}`}</Text>
+              ) : (
+                pressRow({
+                  key: 'remote:toggle',
+                  label: `Remote · ${remotes.length} ${isRemoteOpen ? '▾' : '▸'}`,
+                  isDim: true,
+                  isBold: true,
+                  indent: 0,
+                  onPress: () => update($, showRemote, open => !open),
+                })
+              )}
+              {isRemoteShown && remotes.map(branchRow)}
             </Box>
           )}
         </Box>
@@ -1306,7 +1345,7 @@ export const register: Register = on => {
                 'sub',
                 SUB_TABS,
                 activeSub,
-                id => void Promise.all([update($, subTab, () => id), clearGitMessages($)]),
+                id => void Promise.all([update($, subTab, () => id), leaveTab($)]),
                 v.files.some(isConflict) ? { conflict: USAGE_LOW } : {},
               )}
             {activeTab === 'git' && divider}

@@ -173,6 +173,8 @@ declare module 'claude-code' {
       view: GitView
       /** Whether the remote branches section is expanded. */
       showRemote: boolean
+      /** Text in the branch tab's search field, '' when not searching. */
+      branchQuery: string
       services: ServicesView
       merge: MergeView
     }
