@@ -1,10 +1,10 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import type { ScanProc, ScanResult } from '../types'
+import type { MergeChunk, ScanProc, ScanResult } from '../types'
 import { fileKind, formatTrack, groupFiles, parseBranches, parseStatus, splitPath, toHunks } from './git'
 import { findServices, serviceIdentity, splitArgs } from './services'
 import type { DiffHunk } from './merge'
-import { buildResult, choose, conflictLabel, detectOp, diffLines, isResolved, keepChoices, merge3, parseConflicts, toggleApplied } from './merge'
+import { buildResult, choose, chooseAll, conflictLabel, detectOp, diffLines, isResolved, keepChoices, merge3, nextConflict, parseConflicts, toggleApplied } from './merge'
 
 // 面板的 props：引擎畫面板時一定會給，測試照實給一份。
 const PANE_PROPS = {
@@ -212,8 +212,8 @@ test('groupFiles splits staged, unstaged and untracked, listing a file changed o
   const { files } = parseStatus(['MM both.ts', 'A  new.ts', ' D gone.ts', 'UU clash.ts', '?? notes.md', ''].join('\0'))
   const groups = groupFiles(files)
   const show = (id: 'staged' | 'unstaged' | 'untracked') => groups[id].map(e => `${e.letter} ${e.file.path} ${e.kind}`)
-  expect(show('staged')).toEqual(['M both.ts modified', 'A new.ts added'])
-  expect(show('unstaged')).toEqual(['M both.ts modified', 'D gone.ts deleted', '! clash.ts conflict'])
+  expect(show('staged')).toEqual(['A new.ts added', 'M both.ts modified'])
+  expect(show('unstaged')).toEqual(['! clash.ts conflict', 'M both.ts modified', 'D gone.ts deleted'])
   expect(show('untracked')).toEqual(['U notes.md added'])
 })
 
@@ -704,6 +704,8 @@ test('the conflict tab lists conflicted files, and the merge pane resolves one, 
     expect(await pane.find({ key: 'merge:ours:1' })).toBeDefined()
     expect(await pane.find({ key: 'merge:theirs:1' })).toBeDefined()
     expect(await pane.find({ key: 'merge:both:1' })).toBeDefined()
+    expect(await pane.find({ key: 'merge:next' })).toBeDefined()
+    expect(await pane.find({ key: 'merge:prev' })).toBeDefined()
     // 只畫用得到的按鈕：還沒選時沒有 Reset，還有衝突時沒有 Apply。
     expect(await pane.find({ key: 'merge:reset:1' })).toBeUndefined()
     expect(await pane.find({ key: 'merge:apply' })).toBeUndefined()
@@ -735,6 +737,24 @@ test('the conflict tab lists conflicted files, and the merge pane resolves one, 
   const commit = calls.find(c => c.args.join(' ') === 'commit --no-edit')
   expect(commit?.env).toEqual({ GIT_EDITOR: 'true' })
   await ui.unmount()
+})
+
+test('nextConflict walks the conflicts still open, wrapping around, then all of them once each is chosen', () => {
+  const same: MergeChunk = { kind: 'same', lines: ['a'] }
+  const open: MergeChunk = { kind: 'conflict', ours: ['x1'], base: null, theirs: ['x2'], choice: 'none' }
+  const chunks = [same, open, same, open, same, open, same]
+  expect(nextConflict(chunks, -1, 1)).toBe(1)
+  expect(nextConflict(chunks, 1, 1)).toBe(3)
+  expect(nextConflict(chunks, 5, 1)).toBe(1)
+  expect(nextConflict(chunks, -1, -1)).toBe(5)
+  expect(nextConflict(chunks, 3, -1)).toBe(1)
+  // 第 3 段選好了：跳過它。
+  const picked = choose(chunks, 3, 'ours')
+  expect(nextConflict(picked, 1, 1)).toBe(5)
+  expect(nextConflict(picked, 5, -1)).toBe(1)
+  // 全部選好：在全部衝突之間跳。
+  expect(nextConflict(chooseAll(chunks, 'theirs'), 1, 1)).toBe(3)
+  expect(nextConflict([same], -1, 1)).toBeNull()
 })
 
 test('abort asks once more before running, and Ask Claude sends the file to the model', async ($, on) => {

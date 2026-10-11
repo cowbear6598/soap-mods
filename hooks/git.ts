@@ -109,10 +109,14 @@ function letterKind(letter: string): FileKind {
   return 'modified'
 }
 
+/** Order within a group: conflicts first, then added, modified, renamed, deleted. */
+const KIND_ORDER: Record<FileKind, number> = { conflict: 0, added: 1, modified: 2, renamed: 3, deleted: 4 }
+
 /**
  * Files as the source control view groups them: staged (X), unstaged (Y) and
  * untracked. A file changed on both sides is listed in both groups; a
- * conflicted file is listed once, under unstaged.
+ * conflicted file is listed once, under unstaged. Each group is sorted by
+ * kind, keeping git's path order within a kind.
  */
 export function groupFiles(files: GitFile[]): Record<FileGroupId, FileEntry[]> {
   const groups: Record<FileGroupId, FileEntry[]> = { staged: [], unstaged: [], untracked: [] }
@@ -129,6 +133,7 @@ export function groupFiles(files: GitFile[]): Record<FileGroupId, FileEntry[]> {
     if (file.x !== ' ') groups.staged.push({ file, letter: file.x, kind: letterKind(file.x) })
     if (file.y !== ' ') groups.unstaged.push({ file, letter: file.y, kind: letterKind(file.y) })
   }
+  for (const entries of Object.values(groups)) entries.sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind])
 
   return groups
 }

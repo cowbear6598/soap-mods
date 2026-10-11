@@ -89,8 +89,6 @@ export type MergeView = MergeText & {
   path: string
   /** False when the file has no conflict markers to resolve line by line (delete/modify, binary). */
   hasMarkers: boolean
-  /** The pieces come from a three-way merge of the versions git kept (`:1:` `:2:` `:3:`), not the markers on disk. */
-  hasStages: boolean
   /** Why the last read or apply failed, '' when none. */
   error: string
   /** An apply or take-a-side is running. */

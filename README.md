@@ -8,7 +8,7 @@ CptSoap 的 Claude Code Panel mod。
 
 選到 Git 後有三個子分頁：
 
-- **diff**：列出目前資料夾的未提交變更（含未追蹤檔案），點檔案就在下面看它的差異。
+- **diff**：列出目前資料夾的未提交變更（含未追蹤檔案），每一組照狀態排（衝突 → 新增 → 修改 → 改名 → 刪除），點檔案就在下面看它的差異。
 - **branch**：列出本地與遠端分支（目前分支在最上面），點分支名稱可以切換。
 - **conflict**：停在 merge／rebase／cherry-pick／revert 時，最上面顯示進行中的操作和 **Abort**（按兩次才會真的 abort）；衝突全部解完後多一顆 **Continue**（merge 直接用預設訊息 commit，其他是 `--continue`，都不開編輯器）。下面列出還沒解的檔案，有衝突時子分頁的圖示變紅。點檔案（diff 分頁裡標 `!` 的也一樣）開合併面板。
 
@@ -20,7 +20,7 @@ CptSoap 的 Claude Code Panel mod。
 
 兩邊都新增了這個檔案（沒有共同祖先）時，一樣的部分保留，每一處不一樣都算衝突。讀不到 git 的版本時，退回只看檔案裡的衝突標記。
 
-上面有 **All ours** / **All theirs**（每段衝突都選同一邊，自動合入的改動保留）、**Ask Claude**（請 Claude 解這個檔案並 `git add`），每段衝突都選好才會出現的 **Apply & mark resolved**（寫回檔案並 `git add`）。面板只放當下用得到的按鈕：衝突還沒選時中間是兩個「兩邊都要」，選好之後換成 **Reset**。rebase 時 ours／theirs 跟直覺相反（ours 是你要接上去的那條分支），面板上會提醒。
+上面有 **↑ Previous** / **↓ Next**（快捷鍵 `n` / `m`，面板拿著鍵盤時能用）跳到上一段／下一段還沒選的衝突，捲到那一段並把焦點放在 **Accept ≫**；全部選好後改成在所有衝突之間跳。下一排是 **All ours** / **All theirs**（每段衝突都選同一邊，自動合入的改動保留）、**Ask Claude**（請 Claude 解這個檔案並 `git add`），每段衝突都選好才會出現的 **Apply & mark resolved**（寫回檔案並 `git add`）。面板只放當下用得到的按鈕：衝突還沒選時中間是兩個「兩邊都要」，選好之後換成 **Reset**。rebase 時 ours／theirs 跟直覺相反（ours 是你要接上去的那條分支），面板上會提醒。
 
 沒有衝突標記可以一段一段選的檔案（一邊刪掉了、二進位檔、標記已經被你手動清掉）改成整個檔案選：**Use ours**、**Use theirs**（那一邊把檔案刪了就 `git rm`）、**Mark resolved as is**（照目前的樣子 `git add`）。
 

@@ -28,6 +28,7 @@ import {
   isResolved,
   keepChoices,
   merge3,
+  nextConflict,
   parseConflicts,
   splitLines,
   takesSide,
@@ -178,7 +179,6 @@ const services = atom({ plugin: 'soap-mods', key: 'services' } as const, EMPTY_S
 const EMPTY_MERGE: MergeView = {
   path: '',
   hasMarkers: false,
-  hasStages: false,
   chunks: [],
   eol: '\n',
   hasFinalEol: true,
@@ -498,12 +498,25 @@ async function loadMerge($: EngineInterface, path: string) {
       ...next,
       ...parsed,
       hasMarkers: true,
-      hasStages: ours !== null && theirs !== null,
       chunks: keepChoices(m.path === path ? m.chunks : [], chunks),
     }
   }
   if (JSON.stringify(next) === JSON.stringify(m)) return
   await update($, merge, () => next)
+}
+
+// 上一次跳到的衝突（合併面板上 chunks 的位置）；換了檔案就從頭算。
+let conflictCursor = { path: '', at: -1 }
+
+// 跳到下一段（step 1）或上一段（-1）衝突：捲到那一列的頂端，焦點放在 ours 的 Accept 上。
+// 捲不動、焦點移不過去（面板沒拿著鍵盤）都不算錯，下次按再試。
+async function jumpConflict($: EngineInterface, step: 1 | -1) {
+  const m = await read($, merge)
+  const at = nextConflict(m.chunks, conflictCursor.path === m.path ? conflictCursor.at : -1, step)
+  if (at === null) return
+  conflictCursor = { path: m.path, at }
+  await $.ui.scroll({ in: MERGE_PANE, to: { key: `conflict:${at}` }, block: 'start' }).catch(() => undefined)
+  await $.ui.focus({ requestId: MERGE_PANE, key: `merge:ours:${at}` }).catch(() => undefined)
 }
 
 // 點衝突的檔案：開（或切到）三欄的合併面板。
@@ -1235,14 +1248,12 @@ export const register: Register = on => {
 
     if (m.path === '') return <Text dimColor>No conflicted file open.</Text>
 
-    const file = v.files.find(f => f.path === m.path)
     const title = (
       <Box gap={1}>
         <Text bold color={KIND_STYLE.conflict.theme}>
           {KIND_STYLE.conflict.label}
         </Text>
         <Text bold>{m.path}</Text>
-        {file !== undefined && <Text dimColor>{conflictLabel(file)}</Text>}
       </Box>
     )
     const error = m.error !== '' ? <Text color="error">{m.error}</Text> : null
@@ -1279,7 +1290,6 @@ export const register: Register = on => {
 
     const conflicts = m.chunks.filter(c => c.kind === 'conflict')
     const done = conflicts.filter(c => c.choice !== 'none').length
-    const autos = m.chunks.filter(c => c.kind === 'auto').length
     const isAllResolved = done === conflicts.length
 
     // 程式碼一律包一層撐滿整格的 Box：桌面版的 Code 只跟內容一樣寬（有個最小寬度），
@@ -1473,9 +1483,16 @@ export const register: Register = on => {
         {title}
         {error}
         {rebaseHint}
+        {/* 第二行：進度和上一段／下一段；第三行：整個檔案的動作。 */}
         <Box gap={1} flexWrap="wrap" alignItems="center">
           <Text color={isAllResolved ? 'success' : 'warning'}>{`${done} of ${conflicts.length} conflicts resolved`}</Text>
-          {autos > 0 && <Text color="suggestion">{`· ${autos} auto-merged`}</Text>}
+          {/* 面板拿著鍵盤時按 n／m 也行，跟 , . 一樣左邊往前、右邊往後；桌面版會在按鈕旁標出快捷鍵。 */}
+          {conflicts.length > 0 && [
+            <Button key="merge:prev" label="↑ Previous" hotkey="n" onPress={press(() => jumpConflict($, -1))} />,
+            <Button key="merge:next" label="↓ Next" hotkey="m" onPress={press(() => jumpConflict($, 1))} />,
+          ]}
+        </Box>
+        <Box gap={1} flexWrap="wrap" alignItems="center">
           <Button key="merge:all-ours" label="All ours" onPress={press(() => editChunks($, cs => chooseAll(cs, 'ours')))} />
           <Button key="merge:all-theirs" label="All theirs" onPress={press(() => editChunks($, cs => chooseAll(cs, 'theirs')))} />
           <Button key="merge:claude" label="Ask Claude" onPress={press(() => askClaude($))} />
@@ -1486,11 +1503,6 @@ export const register: Register = on => {
             <Button key="merge:apply" label="Apply & mark resolved" variant="primary" onPress={press(() => applyMerge($))} />
           ) : null}
         </Box>
-        {m.hasStages && (
-          <Text dimColor>
-            Built from the versions git kept, not from the file on disk: Apply replaces edits you made to the file by hand.
-          </Text>
-        )}
         <Box flexDirection="column" gap={1}>
           {columns('titles', [
             columnTitle('Ours', m.oursLabel, 'flex-start'),
