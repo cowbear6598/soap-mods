@@ -1,8 +1,8 @@
 // Services 分頁：找出 session 資料夾底下正在跑的服務，以及停掉、重跑它們。
 // 服務 = 有程序在 LISTEN port，而且它的工作目錄或執行檔在 session 資料夾底下；不看是什麼語言。
-// 這裡只放純邏輯和 PowerShell 腳本；畫面在 register.tsx。
+// 這裡只放純邏輯和 PowerShell 腳本；動作在 actions.ts，畫面在 ui/tabs/services.tsx。
 
-import type { ScanProc, ScanResult, Service } from '../types'
+import type { ScanProc, ScanResult, Service } from '../../types'
 
 // 掃描：列出所有程序（含工作目錄）、在 LISTEN 的 port，以及掃描程序自己往上的祖先（就是引擎本身，絕不能列出或停掉）。
 // Windows 拿別的程序的工作目錄要讀它的 PEB，所以編一小段 C#，編好的 dll 留在 %TEMP% 下次直接載入。

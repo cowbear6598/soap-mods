@@ -46,11 +46,19 @@ CptSoap 的 Claude Code Panel mod。
 
 ## 想改的地方
 
-- 加新的 Tab 或子分頁：`hooks/register.tsx` 最上面的 `TABS`、`SUB_TABS`。
-- 用量的標題、顏色門檻：`hooks/register.tsx` 最上面的 `USAGE_WINDOWS`、`USAGE_GOOD` / `USAGE_WARN` / `USAGE_LOW`。
-- git 輸出的解析：`hooks/git.ts`（有單元測試在 `hooks/register.test.ts`）。
-- 衝突標記的解析、合併結果的組合：`hooks/merge.ts`；合併面板的寬度、收起段落前後留幾行：`hooks/register.tsx` 最上面的 `MERGE_COLUMNS`、`MERGE_CONTEXT`。
-- 往上併時不能併進去的程式（終端機、編輯器、IDE）：`hooks/services.ts` 的 `SHELLS`、`HOSTS`；掃描間隔在 `hooks/register.tsx` 的 `SERVICES_SCAN_MS`。
+檔案結構：
+
+- `hooks/register.tsx`：狀態（atom）、所有碰到 `$` 的動作（跑 git、開關面板）、事件接線。引擎只讓這個檔案碰 `$` 和 atom，所以這些不能拆出去。
+- `hooks/config.ts`：常數（標題、分頁、顏色、時間）。
+- `hooks/git/`、`hooks/merge/algo.ts`、`hooks/services/scan.ts`：純邏輯（解析 git 輸出、三方合併、找服務），旁邊的 `*.test.ts` 是單元測試。
+- `hooks/ui/`：畫面，都是純函式，拿到資料和 `Actions`（`ui/actions.ts`）畫出樹；`ui/tabs/` 一個分頁一個檔案。
+
+常改的地方：
+
+- 加新的 Tab 或子分頁：`hooks/config.ts` 的 `TABS`、`SUB_TABS` 加一筆，`hooks/ui/panel.tsx` 的 `TAB_BODIES`、`SUB_TAB_BODIES` 加它的內容。
+- 用量的標題、顏色：`hooks/config.ts` 的 `USAGE_WINDOWS`、`GOOD` / `WARN` / `DANGER`；門檻在 `hooks/ui/usage.tsx`。
+- 合併面板的寬度、收起段落前後留幾行：`hooks/config.ts` 的 `MERGE_COLUMNS`、`MERGE_CONTEXT`。
+- 往上併時不能併進去的程式（終端機、編輯器、IDE）：`hooks/services/scan.ts` 的 `SHELLS`、`HOSTS`；掃描間隔在 `hooks/config.ts` 的 `SERVICES_SCAN_MS`。
 
 ## 安裝（Claude Desktop，Code 分頁，需 v2.1.286 以上）
 

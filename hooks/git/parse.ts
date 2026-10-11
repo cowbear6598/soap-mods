@@ -1,21 +1,15 @@
-import type { CommitFile, FileKind, GitBranch, GitCommit, GitFile } from '../types'
+import type { CommitFile, FileKind, GitBranch, GitCommit, GitFile, GitView, LogView } from '../../types'
 
 export const MAX_DIFF_CHARS = 60000
 
-/** `git status --porcelain=v1 -b -z` output → branch line and changed files. */
-export function parseStatus(out: string): { head: string; files: GitFile[] } {
+/** `git status --porcelain=v1 -b -z` output → changed files; the `## branch` line is skipped. */
+export function parseStatus(out: string): GitFile[] {
   const parts = out.split('\0')
-  let head = ''
   const files: GitFile[] = []
 
   for (let i = 0; i < parts.length; i += 1) {
     const entry = parts[i]
-    if (entry === undefined || entry === '') continue
-
-    if (entry.startsWith('## ')) {
-      head = entry.slice(3)
-      continue
-    }
+    if (entry === undefined || entry === '' || entry.startsWith('## ')) continue
 
     const x = entry[0] ?? ' '
     const y = entry[1] ?? ' '
@@ -25,7 +19,7 @@ export function parseStatus(out: string): { head: string; files: GitFile[] } {
     if (x === 'R' || x === 'C' || y === 'R' || y === 'C') i += 1
   }
 
-  return { head, files }
+  return files
 }
 
 /** Keep what `Code format="diff"` reads: from the first hunk header on. */
@@ -94,6 +88,14 @@ function filterWords<T>(items: T[], query: string, text: (item: T) => string): T
 
     return words.every(w => haystack.includes(w))
   })
+}
+
+/** A branch's full ref: a local and a remote branch can share a name. */
+export const branchRef = (b: GitBranch) => `refs/${b.isRemote ? 'remotes' : 'heads'}/${b.name}`
+
+/** The branch the log tab shows: the one picked with its log button, else (none picked, or gone) the current one; none when detached. */
+export function logBranch(v: GitView, l: LogView): GitBranch | undefined {
+  return v.branches.find(b => l.ref !== '' && branchRef(b) === l.ref) ?? v.branches.find(b => b.isCurrent)
 }
 
 /** Branches whose name holds every word of `query`, ignoring case; all of them when it is blank. */
@@ -167,15 +169,6 @@ export function splitPath(path: string): { name: string; dir: string } {
   return slash === -1 ? { name: path, dir: '' } : { name: path.slice(slash + 1), dir: path.slice(0, slash) }
 }
 
-/** git's `[ahead 1, behind 2]` → `↑1 ↓2`; `[gone]` → `upstream gone`; '' stays ''. */
-export function formatTrack(track: string): string {
-  if (track === '[gone]') return 'upstream gone'
-  const ahead = /ahead (\d+)/.exec(track)
-  const behind = /behind (\d+)/.exec(track)
-
-  return [ahead ? `↑${ahead[1]}` : '', behind ? `↓${behind[1]}` : ''].filter(s => s !== '').join(' ')
-}
-
 export const LOG_FORMAT = ['%H', '%h', '%P', '%an', '%at', '%s'].join('%x09')
 
 /** `git log --format=LOG_FORMAT` output → commits, newest first. */
@@ -202,6 +195,11 @@ export function parseLog(out: string): GitCommit[] {
 /** Commits whose subject, author or sha holds every word of `query`, ignoring case; all of them when it is blank. */
 export function filterCommits(commits: GitCommit[], query: string): GitCommit[] {
   return filterWords(commits, query, c => `${c.subject}\n${c.author}\n${c.sha}`)
+}
+
+/** What a commit is compared with: a merge commit its first parent (what the merge brought in), a root commit nothing. */
+export function commitRange(c: GitCommit): string[] {
+  return c.parents[0] === undefined ? ['--root', c.sha] : [c.parents[0], c.sha]
 }
 
 /** `git diff-tree -r --name-status -z` output → files; a rename or copy carries its source path. */

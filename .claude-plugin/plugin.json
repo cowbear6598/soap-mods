@@ -1,6 +1,6 @@
 {
   "name": "soap-mods",
-  "version": "0.4.1",
-  "description": "CptSoap 的第一個 Panel：顯示 session 資訊的小面板（模型、目錄、context、花費、回合與工具次數）",
+  "version": "0.4.2",
+  "description": "Soap Panel：Git（diff、branch、log、解衝突）和 Services（停掉／重跑本機服務）的面板，底部顯示用量",
   "types": "./types/index.d.ts"
 }

@@ -1,4 +1,4 @@
-import type { GitFile, MergeChoice, MergeChunk, MergeOp, MergeText } from '../types'
+import type { GitFile, MergeChoice, MergeChunk, MergeOp, MergeText } from '../../types'
 
 const OURS_MARK = '<<<<<<<'
 const BASE_MARK = '|||||||'
