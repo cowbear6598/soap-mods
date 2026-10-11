@@ -173,8 +173,6 @@ export type MergeView = MergeText & {
   hasMarkers: boolean
   /** Why the last read or apply failed, '' when none. */
   error: string
-  /** An apply or take-a-side is running. */
-  isBusy: boolean
 }
 
 /** One process as the scan script reports it. */
@@ -217,6 +215,9 @@ export type Service = {
 
 export type ServiceAction = 'stop' | 'restart'
 
+/** A stop or restart in flight, by the service's top pid. */
+export type ServicePending = { pid: number; action: ServiceAction }
+
 export type ServicesView = {
   /** False before the first scan finishes. */
   isLoaded: boolean
@@ -225,8 +226,6 @@ export type ServicesView = {
   error: string
   /** Why the last stop or restart failed, '' when none; kept until the next action. */
   actionError: string
-  /** Services with an action in flight, by top pid. */
-  pending: { pid: number; action: ServiceAction }[]
 }
 
 declare module 'claude-code' {

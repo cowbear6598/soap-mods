@@ -10,7 +10,7 @@ export const servicesTab: TabBody = ({ w, d, a }) => {
 
   // 一個服務一行：● 工具 · 專案名 · port，右邊重跑、停止（紅色）。
   const serviceRow = (s: Service) => {
-    const pending = sv.pending.find(p => p.pid === s.pid)
+    const pending = d.servicePending.find(p => p.pid === s.pid)
     const dot = <Text dimColor>{' · '}</Text>
 
     return (

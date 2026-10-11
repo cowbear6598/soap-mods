@@ -10,8 +10,8 @@ import { KIND_STYLE, MERGE_COLUMN_WIDTH, MERGE_CONTEXT } from '../config'
 import { choose, chooseAll, chunkResult, takesSide, toggleApplied } from '../merge/algo'
 import type { Actions, Press, Ui } from './actions'
 
-// op：進行中的操作（rebase 時提醒 ours／theirs 是反的）。
-export function renderMergePane(ui: Ui, m: MergeView, op: MergeOp, a: Actions, press: Press) {
+// isBusy：正在套用或用某一邊解掉；op：進行中的操作（rebase 時提醒 ours／theirs 是反的）。
+export function renderMergePane(ui: Ui, m: MergeView, isBusy: boolean, op: MergeOp, a: Actions, press: Press) {
   const { Box, Button, Code, Text } = ui
 
   if (m.path === '') return <Text dimColor>No conflicted file open.</Text>
@@ -42,7 +42,7 @@ export function renderMergePane(ui: Ui, m: MergeView, op: MergeOp, a: Actions, p
           This file has no conflict markers to pick from (one side deleted it, it is binary, or the markers were already
           removed). Choose the whole file:
         </Text>
-        {m.isBusy ? (
+        {isBusy ? (
           <Text dimColor>Working…</Text>
         ) : (
           <Box gap={1} flexWrap="wrap">
@@ -265,7 +265,7 @@ export function renderMergePane(ui: Ui, m: MergeView, op: MergeOp, a: Actions, p
         <Button key="merge:all-theirs" label="All theirs" onPress={press(() => a.editChunks(cs => chooseAll(cs, 'theirs')))} />
         <Button key="merge:claude" label="Ask Claude" onPress={press(() => a.askClaude())} />
         {/* 每段衝突都選好才能 Apply；套用中換成文字，不能再按一次。 */}
-        {m.isBusy ? (
+        {isBusy ? (
           <Text dimColor>Applying…</Text>
         ) : isAllResolved ? (
           <Button key="merge:apply" label="Apply & mark resolved" variant="primary" onPress={press(() => a.applyMerge())} />

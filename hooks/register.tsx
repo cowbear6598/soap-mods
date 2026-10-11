@@ -28,6 +28,7 @@ import type {
   ScanResult,
   Service,
   ServiceAction,
+  ServicePending,
   ServicesView,
   TabId,
 } from '../types'
@@ -340,7 +341,7 @@ async function refresh($: EngineInterface) {
 // 換 Git 分頁看的 repo：開著的 diff／合併面板是上一個 repo 的檔案，關掉；合併面板正在寫檔時不換。
 async function selectRepo($: EngineInterface, name: string) {
   const next = repos.list.find(c => c.name === name)
-  if (next === undefined || next === repos.current || (await read($, merge)).isBusy) return
+  if (next === undefined || next === repos.current || isMergeBusy) return
   repos.current = next
   await Promise.all([
     setView($, { repo: name, ...NO_MESSAGES }),
@@ -680,6 +681,7 @@ async function openMerge($: EngineInterface, path: string) {
 // 放掉選到一半的結果（檔案沒動過，下次打開從頭選）。
 async function clearMerge($: EngineInterface) {
   stageCache = undefined
+  setMergeBusy($, false)
   await update($, merge, () => EMPTY_MERGE)
 }
 
@@ -690,8 +692,9 @@ async function closeMerge($: EngineInterface) {
 
 // refresh 之後：合併面板的檔案已經不是衝突了（解掉了、abort 了）就關掉，否則重讀一次（檔案可能被改過）。
 async function syncMerge($: EngineInterface, files: GitFile[]) {
+  if (isMergeBusy) return
   const m = await read($, merge)
-  if (m.path === '' || m.isBusy) return
+  if (m.path === '') return
   const file = files.find(f => f.path === m.path)
   if (file === undefined || !isConflict(file)) {
     await closeMerge($)
@@ -701,16 +704,29 @@ async function syncMerge($: EngineInterface, files: GitFile[]) {
   await loadMerge($, m.path)
 }
 
+// 合併面板正在套用或用某一邊解掉。跟 syncing 一樣放模組變數不放 atom，免得被熱重載中斷後一直卡著；
+// 卡著的話不能再解檔案、也不能換 repo。關掉合併面板時歸零。
+let isMergeBusy = false
+
+function setMergeBusy($: EngineInterface, isBusy: boolean) {
+  if (isMergeBusy === isBusy) return
+  isMergeBusy = isBusy
+  $.ui.invalidate('ui.render')
+}
+
 // 解掉合併面板上的檔案：做事的期間面板顯示處理中；失敗把錯誤留在面板上，
 // 成功就關掉合併面板、重讀狀態，焦點交回 Soap Panel。
 async function resolveFile($: EngineInterface, what: string, work: (path: string) => Promise<unknown>) {
+  if (isMergeBusy) return
   const m = await read($, merge)
-  if (m.isBusy || m.path === '') return
-  await setMerge($, { isBusy: true, error: '' })
+  if (m.path === '') return
+  setMergeBusy($, true)
+  await setMerge($, { error: '' })
   try {
     await work(m.path)
   } catch (err) {
-    await setMerge($, { isBusy: false, error: `${what} failed: ${errorText(err)}` })
+    setMergeBusy($, false)
+    await setMerge($, { error: `${what} failed: ${errorText(err)}` })
 
     return
   }
@@ -830,17 +846,18 @@ async function refreshServices($: EngineInterface) {
   }
 }
 
-async function setPending($: EngineInterface, pid: number, action: ServiceAction | undefined) {
-  await update($, services, v => ({
-    ...v,
-    pending: [...v.pending.filter(p => p.pid !== pid), ...(action === undefined ? [] : [{ pid, action }])],
-  }))
+// 正在停掉／重跑的服務。跟 syncing 一樣放模組變數不放 atom，免得被熱重載中斷後那個 PID 的按鈕永遠按不動。
+let servicePending: ServicePending[] = []
+
+function setPending($: EngineInterface, pid: number, action: ServiceAction | undefined) {
+  servicePending = [...servicePending.filter(p => p.pid !== pid), ...(action === undefined ? [] : [{ pid, action }])]
+  $.ui.invalidate('ui.render')
 }
 
 // 停掉／重跑一個服務。動手前重新掃一次，確認還是同一個程序（PID 沒有被別人拿去用），才砍整棵程序樹。
 async function runServiceAction($: EngineInterface, target: Service, action: ServiceAction) {
-  if ((await read($, services)).pending.some(p => p.pid === target.pid)) return
-  await setPending($, target.pid, action)
+  if (servicePending.some(p => p.pid === target.pid)) return
+  setPending($, target.pid, action)
   await setServices($, { actionError: '' })
   try {
     const current = (await scan($)).items.find(s => s.pid === target.pid && s.startedAt === target.startedAt)
@@ -862,7 +879,7 @@ async function runServiceAction($: EngineInterface, target: Service, action: Ser
   } catch (err) {
     await setServices($, { actionError: `${action === 'stop' ? 'Stop' : 'Restart'} failed: ${errorText(err)}` })
   } finally {
-    await setPending($, target.pid, undefined)
+    setPending($, target.pid, undefined)
   }
   await refreshServices($)
 }
@@ -1047,6 +1064,7 @@ export const register: Register = on => {
         branchQuery: bq,
         syncing,
         services: sv,
+        servicePending,
         log: lg,
         logQuery: lq,
         usage: usage?.rateLimits ?? [],
@@ -1064,6 +1082,6 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: MERGE_PANE }, async ($, e) => {
     const [m, v] = await Promise.all([read($, merge), read($, view)])
 
-    return renderMergePane($.ui.resolve(e), m, v.op, actionsFor($), fn => act($, MERGE_PANE, fn))
+    return renderMergePane($.ui.resolve(e), m, isMergeBusy, v.op, actionsFor($), fn => act($, MERGE_PANE, fn))
   })
 }

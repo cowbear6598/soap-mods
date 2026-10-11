@@ -18,7 +18,7 @@ export const EMPTY: GitView = {
   repo: '',
 }
 
-export const EMPTY_SERVICES: ServicesView = { isLoaded: false, items: [], error: '', actionError: '', pending: [] }
+export const EMPTY_SERVICES: ServicesView = { isLoaded: false, items: [], error: '', actionError: '' }
 
 export const EMPTY_MERGE: MergeView = {
   path: '',
@@ -29,7 +29,6 @@ export const EMPTY_MERGE: MergeView = {
   oursLabel: '',
   theirsLabel: '',
   error: '',
-  isBusy: false,
 }
 
 export const EMPTY_LOG: LogView = {

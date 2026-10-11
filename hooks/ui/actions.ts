@@ -14,6 +14,7 @@ import type {
   MergeChunk,
   Service,
   ServiceAction,
+  ServicePending,
   ServicesView,
   TabId,
 } from '../../types'
@@ -73,6 +74,8 @@ export type PanelData = {
   // 正在跑的 Fetch／Pull，'' 是沒有。
   syncing: GitSync | ''
   services: ServicesView
+  // 正在停掉／重跑的服務。
+  servicePending: readonly ServicePending[]
   log: LogView
   logQuery: string
   usage: readonly UsageReading[]
