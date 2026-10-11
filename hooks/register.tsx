@@ -18,6 +18,7 @@ import type {
   GitBranch,
   GitFile,
   GitSubTab,
+  GitSync,
   GitView,
   LogView,
   MergeChunk,
@@ -41,6 +42,7 @@ import {
   RESTART_CHECK_MS,
   RESTART_GAP_MS,
   SERVICES_SCAN_MS,
+  SYNC_TIMEOUT_MS,
   USAGE_TICK_MS,
 } from './config'
 import { EMPTY, EMPTY_DIFF, EMPTY_LOG, EMPTY_MERGE, EMPTY_SERVICES, NO_MESSAGES } from './defaults'
@@ -64,7 +66,7 @@ import {
   toHunks,
 } from './git/parse'
 import type { Repo } from './git/repo'
-import { NO_GIT, REPO_ARGS, STATUS_ARGS, SUMMARY_ARGS, isNotRepo, parseRepo, toSummary } from './git/repo'
+import { NO_GIT, REPO_ARGS, STATUS_ARGS, SUMMARY_ARGS, SYNC_ARGS, isNotRepo, parseRepo, toSummary } from './git/repo'
 import { buildResult, detectOp, isResolved, keepChoices, merge3, nextConflict, parseConflicts, splitLines } from './merge/algo'
 import { LAUNCH_ARGV, SCAN_ARGV, findServices } from './services/scan'
 import type { Actions } from './ui/actions'
@@ -118,7 +120,7 @@ async function setServices($: EngineInterface, change: Partial<ServicesView>) {
 // 各是一個 repo）是下一層找到的 repo，照名稱排。每次 refresh 重找，新 clone 的也會出現。
 const repos: { current: Repo | undefined; list: Repo[] } = { current: undefined, list: [] }
 
-type GitInit = { cwd?: string; env?: Record<string, string> }
+type GitInit = { cwd?: string; env?: Record<string, string>; timeoutMs?: number }
 
 // 預設在選中的 repo 根目錄跑；init.cwd 指定別的資料夾（找 repo、看其他 repo 的狀態）。
 // LC_ALL=C：有些錯誤是看 git 的英文訊息判斷的（not a git repository、not fully merged），不能被翻譯。
@@ -126,6 +128,7 @@ async function git($: EngineInterface, args: string[], init: GitInit = {}) {
   return $.process.run(['git', '-c', 'core.quotepath=false', ...args], {
     cwd: init.cwd ?? repos.current?.root,
     env: { LC_ALL: 'C', ...init.env },
+    timeoutMs: init.timeoutMs,
   })
 }
 
@@ -462,6 +465,33 @@ async function deleteBranch($: EngineInterface, name: string) {
 
   $.ui.toast(`Deleted ${name}`)
   await clearGitMessages($)
+  await refresh($)
+}
+
+// 正在跑的 Fetch／Pull，'' 是沒有。放模組變數不放 atom：atom 熱重載後還在，跑到一半被重載中斷的話
+// 會一直停在「Pulling…」；模組變數跟著重載歸零。也順便擋住連按兩下。
+let syncing: GitSync | '' = ''
+
+function setSyncing($: EngineInterface, kind: GitSync | '') {
+  syncing = kind
+  $.ui.invalidate('ui.render')
+}
+
+// branch 分頁上方的 Fetch／Pull，按了才跑。跑的時候那顆按鈕寫「Pulling…」、再按不理，跑完重讀分支（ahead／behind 跟著更新）。
+// 要帳密時 git 不能停下來問（沒有地方打字），GIT_TERMINAL_PROMPT=0 讓它直接失敗；Windows 的認證視窗照常會跳。
+async function syncBranches($: EngineInterface, kind: GitSync) {
+  if (syncing !== '') return
+  setSyncing($, kind)
+  disarmTimer?.cancel()
+  await clearGitMessages($)
+  try {
+    const r = await gitOk($, SYNC_ARGS[kind], { env: { GIT_TERMINAL_PROMPT: '0' }, timeoutMs: SYNC_TIMEOUT_MS })
+    $.ui.toast(kind === 'fetch' ? 'Fetched' : r.stdout.includes('Already up to date') ? 'Already up to date' : 'Pulled')
+  } catch (err) {
+    await setView($, { branchError: isMissingCommand(err) ? NO_GIT : errorText(err) })
+  } finally {
+    setSyncing($, '')
+  }
   await refresh($)
 }
 
@@ -907,6 +937,7 @@ function actionsFor($: EngineInterface): Actions {
     toggleRemote: () => update($, showRemote, open => !open),
     switchBranch: (name, isRemote) => switchBranch($, name, isRemote),
     deleteBranch: name => deleteBranch($, name),
+    syncBranches: kind => syncBranches($, kind),
     viewLog: b => viewLog($, b),
     searchLog: text => searchLog($, text),
     loadMoreLog: () => loadMoreLog($),
@@ -1014,6 +1045,7 @@ export const register: Register = on => {
         view: v,
         showRemote: isRemoteOpen,
         branchQuery: bq,
+        syncing,
         services: sv,
         log: lg,
         logQuery: lq,

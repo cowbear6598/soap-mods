@@ -2,7 +2,7 @@
 
 import type { ProcessRunResult } from 'claude-code'
 
-import type { GitFile, RepoSummary } from '../../types'
+import type { GitFile, GitSync, RepoSummary } from '../../types'
 import { isConflict, splitPath } from './parse'
 
 // 一個 repo：根目錄、.git 資料夾、資料夾名稱。status 給的路徑都相對根目錄，
@@ -13,6 +13,13 @@ export const REPO_ARGS = ['rev-parse', '--show-toplevel', '--absolute-git-dir']
 export const STATUS_ARGS = ['status', '--porcelain=v1', '-b', '-z', '-uall']
 // 其他 repo 只看有沒有變更、有沒有衝突：不用分支、不展開未追蹤的資料夾，比較快。
 export const SUMMARY_ARGS = ['status', '--porcelain=v1', '-z']
+
+// branch 分頁的 Fetch／Pull。fetch 抓所有遠端、清掉遠端已經刪的分支；pull 只快轉，跟遠端分岔了就失敗，
+// 讓人自己決定 merge 還是 rebase。
+export const SYNC_ARGS: Record<GitSync, string[]> = {
+  fetch: ['fetch', '--all', '--prune'],
+  pull: ['pull', '--ff-only'],
+}
 
 export const NO_GIT = 'git not found. Make sure it is installed and on your PATH.'
 

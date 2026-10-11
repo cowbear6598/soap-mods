@@ -146,9 +146,16 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
 
   // branch、log 分頁最上面的搜尋框。手機版沒有 Input，就不畫。邊打邊過濾；桌面版拔不掉框旁邊的 submit 按鈕，
   // 就讓它（和 Enter）清空搜尋。框不能設寬度、撐不滿，所以整組水平置中。
-  const searchField = (key: string, value: string, onInput: (text: string) => unknown, onClear: () => unknown) =>
-    'Input' in ui ? (
-      <Box key={`${key}:row`} width="100%" justifyContent="center">
+  // trailing：同一行最右邊的按鈕（branch 的 Fetch／Pull），搜尋框靠左、中間一條直線隔開 Clear；沒有搜尋框時只剩它，靠右。
+  const searchField = (
+    key: string,
+    value: string,
+    onInput: (text: string) => unknown,
+    onClear: () => unknown,
+    trailing?: RenderChildren,
+  ) => {
+    const input =
+      'Input' in ui ? (
         <ui.Input
           key={key}
           placeholder="Search"
@@ -157,8 +164,22 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
           onInput={text => void onInput(text)}
           onSubmit={() => void onClear()}
         />
+      ) : null
+    if (input === null && trailing === undefined) return null
+    const justify = trailing === undefined ? 'center' : input === null ? 'flex-end' : 'space-between'
+
+    return (
+      <Box key={`${key}:row`} width="100%" gap={1} alignItems="center" justifyContent={justify}>
+        {input}
+        {trailing !== undefined && (
+          <Box key={`${key}:trailing`} gap={1} alignItems="center" flexShrink={0}>
+            {input !== null && <Text dimColor>│</Text>}
+            {trailing}
+          </Box>
+        )}
       </Box>
-    ) : null
+    )
+  }
 
   // 項目之間插入直線分隔。
   const withDividers = (items: RenderChildren[], prefix: string) =>

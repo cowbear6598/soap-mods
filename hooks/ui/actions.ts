@@ -8,6 +8,7 @@ import type {
   GitBranch,
   GitCommit,
   GitSubTab,
+  GitSync,
   GitView,
   LogView,
   MergeChunk,
@@ -38,6 +39,7 @@ export type Actions = {
   toggleRemote: () => unknown
   switchBranch: (name: string, isRemote: boolean) => unknown
   deleteBranch: (name: string) => unknown
+  syncBranches: (kind: GitSync) => unknown
   viewLog: (b: GitBranch) => unknown
   // log
   searchLog: (text: string) => unknown
@@ -68,6 +70,8 @@ export type PanelData = {
   view: GitView
   showRemote: boolean
   branchQuery: string
+  // 正在跑的 Fetch／Pull，'' 是沒有。
+  syncing: GitSync | ''
   services: ServicesView
   log: LogView
   logQuery: string

@@ -244,6 +244,59 @@ test('deleting a local branch turns its trash into a check that deletes, and giv
   await ui.unmount()
 })
 
+const PULL_FAILED = 'fatal: Not possible to fast-forward, aborting.'
+
+test('Fetch and Pull run git without asking for a password, toast when done, and show why a pull failed', async ($, on) => {
+  const syncs: string[] = []
+  const toasts: string[] = []
+  let isDiverged = false
+  mock.clock(on)
+  on('ui.panes', () => ({ value: [] }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.close', () => ({ value: undefined }))
+  on('ui.toast', (_$, e) => {
+    toasts.push(e.text)
+
+    return { value: undefined }
+  })
+  on('session.cwd', () => ({ value: 'C:/repo' }))
+  on('process.run', (_$, e) => {
+    const cmd = e.argv.slice(3)
+    if (cmd[0] === 'rev-parse') return ok('C:/repo\nC:/repo/.git\n')
+    if (cmd[0] === 'status') return ok('## main\0')
+    if (cmd[0] === 'fetch' || cmd[0] === 'pull') {
+      syncs.push(`${cmd.join(' ')} prompt=${e.init?.env?.GIT_TERMINAL_PROMPT} timeout=${e.init?.timeoutMs}`)
+      if (cmd[0] === 'pull' && isDiverged) return { value: { ...ok('').value, exitCode: 128, stderr: PULL_FAILED } }
+
+      return ok(cmd[0] === 'pull' ? 'Already up to date.\n' : '')
+    }
+    if (cmd[0] === 'for-each-ref') return ok('*\trefs/heads/main\tmain\torigin/main\t\t1 hour ago\tAdd panel\n')
+
+    return ok('')
+  })
+  await $.command.run({ command: 'soap-panel', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 120 } })
+
+  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'terminal', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  await ui.press({ key: 'sub:branch' })
+  // 按了才跑。
+  expect(syncs).toEqual([])
+
+  await ui.press({ key: 'branch:fetch' })
+  await ui.press({ key: 'branch:pull' })
+  expect(syncs).toEqual(['fetch --all --prune prompt=0 timeout=300000', 'pull --ff-only prompt=0 timeout=300000'])
+  expect(toasts).toEqual(['Fetched', 'Already up to date'])
+
+  // 跟遠端分岔了：只快轉的 pull 失敗，顯示 git 的訊息，換分頁就清掉。
+  isDiverged = true
+  await ui.press({ key: 'branch:pull' })
+  expect(await ui.find({ type: 'Text', text: PULL_FAILED })).toBeDefined()
+  expect(await ui.find({ key: 'branch:pull' })).toBeDefined()
+  await ui.press({ key: 'sub:diff' })
+  await ui.press({ key: 'sub:branch' })
+  expect(await ui.find({ type: 'Text', text: PULL_FAILED })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('a session folder holding several repos gets a repo bar with counts, and pressing one switches the Git tab to it', async ($, on) => {
   const dir = (name: string) => ({ name, kind: 'dir', size: 0, mtimeMs: 0, isLink: false }) as const
   const statusCwds: (string | undefined)[] = []

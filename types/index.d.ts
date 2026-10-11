@@ -1,5 +1,7 @@
 export type TabId = 'git' | 'services'
 export type GitSubTab = 'diff' | 'branch' | 'log' | 'conflict'
+/** The branch tab's Fetch / Pull buttons. */
+export type GitSync = 'fetch' | 'pull'
 
 export type GitFile = {
   path: string

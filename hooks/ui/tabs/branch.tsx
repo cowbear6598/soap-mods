@@ -7,7 +7,7 @@ import type { TabBody } from './context'
 // 由 focusWhenShown 補回來。
 // 搜尋時只留名稱符合的分支，Remote 直接展開（不用再按 ▸），沒有符合的那組整組不畫。
 export const branchTab: TabBody = ({ w, d, a }) => {
-  const { Box, Text } = w
+  const { Box, Button, Text } = w
   const { view: v, branchQuery: query, showRemote: isRemoteOpen } = d
   const isSearching = searchWords(query).length > 0
   const isRemoteShown = isSearching || isRemoteOpen
@@ -52,18 +52,25 @@ export const branchTab: TabBody = ({ w, d, a }) => {
     })
   }
 
-  // 兩組的標題對齊最左邊、分支名稱縮兩格；切換失敗的訊息在最上面，換分頁就清掉。
+  // Fetch／Pull 跟搜尋框同一行、放右邊，按了才跑；跑的時候那顆寫「Fetching…」／「Pulling…」，兩顆都按不動（register 擋掉）。
+  const syncButtons = [
+    <Button key="branch:fetch" label={d.syncing === 'fetch' ? 'Fetching…' : 'Fetch'} onPress={w.press(() => a.syncBranches('fetch'))} />,
+    <Button key="branch:pull" label={d.syncing === 'pull' ? 'Pulling…' : 'Pull'} onPress={w.press(() => a.syncBranches('pull'))} />,
+  ]
+
+  // 兩組的標題對齊最左邊、分支名稱縮兩格；搜尋那行下面是切換、刪除、同步失敗的訊息，換分頁就清掉。
   return (
     <Box flexDirection="column" gap={1}>
-      {v.branchError !== '' && <Text color="error">{v.branchError}</Text>}
-      {v.deleteArmed?.isForce === true && (
-        <Text color="error">{`${v.deleteArmed.name} has unmerged commits; press again to force delete and lose them.`}</Text>
-      )}
       {w.searchField(
         'branch:search',
         query,
         text => a.searchBranches(text),
         () => a.clearBranchQuery(),
+        syncButtons,
+      )}
+      {v.branchError !== '' && <Text color="error">{v.branchError}</Text>}
+      {v.deleteArmed?.isForce === true && (
+        <Text color="error">{`${v.deleteArmed.name} has unmerged commits; press again to force delete and lose them.`}</Text>
       )}
       {isSearching && shown.length === 0 && <Text dimColor>No matching branches.</Text>}
       {(!isSearching || locals.length > 0) && (
