@@ -1,12 +1,12 @@
 // Services 分頁：找出 session 資料夾底下正在跑的服務，以及停掉、重跑它們。
 // 服務 = 有程序在 LISTEN port，而且它的工作目錄或執行檔在 session 資料夾底下；不看是什麼語言。
-// 這裡只放純邏輯和 PowerShell 腳本；動作在 actions.ts，畫面在 ui/tabs/services.tsx。
+// 這裡只放純邏輯和 PowerShell 腳本；動作在 register.tsx，畫面在 ui/tabs/services.tsx。
 
 import type { ScanProc, ScanResult, Service } from '../../types'
 
 // 掃描：列出所有程序（含工作目錄）、在 LISTEN 的 port，以及掃描程序自己往上的祖先（就是引擎本身，絕不能列出或停掉）。
 // Windows 拿別的程序的工作目錄要讀它的 PEB，所以編一小段 C#，編好的 dll 留在 %TEMP% 下次直接載入。
-export const SCAN_SCRIPT = String.raw`
+const SCAN_SCRIPT = String.raw`
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
 $src = @'
@@ -35,7 +35,9 @@ public static class SoapProcCwd {
   }
 }
 '@
-$dll = Join-Path $env:TEMP 'soap-mods\proc-cwd-1.dll'
+# 檔名帶原始碼的 hash：原始碼改了就重新編譯，不會一直載入舊的 dll。
+$hash = [BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($src))).Replace('-', '').Substring(0, 16)
+$dll = Join-Path $env:TEMP "soap-mods\proc-cwd-$hash.dll"
 if (-not (Test-Path $dll)) {
   New-Item -ItemType Directory -Force (Split-Path $dll) | Out-Null
   Add-Type -TypeDefinition $src -OutputAssembly $dll
@@ -71,13 +73,45 @@ $procs = foreach ($id in $want.Keys) {
 
 // 重跑：用 WMI 開，新程序跟引擎、跟這個 PowerShell 完全脫鉤（不繼承任何 handle），隱藏視窗。
 // 不存 log：輸出留在那個看不見的主控台裡。參數從環境變數進來，不用處理引號。回傳新程序的 PID。
-export const LAUNCH_SCRIPT = String.raw`
+const LAUNCH_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }
 $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $env:SOAP_CMD; CurrentDirectory = $env:SOAP_DIR; ProcessStartupInformation = $startup }
 if ($r.ReturnValue -ne 0) { throw "Win32_Process.Create returned $($r.ReturnValue)" }
 $r.ProcessId
+`
+
+// 停止：砍掉 SOAP_PID 和它底下的整棵程序樹。不用 taskkill /T：它只看父程序 ID，
+// 父程序早就結束、PID 被重用時會砍到無關的程序。這裡跟 findServices 一樣，子程序比父程序早開就不算父子。
+// 砍完那個 PID 還在就算失敗。
+const KILL_SCRIPT = String.raw`
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+$root = [int]$env:SOAP_PID
+$all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, CreationDate)
+$byId = @{}; $kids = @{}
+foreach ($p in $all) {
+  $byId[[int]$p.ProcessId] = $p
+  $pp = [int]$p.ParentProcessId
+  if (-not $kids.ContainsKey($pp)) { $kids[$pp] = New-Object System.Collections.ArrayList }
+  [void]$kids[$pp].Add($p)
+}
+if (-not $byId.ContainsKey($root)) { exit 0 }
+$tree = New-Object System.Collections.Generic.List[int]
+$queue = New-Object System.Collections.Queue
+$queue.Enqueue($byId[$root])
+while ($queue.Count -gt 0) {
+  $p = $queue.Dequeue(); $id = [int]$p.ProcessId
+  if ($tree.Contains($id)) { continue }
+  $tree.Add($id)
+  if (-not $kids.ContainsKey($id)) { continue }
+  foreach ($c in $kids[$id]) {
+    if ([int]$c.ProcessId -ne $id -and $c.CreationDate -and $p.CreationDate -and $c.CreationDate -ge $p.CreationDate) { $queue.Enqueue($c) }
+  }
+}
+foreach ($id in $tree) { Stop-Process -Id $id -Force -ErrorAction SilentlyContinue }
+if (Get-Process -Id $root -ErrorAction SilentlyContinue) { throw "Could not stop process $root." }
 `
 
 // powershell -EncodedCommand 吃 UTF-16LE 的 base64。
@@ -91,13 +125,14 @@ function encodePowerShell(script: string) {
   return btoa(bin)
 }
 
-export function powershellArgv(script: string) {
+function powershellArgv(script: string) {
   return ['powershell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encodePowerShell(script)]
 }
 
 // 掃描每 5 秒跑一次，編碼好的指令先備好。
 export const SCAN_ARGV = powershellArgv(SCAN_SCRIPT)
 export const LAUNCH_ARGV = powershellArgv(LAUNCH_SCRIPT)
+export const KILL_ARGV = powershellArgv(KILL_SCRIPT)
 
 function trimSlash(p: string) {
   return p.replace(/[\\/]+$/, '')
@@ -219,7 +254,7 @@ export function splitArgs(cmd: string) {
   return out
 }
 
-function baseName(p: string) {
+export function baseName(p: string) {
   return p.split(/[\\/]/).pop() ?? p
 }
 

@@ -1,6 +1,6 @@
 import type { GitBranch } from '../../../types'
 import { ARMED_TINT, BRANCH_ROW_LIMIT, BRANCH_TREE_LIMIT, COPIED_TINT, FOLDER_COLOR } from '../../config'
-import { filterBranches, searchWords } from '../../git/parse'
+import { filterBranches, hasQuery } from '../../git/parse'
 import { branchTree, treeRows } from '../../git/tree'
 import type { TabBody } from './context'
 
@@ -13,7 +13,7 @@ import type { TabBody } from './context'
 export const branchTab: TabBody = ({ w, d, a }) => {
   const { Box, Button, Text } = w
   const { view: v, branchQuery: query, showRemote: isRemoteOpen, branchFolders: folderState } = d
-  const isSearching = searchWords(query).length > 0
+  const isSearching = hasQuery(query)
   const isRemoteShown = isSearching || isRemoteOpen
   const shown = filterBranches(v.branches, query)
   const locals = shown.filter(b => !b.isRemote)
@@ -119,7 +119,7 @@ export const branchTab: TabBody = ({ w, d, a }) => {
         'branch:search',
         query,
         text => a.searchBranches(text),
-        () => a.clearBranchQuery(),
+        () => a.searchBranches(''),
         syncButtons,
       )}
       {v.branchError !== '' && <Text color="error">{v.branchError}</Text>}

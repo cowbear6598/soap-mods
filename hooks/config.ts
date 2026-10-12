@@ -1,7 +1,7 @@
 // ───── 想改面板標題、分頁、顏色、時間，改這個檔案 ─────
 
-import type { GitSubTab, MergeOp, TabId } from '../types'
-import type { FileGroupId, FileKind } from './git/parse'
+import type { FileKind, GitSubTab, MergeOp, TabId } from '../types'
+import type { FileGroupId } from './git/parse'
 
 // 面板的 id 在 register.tsx：引擎要在那裡直接看到它們的值。
 export const PANEL_TITLE = 'Soap Panel'
@@ -145,6 +145,6 @@ export const COPIED_MS = 2_000
 // branch 分頁的 Fetch／Pull 最多等多久（git 預設只等 30 秒，大 repo 抓不完）。
 export const SYNC_TIMEOUT_MS = 300_000
 
-// 多久看一次面板是不是剛被切到前面（要補焦點）；按完按鈕後多久內丟了焦點也補回來。見 ui/panes.ts。
+// 多久看一次面板是不是剛被切到前面（要補焦點）；按完按鈕後多久內丟了焦點也補回來。見 register.tsx 的 focusWhenShown。
 export const FOCUS_WATCH_MS = 200
 export const REFOCUS_AFTER_PRESS_MS = 600

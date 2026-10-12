@@ -23,7 +23,7 @@ CptSoap 的 Claude Code Panel mod。
 
 兩邊都新增了這個檔案（沒有共同祖先）時，一樣的部分保留，每一處不一樣都算衝突。讀不到 git 的版本時，退回只看檔案裡的衝突標記。
 
-上面有 **↑ Previous** / **↓ Next**（快捷鍵 `n` / `m`，面板拿著鍵盤時能用）跳到上一段／下一段還沒選的衝突，捲到那一段並把焦點放在 **Accept ≫**；全部選好後改成在所有衝突之間跳。下一排是 **All ours** / **All theirs**（每段衝突都選同一邊，自動合入的改動保留）、**Ask Claude**（請 Claude 解這個檔案並 `git add`），每段衝突都選好才會出現的 **Apply & mark resolved**（寫回檔案並 `git add`）。面板只放當下用得到的按鈕：衝突還沒選時中間是兩個「兩邊都要」，選好之後換成 **Reset**。rebase 時 ours／theirs 跟直覺相反（ours 是你要接上去的那條分支），面板上會提醒。
+上面有 **↑ Previous** / **↓ Next**（快捷鍵 `n` / `m`，面板拿著鍵盤時能用）跳到上一段／下一段還沒選的衝突，捲到那一段並把焦點放在 **Accept ≫**；全部選好後改成在所有衝突之間跳。下一排是 **All ours** / **All theirs**（每段衝突都選同一邊，自動合入的改動保留）、**Ask Claude**（請 Claude 解這個檔案並 `git add`；檔名有反引號或換行這類控制字元時不送，免得檔名夾帶指令），每段衝突都選好才會出現的 **Apply & mark resolved**（寫回檔案並 `git add`）。面板只放當下用得到的按鈕：衝突還沒選時中間是兩個「兩邊都要」，選好之後換成 **Reset**。rebase 時 ours／theirs 跟直覺相反（ours 是你要接上去的那條分支），面板上會提醒。
 
 沒有衝突標記可以一段一段選的檔案（一邊刪掉了、二進位檔、標記已經被你手動清掉）改成整個檔案選：**Use ours**、**Use theirs**（那一邊把檔案刪了就 `git rm`）、**Mark resolved as is**（照目前的樣子 `git add`）。
 
@@ -32,9 +32,9 @@ CptSoap 的 Claude Code Panel mod。
 **Services**（Windows 和 macOS）列出 session 資料夾底下正在跑的服務。不管是你自己開的，還是 AI 在背景開的都算，例如 `npm run dev`、`dotnet run`、`bun run dev`。每筆服務顯示指令、所在資料夾、LISTEN 的 port、跑了多久和 PID，右邊有兩顆按鈕：
 
 - **重跑**：砍掉整棵程序樹，在同一個資料夾用同一個指令重開。重開的服務在背景執行、不開視窗，不存 log。新程序 30 秒內就結束的話，面板會顯示重跑失敗（原因要自己跑一次那個指令看）。
-- **停止**：砍掉整棵程序樹（Windows 用 `taskkill /T /F`，macOS 用 `ps` 找出子孫再 `kill -9`）。
+- **停止**：砍掉整棵程序樹（Windows 用 PowerShell 找出子孫再 `Stop-Process -Force`，macOS 用 `ps` 找出子孫再 `kill -9`）。比父程序早開的不算子孫（原本的父程序早就結束、PID 被重用了），不會砍到無關的程序。
 
-macOS 用 `ps` 和 `lsof` 掃描。重跑的指令是 `ps` 讀到的那行，原本的引號已經不見了，所以參數裡有空白的路徑重跑會壞（Windows 沒這個問題）。
+macOS 用 `ps` 和 `lsof` 掃描。重跑的指令是 `ps` 讀到的那行，原本的引號已經不見了，所以參數裡有空白的路徑重跑會壞（Windows 沒這個問題）；指令裡有引號、`$`、`;`、`|`、`*` 這些 shell 會另外解讀的字元時不重跑（會顯示原因），要自己重開。
 
 服務照 repo 分組（跟 diff 分頁的 Staged／Unstaged 一樣），組的順序跟 Git 分頁那排 repo 一樣；不在任何 repo 裡的放在最後的 **Other**。
 

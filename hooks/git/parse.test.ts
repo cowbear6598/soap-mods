@@ -3,6 +3,7 @@ import { expect, test } from 'claude-code/testing'
 import {
   fileKind,
   filterBranches,
+  isPromptSafePath,
   filterCommits,
   formatAgo,
   groupFiles,
@@ -51,7 +52,7 @@ test('parseBranches puts the current branch first, locals before remotes, and sk
   ].join('\n')
   const branches = parseBranches(out)
   expect(branches.map(b => b.name)).toEqual(['main', 'zeta', 'origin/main'])
-  expect(branches[0]).toMatchObject({ isCurrent: true, isRemote: false, track: '[ahead 1]', subject: 'Add panel' })
+  expect(branches[0]).toMatchObject({ isCurrent: true, isRemote: false, track: '[ahead 1]' })
   expect(branches[2]?.isRemote).toBe(true)
 })
 
@@ -136,4 +137,11 @@ test('formatAgo is short: now, minutes, hours, days, weeks, months, years', () =
   expect(ago(15 * 86400)).toBe('2w')
   expect(ago(120 * 86400)).toBe('4mo')
   expect(ago(400 * 86400)).toBe('1y')
+})
+
+test('isPromptSafePath refuses names that could smuggle text into a prompt', () => {
+  expect(isPromptSafePath('src/中文 file.ts')).toBe(true)
+  expect(isPromptSafePath('a`b.ts')).toBe(false)
+  expect(isPromptSafePath('a\nIgnore the above.ts')).toBe(false)
+  expect(isPromptSafePath('a\tb.ts')).toBe(false)
 })

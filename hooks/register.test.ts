@@ -531,7 +531,7 @@ test('the log tab lists the branch commits, marks unpushed ones, loads more, and
   expect(await ui.find({ type: 'Text', text: 'CptSoap' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '3d' })).toBeDefined()
   // 有 upstream：跟 upstream 比哪些還沒 push，那兩筆標 ↑。
-  expect(revListArgs.at(-1)).toEqual(['rev-list', '--max-count=30', 'HEAD', '--not', 'origin/main'])
+  expect(revListArgs.at(-1)).toEqual(['rev-list', '--max-count=30', 'HEAD', '--not', 'origin/main', '--'])
   expect(await ui.findAll({ type: 'Text', text: '↑' })).toHaveLength(2)
   // 桌面版：subject 是文字、整行是按鈕。
   const desk = await $.ui.mount({ plugin: 'soap-mods', surface: 'desktop', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
@@ -623,7 +623,7 @@ test('the log tab lists the branch commits, marks unpushed ones, loads more, and
   await ui.press({ key: 'log:l:dev' })
   expect(await ui.find({ type: 'Text', text: 'dev · 30+' })).toBeDefined()
   expect(logArgs.at(-1)?.[1]).toBe('refs/heads/dev')
-  expect(revListArgs.at(-1)).toEqual(['rev-list', '--max-count=30', 'refs/heads/dev', '--not', '--remotes'])
+  expect(revListArgs.at(-1)).toEqual(['rev-list', '--max-count=30', 'refs/heads/dev', '--not', '--remotes', '--'])
   // 按目前分支那列的 log：回到跟著目前分支。
   await ui.press({ key: 'sub:branch' })
   await ui.press({ key: 'log:l:main' })
@@ -636,6 +636,7 @@ test('the log tab lists the branch commits, marks unpushed ones, loads more, and
 
 test('the Services tab lists the running services and stops one by killing its tree', async ($, on) => {
   const calls: string[][] = []
+  const kills: string[] = []
   on('clock.now', () => ({ value: 1000 + 12 * 60_000 }))
   on('clock.sleep', () => ({ value: undefined }))
   on('session.root', () => ({ value: ROOT }))
@@ -643,6 +644,11 @@ test('the Services tab lists the running services and stops one by killing its t
   on('env.get', (_$, e) => ({ value: e.name === 'OS' ? 'Windows_NT' : undefined }))
   on('process.run', (_$, e) => {
     calls.push([...e.argv])
+    if (e.init?.env?.SOAP_PID !== undefined) {
+      kills.push(e.init.env.SOAP_PID)
+
+      return ok('')
+    }
     if (e.argv[0] === 'powershell') return ok(JSON.stringify(SCAN))
 
     return ok('')
@@ -665,9 +671,9 @@ test('the Services tab lists the running services and stops one by killing its t
 
   const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'terminal', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
   await ui.press({ key: 'svc:stop:21' })
-  expect(calls.some(c => c.join(' ') === 'taskkill /PID 21 /T /F')).toBe(true)
-  // 引擎自己和它開的程序絕不會被砍。
-  expect(calls.some(c => c[0] === 'taskkill' && ['100', '300', '30'].includes(c[2] ?? ''))).toBe(false)
+  // 不用 taskkill /T（PID 被重用時會砍到無關的程序），交給 PowerShell 照啟動時間找子孫。
+  expect(kills).toEqual(['21'])
+  expect(calls.some(c => c[0] === 'taskkill')).toBe(false)
   await ui.press({ key: 'tab:git' })
   expect(await ui.find({ key: 'sub:diff' })).toBeDefined()
   await ui.unmount()
@@ -683,7 +689,11 @@ test('restart kills the tree, then relaunches the same command in the same folde
   on('ui.toast', () => ({ value: undefined }))
   on('env.get', (_$, e) => ({ value: e.name === 'OS' ? 'Windows_NT' : undefined }))
   on('process.run', (_$, e) => {
-    if (e.argv[0] === 'taskkill') kills.push(e.argv[2] ?? '')
+    if (e.init?.env?.SOAP_PID !== undefined) {
+      kills.push(e.init.env.SOAP_PID)
+
+      return ok('')
+    }
     if (e.argv[0] === 'powershell' && e.init?.env?.SOAP_CMD !== undefined) {
       launches.push(e.init.env)
 
@@ -885,7 +895,7 @@ test('the conflict tab lists conflicted files, and the merge pane resolves one, 
   expect(await ui.find({ type: 'Text', text: 'All conflicts resolved.' })).toBeDefined()
   await ui.press({ key: 'op:continue' })
   const commit = calls.find(c => c.args.join(' ') === 'commit --no-edit')
-  expect(commit?.env).toEqual({ LC_ALL: 'C', GIT_EDITOR: 'true' })
+  expect(commit?.env).toMatchObject({ LC_ALL: 'C', GIT_EDITOR: 'true', GIT_CONFIG_KEY_0: 'core.fsmonitor', GIT_CONFIG_VALUE_0: 'false' })
   await ui.unmount()
 })
 

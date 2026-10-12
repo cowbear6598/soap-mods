@@ -5,13 +5,13 @@
 
 import type { RenderChildren } from 'claude-code'
 
-import type { MergeChoice, MergeOp, MergeView } from '../../types'
+import type { MergeChoice, MergeView } from '../../types'
 import { KIND_STYLE, MERGE_COLUMN_WIDTH, MERGE_CONTEXT } from '../config'
 import { choose, chooseAll, chunkResult, takesSide, toggleApplied } from '../merge/algo'
 import type { Actions, Press, Ui } from './actions'
 
-// isBusy：正在套用或用某一邊解掉；op：進行中的操作（rebase 時提醒 ours／theirs 是反的）。
-export function renderMergePane(ui: Ui, m: MergeView, isBusy: boolean, op: MergeOp, a: Actions, press: Press) {
+// isBusy：正在套用或用某一邊解掉。m.op 是進行中的操作（rebase 時提醒 ours／theirs 是反的）。
+export function renderMergePane(ui: Ui, m: MergeView, isBusy: boolean, a: Actions, press: Press) {
   const { Box, Button, Code, Text } = ui
 
   if (m.path === '') return <Text dimColor>No conflicted file open.</Text>
@@ -27,7 +27,7 @@ export function renderMergePane(ui: Ui, m: MergeView, isBusy: boolean, op: Merge
   const error = m.error !== '' ? <Text color="error">{m.error}</Text> : null
   // rebase 時 ours／theirs 跟直覺相反，提醒一下。
   const rebaseHint =
-    op === 'rebase' ? (
+    m.op === 'rebase' ? (
       <Text dimColor>Rebasing: ours is the branch you are rebasing onto, theirs is your commit being replayed.</Text>
     ) : null
 

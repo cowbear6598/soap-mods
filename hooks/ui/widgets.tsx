@@ -3,7 +3,7 @@
 
 import type { RenderChildren } from 'claude-code'
 
-import type { FileKind } from '../git/parse'
+import type { FileKind } from '../../types'
 import { splitPath } from '../git/parse'
 import type { IconName, Tint } from '../config'
 import {
@@ -19,7 +19,7 @@ import {
 import type { Press, Ui } from './actions'
 import { DIVIDER_SVG, iconSvg } from './svg'
 
-export type Row = {
+type Row = {
   key: string
   label: string
   onPress: () => unknown

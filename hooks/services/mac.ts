@@ -2,6 +2,7 @@
 // 掃出來的格式跟 Windows 一樣是 ScanResult，後面找服務（findServices）兩邊共用。
 
 import type { ScanProc, ScanResult } from '../../types'
+import { baseName } from './scan'
 
 // ps 的 lstart 要英文月份，lsof、ps 的輸出也不要被翻譯。
 export const MAC_ENV = { LC_ALL: 'C' }
@@ -27,23 +28,30 @@ export function macFilesArgv(pids: number[]) {
   return ['lsof', '-a', '-nP', '-d', 'cwd,txt', '-p', pids.join(','), '-Fpfn']
 }
 
-// 停止前列出所有程序的父子關係，找出整棵樹。
-export const MAC_PPIDS_ARGV = ['ps', '-axo', 'pid=,ppid=']
+// 停止前列出所有程序的父子關係和啟動時間，找出整棵樹。
+export const MAC_PPIDS_ARGV = ['ps', '-axww', '-o', 'pid=,ppid=,lstart=']
 
 // 重跑：nohup 在背景開，輸入輸出都接到 /dev/null，這個 sh 一結束新程序就跟引擎脫鉤。
 // 參數從環境變數進來，不用處理引號。回傳新程序的 PID。
+// 指令是 ps 讀到的那行（引號已經不見了），交給 sh 會重新解讀，所以只重跑 isShellSafe 的指令。
 export const MAC_LAUNCH_ARGV = [
   '/bin/sh',
   '-c',
   'cd "$SOAP_DIR" || exit 1\nnohup /bin/sh -c "$SOAP_CMD" </dev/null >/dev/null 2>&1 &\necho "$!"',
 ]
 
-const LSTART = /^\s*(\d+)\s+(\d+)\s+\w{3}\s+(\w{3})\s+(\d+)\s+(\d+):(\d+):(\d+)\s+(\d+)\s+(.*)$/
+// 只有字母、數字、空白和路徑、旗標常見的符號：交給 sh 重新解讀跟原本一樣。
+// 有引號、$、`、;、|、&、*、~ 這些的話，sh 會把原本是字面的東西當成語法（甚至執行），不重跑。
+export const isShellSafe = (cmd: string) => /^[\p{L}\p{N} \t_@%+=:,./-]*$/u.test(cmd)
+
+// 「pid ppid lstart」開頭的一行；lstart 是「Mon Oct 12 09:20:00 2026」。
+const PS_TIME = /^\s*(\d+)\s+(\d+)\s+\w{3}\s+(\w{3})\s+(\d+)\s+(\d+):(\d+):(\d+)\s+(\d+)/
+const LSTART = new RegExp(`${PS_TIME.source}\\s+(.*)$`)
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
-function baseName(p: string) {
-  return p.split('/').pop() ?? p
-}
+// lstart 的各欄 → 當作 UTC 的毫秒（本地時間，沒加時差；同一次 ps 裡互相比較用）。
+const lstartMs = ([mon = '', day, hh, mm, ss, year]: (string | undefined)[]) =>
+  Date.UTC(Number(year), MONTHS.indexOf(mon), Number(day), Number(hh), Number(mm), Number(ss))
 
 // 掃描第一步的輸出 → 所有程序（工作目錄、執行檔先空著）、port、自己往上的祖先。
 export function parseMacScan(out: string): ScanResult {
@@ -67,7 +75,7 @@ export function parseMacScan(out: string): ScanResult {
       const m = LSTART.exec(line)
       if (m === null) continue
       const [, pid, ppid, mon, day, hh, mm, ss, year, comm = ''] = m
-      const started = Date.UTC(Number(year), MONTHS.indexOf(mon ?? ''), Number(day), Number(hh), Number(mm), Number(ss)) + offset
+      const started = lstartMs([mon, day, hh, mm, ss, year]) + offset
       // 登入 shell 的名字前面有 -（-zsh）。
       const name = baseName(comm.trim()).replace(/^-/, '')
       byPid.set(Number(pid), { pid: Number(pid), ppid: Number(ppid), name, cmd: null, exe: null, cwd: null, started })
@@ -138,21 +146,33 @@ export function withFiles(scan: ScanResult, want: number[], files: Map<number, {
   return { ...scan, procs }
 }
 
-// pid 和它底下所有的子孫（停止要砍整棵樹）。
+// pid 和它底下所有的子孫（停止要砍整棵樹）。psOut 是 MAC_PPIDS_ARGV 的輸出。
+// 子程序比父程序早開，代表原本的父程序早就結束、PID 被別人拿去用了，不算父子（跟 findServices 一樣），
+// 才不會砍到無關的程序。
 export function descendants(psOut: string, pid: number) {
-  const children = new Map<number, number[]>()
+  const started = new Map<number, number>()
+  const links: [number, number][] = []
   for (const line of psOut.split('\n')) {
-    const [child, parent] = line.trim().split(/\s+/).map(Number)
-    if (child === undefined || parent === undefined || Number.isNaN(child) || Number.isNaN(parent)) continue
-    children.set(parent, [...(children.get(parent) ?? []), child])
+    const m = PS_TIME.exec(line)
+    if (m === null) continue
+    const [, child, parent, ...time] = m
+    started.set(Number(child), lstartMs(time))
+    links.push([Number(child), Number(parent)])
   }
-  const out: number[] = []
+  const children = new Map<number, number[]>()
+  for (const [child, parent] of links) {
+    if (child === parent || (started.get(child) ?? 0) < (started.get(parent) ?? 0)) continue
+    const kids = children.get(parent)
+    if (kids === undefined) children.set(parent, [child])
+    else kids.push(child)
+  }
+  const out = new Set<number>()
   const walk = (p: number) => {
-    if (out.includes(p)) return
-    out.push(p)
+    if (out.has(p)) return
+    out.add(p)
     for (const c of children.get(p) ?? []) walk(c)
   }
   walk(pid)
 
-  return out
+  return [...out]
 }

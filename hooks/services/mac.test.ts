@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { MAC_EPOCH, MAC_FILES_OUT, MAC_PPIDS_OUT, MAC_ROOT, MAC_SCAN_OUT } from '../test-fixtures'
-import { descendants, parseMacFiles, parseMacScan, wantedPids, withFiles } from './mac'
+import { descendants, isShellSafe, parseMacFiles, parseMacScan, wantedPids, withFiles } from './mac'
 import { findServices } from './scan'
 
 test('parseMacScan reads processes, ports and the scanner chain from ps and lsof', () => {
@@ -31,7 +31,16 @@ test('on macOS, npm → sh -c → node is one service, and the engine and its MC
   expect(services[0]).toMatchObject({ pid: 11, tool: 'npm', name: 'web', command: 'npm run dev', dir: `${MAC_ROOT}/web`, ports: [5173] })
 })
 
-test('descendants walks the whole tree under a pid', () => {
+test('descendants walks the whole tree under a pid, skipping a child older than its parent (a reused PID)', () => {
   expect(descendants(MAC_PPIDS_OUT, 11)).toEqual([11, 12, 13, 99])
   expect(descendants(MAC_PPIDS_OUT, 4242)).toEqual([4242])
+})
+
+test('isShellSafe lets plain commands through and stops anything sh would read differently', () => {
+  expect(isShellSafe('npm run dev')).toBe(true)
+  expect(isShellSafe('node /Users/me/專案/web/server.js --port=5173')).toBe(true)
+  expect(isShellSafe('node server.js --banner $(whoami)')).toBe(false)
+  expect(isShellSafe('sh -c vite; rm -rf x')).toBe(false)
+  expect(isShellSafe('echo "hi"')).toBe(false)
+  expect(isShellSafe('ls *')).toBe(false)
 })

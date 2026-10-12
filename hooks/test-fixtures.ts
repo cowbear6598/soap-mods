@@ -142,5 +142,15 @@ export const MAC_FILES_OUT = [
   ...['p30', 'fcwd', `n${MAC_ROOT}`, 'ftxt', `n${NODE}`],
   '',
 ].join('\n')
-// ps -axo pid=,ppid=：npm 那棵樹底下還有一個 esbuild（99）。
-export const MAC_PPIDS_OUT = ['    1     0', '   11    10', '   12    11', '   13    12', '   99    13', '   30   100', ''].join('\n')
+// ps -o pid=,ppid=,lstart=：npm 那棵樹底下還有一個 esbuild（99）。77 的父程序是 13，但比 13 早開：
+// 原本的父程序早就結束、PID 被 13 拿去用了，不是 npm 的子孫。
+export const MAC_PPIDS_OUT = [
+  '    1     0 Tue Oct  6 15:08:47 2026',
+  '   11    10 Mon Oct 12 09:20:00 2026',
+  '   12    11 Mon Oct 12 09:20:01 2026',
+  '   13    12 Mon Oct 12 09:20:01 2026',
+  '   99    13 Mon Oct 12 09:20:05 2026',
+  '   77    13 Mon Oct 12 08:00:00 2026',
+  '   30   100 Mon Oct 12 09:00:02 2026',
+  '',
+].join('\n')

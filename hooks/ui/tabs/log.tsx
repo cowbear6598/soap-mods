@@ -1,6 +1,6 @@
 import type { CommitFile, GitCommit, LogView } from '../../../types'
 import { LOG_AGO_WIDTH, LOG_AUTHOR_WIDTH, LOG_SHA_WIDTH } from '../../config'
-import { commitsLabel, formatAgo, letterKind, logBranch, searchWords } from '../../git/parse'
+import { commitsLabel, formatAgo, hasQuery, letterKind, logBranch } from '../../git/parse'
 import type { TabBody, TabContext } from './context'
 
 // log 分頁：點開了 commit 就畫它們改了哪些檔案，否則畫 commit 列表。
@@ -20,7 +20,7 @@ function commitFiles({ w, d, a }: TabContext, lg: LogView, opened: GitCommit[]) 
     w.pathRow(`commit-file:${f.path}`, f.path, f.letter, letterKind(f.letter), () => a.openCommitDiff(opened, f, files))
   const [c] = opened
   if (c === undefined) return null
-  const isSearching = searchWords(d.logQuery).length > 0
+  const isSearching = hasQuery(d.logQuery)
 
   const heading =
     opened.length === 1 ? (
@@ -99,7 +99,7 @@ function commitList({ w, d, a }: TabContext, lg: LogView) {
   }
 
   // 搜尋時標題的數字是符合的筆數（超過列出的就加 +）。
-  const isSearching = searchWords(query).length > 0
+  const isSearching = hasQuery(query)
   const rangeButton = (
     <Button
       key="log:range"

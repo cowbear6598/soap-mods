@@ -18,8 +18,6 @@ export type GitBranch = {
   upstream: string
   /** `[ahead 1, behind 2]` style text from git, '' when in sync or none. */
   track: string
-  date: string
-  subject: string
 }
 
 export type GitView = {
@@ -184,6 +182,8 @@ export type MergeView = MergeText & {
   hasMarkers: boolean
   /** Why the last read or apply failed, '' when none. */
   error: string
+  /** The operation that stopped for conflicts (rebase swaps ours and theirs), copied from GitView when read. */
+  op: MergeOp
 }
 
 /** One process as the scan script reports it. */

@@ -30,6 +30,7 @@ export const EMPTY_MERGE: MergeView = {
   oursLabel: '',
   theirsLabel: '',
   error: '',
+  op: '',
 }
 
 export const EMPTY_LOG: LogView = {

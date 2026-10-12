@@ -3,13 +3,14 @@
 // 所以這裡只放「跑 git、讀寫狀態、開關面板」；其餘都是 import 進來的純函式：
 //   config.ts      常數（面板、分頁、顏色、時間）
 //   defaults.ts    狀態的初始值
+//   patch.ts       改物件 atom 的幾個欄位（沒變就不寫）
 //   git/           解析 git 輸出（parse）、repo 的參數和解析（repo）
 //   merge/algo.ts  三方合併
 //   services/      找服務（scan）
 //   ui/            畫面：拿到資料和 Actions 畫出樹（panel、tabs/、diffPane、mergePane）
 
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, PaneOpenArgs, Register, RenderSurface, Timer } from 'claude-code'
+import type { EngineInterface, PaneOpenArgs, ProcessRunInit, Register, RenderSurface, Timer } from 'claude-code'
 
 import type {
   CommitFile,
@@ -58,19 +59,20 @@ import {
   commitsLabel,
   fileKind,
   filterCommits,
+  hasQuery,
   isConflict,
+  isPromptSafePath,
   letterKind,
   logBranch,
   parseBranches,
   parseCommitFiles,
   parseLog,
   parseStatus,
-  searchWords,
   splitPath,
   toHunks,
 } from './git/parse'
 import type { Repo } from './git/repo'
-import { NO_GIT, REPO_ARGS, STATUS_ARGS, SUMMARY_ARGS, SYNC_ARGS, isNotRepo, parseRepo, toSummary } from './git/repo'
+import { GIT_ENV, REPO_ARGS, STATUS_ARGS, SUMMARY_ARGS, SYNC_ARGS, gitErrorText, isNotRepo, parseRepo, toSummary } from './git/repo'
 import { buildResult, detectOp, isResolved, keepChoices, merge3, nextConflict, parseConflicts, splitLines } from './merge/algo'
 import {
   MAC_ENV,
@@ -78,17 +80,19 @@ import {
   MAC_PPIDS_ARGV,
   MAC_SCAN_ARGV,
   descendants,
+  isShellSafe,
   macFilesArgv,
   parseMacFiles,
   parseMacScan,
   wantedPids,
   withFiles,
 } from './services/mac'
-import { LAUNCH_ARGV, SCAN_ARGV, findServices } from './services/scan'
+import { KILL_ARGV, LAUNCH_ARGV, SCAN_ARGV, findServices } from './services/scan'
 import type { Actions } from './ui/actions'
 import { renderDiffPane } from './ui/diffPane'
 import { renderMergePane } from './ui/mergePane'
 import { renderPanel } from './ui/panel'
+import { patch } from './patch'
 
 // ───── 面板 id（引擎要在這個檔案裡直接看到值，不能 import）─────
 
@@ -96,6 +100,7 @@ const PANE = 'soap-panel'
 const DIFF_PANE = 'soap-diff'
 // 解衝突的三欄面板（左 Ours、中 Result、右 Theirs）。
 const MERGE_PANE = 'soap-merge'
+const PANE_ARGS: PaneOpenArgs = { id: PANE, title: PANEL_TITLE }
 
 // ───── 狀態 ─────
 
@@ -115,21 +120,22 @@ const merge = atom({ plugin: 'soap-mods', key: 'merge' } as const, EMPTY_MERGE)
 const log = atom({ plugin: 'soap-mods', key: 'log' } as const, EMPTY_LOG)
 const diffPane = atom({ plugin: 'soap-mods', key: 'diffPane' } as const, EMPTY_DIFF)
 
-// 改一個物件 atom 的其中幾個欄位。引擎要看得出改的是哪個 atom，所以每個 atom 一個，不能寫成通用的。
+// 改一個物件 atom 的其中幾個欄位；改的欄位內容都沒變就不寫（patch），面板不會白白重畫。
+// 引擎要看得出改的是哪個 atom，所以每個 atom 一個，不能寫成通用的。
 async function setView($: EngineInterface, change: Partial<GitView>) {
-  await update($, view, v => ({ ...v, ...change }))
+  await update($, view, v => patch(v, change))
 }
 
 async function setLog($: EngineInterface, change: Partial<LogView>) {
-  await update($, log, l => ({ ...l, ...change }))
+  await update($, log, l => patch(l, change))
 }
 
 async function setMerge($: EngineInterface, change: Partial<MergeView>) {
-  await update($, merge, m => ({ ...m, ...change }))
+  await update($, merge, m => patch(m, change))
 }
 
 async function setServices($: EngineInterface, change: Partial<ServicesView>) {
-  await update($, services, s => ({ ...s, ...change }))
+  await update($, services, s => patch(s, change))
 }
 
 // ───── 跑 git ─────
@@ -143,10 +149,11 @@ type GitInit = { cwd?: string; env?: Record<string, string>; timeoutMs?: number 
 
 // 預設在選中的 repo 根目錄跑；init.cwd 指定別的資料夾（找 repo、看其他 repo 的狀態）。
 // LC_ALL=C：有些錯誤是看 git 的英文訊息判斷的（not a git repository、not fully merged），不能被翻譯。
+// GIT_ENV：面板每個回合都自己跑 git，repo 的設定不能讓它執行別的指令（見 git/repo.ts）。
 async function git($: EngineInterface, args: string[], init: GitInit = {}) {
   return $.process.run(['git', '-c', 'core.quotepath=false', ...args], {
     cwd: init.cwd ?? repos.current?.root,
-    env: { LC_ALL: 'C', ...init.env },
+    env: { ...GIT_ENV, LC_ALL: 'C', ...init.env },
     timeoutMs: init.timeoutMs,
   })
 }
@@ -155,6 +162,14 @@ async function git($: EngineInterface, args: string[], init: GitInit = {}) {
 async function gitOk($: EngineInterface, args: string[], init?: GitInit) {
   const r = await git($, args, init)
   if (r.exitCode !== 0) throw failure(r, `git ${args.join(' ')}`)
+
+  return r
+}
+
+// 跑其他指令（掃描、停止、重跑服務），一樣結束碼不是 0 就丟出錯誤；what 是錯誤訊息裡的名稱。
+async function runOk($: EngineInterface, argv: string[], what: string, init?: ProcessRunInit) {
+  const r = await $.process.run(argv, init)
+  if (r.exitCode !== 0) throw failure(r, what)
 
   return r
 }
@@ -173,7 +188,7 @@ async function paneArgs($: EngineInterface, id: string): Promise<PaneOpenArgs> {
     return { id, title: d.commits.length === 0 ? d.path : `${d.path} @ ${commitsLabel(d.commits)}` }
   }
 
-  return { id: PANE, title: PANEL_TITLE }
+  return PANE_ARGS
 }
 
 // 開（或切到）一個面板並要焦點：已經開著的話先關再開，才會跳到最前面，而不是躲在別的分頁後面。
@@ -308,7 +323,7 @@ async function refresh($: EngineInterface) {
     ])
     snap = { active, status, refs, names, others }
   } catch (err) {
-    if (!isStale()) await setView($, { isLoaded: true, isRepo: false, error: isMissingCommand(err) ? NO_GIT : errorText(err) })
+    if (!isStale()) await setView($, { isLoaded: true, isRepo: false, error: gitErrorText(err) })
 
     return
   }
@@ -362,6 +377,7 @@ async function selectRepo($: EngineInterface, name: string) {
   const next = repos.list.find(c => c.name === name)
   if (next === undefined || next === repos.current || isMergeBusy) return
   repos.current = next
+  dropLogLoads()
   await Promise.all([
     setView($, { repo: name, ...NO_MESSAGES }),
     update($, diffPane, () => EMPTY_DIFF),
@@ -374,9 +390,7 @@ async function selectRepo($: EngineInterface, name: string) {
 
 // 換分頁時清掉切換／刪除分支、abort／continue 失敗的訊息和待確認的刪除、abort；沒有要清的就不寫，免得面板白白重畫。
 async function clearGitMessages($: EngineInterface) {
-  await update($, view, v =>
-    v.branchError === '' && v.deleteArmed === null && v.opError === '' && !v.isAbortArmed ? v : { ...v, ...NO_MESSAGES },
-  )
+  await setView($, NO_MESSAGES)
 }
 
 // ───── 差異面板 ─────
@@ -417,11 +431,15 @@ async function readDiff($: EngineInterface, files: GitFile[], path: string): Pro
   return { ...EMPTY_DIFF, path, kind: fileKind(file), ...result }
 }
 
+// 換掉差異面板的內容並切過去。isFront：面板已經在前面（Previous／Next），重新 open 只為了換標題。
+async function showDiff($: EngineInterface, pane: DiffPaneView, isFront = false) {
+  await update($, diffPane, () => pane)
+  await (isFront ? focusPane($, DIFF_PANE) : bringToFront($, DIFF_PANE))
+}
+
 // 點檔案：一定開一個獨立的 diff 面板並切過去；關掉面板交給面板自己的關閉鈕。
 async function openDiff($: EngineInterface, path: string) {
-  const pane = await readDiff($, (await read($, view)).files, path)
-  await update($, diffPane, () => pane)
-  await bringToFront($, DIFF_PANE)
+  await showDiff($, await readDiff($, (await read($, view)).files, path))
 }
 
 // 讀 commit 裡一個檔案在這（幾）個 commit 的差異。改名的檔案兩個路徑都要給，git 才認得出是改名。
@@ -435,34 +453,24 @@ async function readCommitDiff($: EngineInterface, commits: GitCommit[], f: Commi
 
 // 點 commit 裡的檔案：在 diff 面板看它的差異。
 async function openCommitDiff($: EngineInterface, commits: GitCommit[], f: CommitFile, files: CommitFile[]) {
-  const pane = await readCommitDiff($, commits, f, files)
-  await update($, diffPane, () => pane)
-  await bringToFront($, DIFF_PANE)
+  await showDiff($, await readCommitDiff($, commits, f, files))
 }
 
-// 差異面板的 Previous／Next：換成同一批 commit 的上一個／下一個檔案。面板已經在前面，重新 open 只為了換標題。
+// 差異面板的 Previous／Next：換成同一批 commit 的上一個／下一個檔案。
 async function stepCommitFile($: EngineInterface, step: 1 | -1) {
   const d = await read($, diffPane)
   const next = d.files[d.files.findIndex(f => f.path === d.path) + step]
   if (next === undefined) return
-  const pane = await readCommitDiff($, d.commits, next, d.files)
-  await update($, diffPane, () => pane)
-  await focusPane($, DIFF_PANE)
+  await showDiff($, await readCommitDiff($, d.commits, next, d.files), true)
 }
 
 // ───── branch 分頁 ─────
 
 async function switchBranch($: EngineInterface, name: string, isRemote: boolean) {
-  const args = isRemote ? ['switch', '--track', name] : ['switch', name]
   try {
-    const r = await git($, args)
-    if (r.exitCode !== 0) {
-      await setView($, { branchError: r.stderr.trim() || `Failed to switch to ${name}` })
-
-      return
-    }
-  } catch {
-    await setView($, { branchError: NO_GIT })
+    await gitOk($, isRemote ? ['switch', '--track', name] : ['switch', name])
+  } catch (err) {
+    await setView($, { branchError: gitErrorText(err) })
 
     return
   }
@@ -478,7 +486,7 @@ let disarmTimer: Timer | undefined
 async function armDelete($: EngineInterface, name: string, isForce: boolean) {
   disarmTimer?.cancel()
   await setView($, { ...NO_MESSAGES, deleteArmed: { name, isForce } })
-  disarmTimer = $.clock.after(DELETE_ARM_MS, () => void update($, view, v => (v.deleteArmed === null ? v : { ...v, deleteArmed: null })))
+  disarmTimer = $.clock.after(DELETE_ARM_MS, () => void setView($, { deleteArmed: null }))
 }
 
 // 刪本地分支要按兩次：垃圾桶按了換成打勾，DELETE_ARM_MS 內再按才真的刪；按別的垃圾桶，原本的就收回。
@@ -526,7 +534,7 @@ async function syncBranches($: EngineInterface, kind: GitSync) {
     const r = await gitOk($, SYNC_ARGS[kind], { env: { GIT_TERMINAL_PROMPT: '0' }, timeoutMs: SYNC_TIMEOUT_MS })
     $.ui.toast(kind === 'fetch' ? 'Fetched' : r.stdout.includes('Already up to date') ? 'Already up to date' : 'Pulled')
   } catch (err) {
-    await setView($, { branchError: isMissingCommand(err) ? NO_GIT : errorText(err) })
+    await setView($, { branchError: gitErrorText(err) })
   } finally {
     setSyncing($, '')
   }
@@ -544,8 +552,9 @@ type LogRead = { commits: GitCommit[]; unpushed: string[]; isTruncated: boolean;
 // 沒有的話比所有遠端分支，新分支從 main 分出來後加的才算。遠端分支本身都在遠端上，不會有標記。
 async function readLog($: EngineInterface, ref: string, upstream: string, limit?: number): Promise<LogRead> {
   const [r, ahead] = await Promise.all([
-    git($, ['log', ref, ...(limit === undefined ? [] : [`--max-count=${limit + 1}`]), `--format=${LOG_FORMAT}`]),
-    git($, ['rev-list', ...(limit === undefined ? [] : [`--max-count=${limit}`]), ref, '--not', upstream === '' ? '--remotes' : upstream]),
+    // 結尾的 -- ：工作區剛好有叫 HEAD（或跟分支同名）的檔案時，git 才不會分不出是分支還是路徑。
+    git($, ['log', ref, ...(limit === undefined ? [] : [`--max-count=${limit + 1}`]), `--format=${LOG_FORMAT}`, '--']),
+    git($, ['rev-list', ...(limit === undefined ? [] : [`--max-count=${limit}`]), ref, '--not', upstream === '' ? '--remotes' : upstream, '--']),
   ])
   if (r.exitCode !== 0) {
     // 還沒有任何 commit 不算錯。
@@ -560,20 +569,33 @@ async function readLog($: EngineInterface, ref: string, upstream: string, limit?
   return { commits: parseLog(out), unpushed, isTruncated: r.isStdoutTruncated, error: '' }
 }
 
-// 搜尋用的整條分支歷史：打字、Load more 時從這裡過濾，不用每次都跑 git。換 repo 或分支就重讀，
-// refresh（回合結束）也重讀，歷史可能變了。git 最多給 4 MiB（大約兩萬多筆），超過的只搜最新的那些。
-let history: { key: string; load: Promise<LogRead> } | undefined
+// 搜尋用的整條分支歷史：打字、Load more 時從這裡過濾，不用每次都跑 git。換 repo 或分支就重讀；
+// refresh（回合結束）時先問分支和比較對象的 tip（tips），都沒動就沿用，動了才重讀。
+// git 最多給 4 MiB（大約兩萬多筆），超過的只搜最新的那些。
+let history: { base: string; tips: string; load: Promise<LogRead> } | undefined
 
-function readHistory($: EngineInterface, ref: string, upstream: string, isFresh: boolean) {
-  const key = `${repos.current?.root ?? ''}\n${ref}`
-  if (isFresh || history?.key !== key) history = { key, load: readLog($, ref, upstream) }
+async function readHistory($: EngineInterface, ref: string, upstream: string, isFresh: boolean) {
+  const base = `${repos.current?.root ?? ''}\n${ref}\n${upstream}`
+  if (!isFresh && history?.base === base) return history.load
+  const tips = (await git($, ['rev-parse', ref, upstream === '' ? '--remotes' : upstream, '--'])).stdout
+  if (history?.base !== base || history.tips !== tips) history = { base, tips, load: readLog($, ref, upstream) }
 
   return history.load
+}
+
+// 每次讀 log 拿一個號碼。讀完時已經有更新的讀取開始了（打字、Load more、refresh），
+// 或中途換了分支、repo、分頁（dropLogLoads），這次讀到的就不寫，免得蓋掉新的。
+let latestLog = 0
+
+function dropLogLoads() {
+  latestLog += 1
 }
 
 // 讀 log 分頁的 commit，列前 limit 筆（沒給就是目前的筆數）；有搜尋時從整條分支的歷史裡挑出符合的。
 // isFresh 是 false 時（打字、Load more）沿用讀過的歷史。
 async function loadLog($: EngineInterface, { isFresh = true, limit }: { isFresh?: boolean; limit?: number } = {}) {
+  const ticket = (latestLog += 1)
+  const isStale = () => ticket !== latestLog
   const [v, l, query] = await Promise.all([read($, view), read($, log), read($, logQuery)])
   const branch = logBranch(v, l)
   // 按過的分支已經不在了：回到目前分支。
@@ -581,14 +603,13 @@ async function loadLog($: EngineInterface, { isFresh = true, limit }: { isFresh?
   const ref = isPicked ? l.ref : 'HEAD'
   const upstream = branch !== undefined && !branch.isRemote && branch.track !== '[gone]' ? branch.upstream : ''
   const count = limit ?? l.limit
-  const isSearching = searchWords(query).length > 0
+  const isSearching = hasQuery(query)
   if (!isSearching) history = undefined
   try {
     const found = isSearching
       ? await readHistory($, ref, upstream, isFresh).then(h => ({ ...h, commits: filterCommits(h.commits, query) }))
       : await readLog($, ref, upstream, count)
-    // 讀的時候搜尋的字又變了：交給後面那次。
-    if ((await read($, logQuery)) !== query) return
+    if (isStale()) return
     const commits = found.commits.slice(0, count)
     const ahead = new Set(found.unpushed)
     const listed = new Set(commits.map(c => c.sha))
@@ -606,8 +627,8 @@ async function loadLog($: EngineInterface, { isFresh = true, limit }: { isFresh?
       rangeStart: listed.has(cur.rangeStart) ? cur.rangeStart : '',
       error: found.error,
     }))
-  } catch {
-    await setLog($, { isLoaded: true, error: NO_GIT })
+  } catch (err) {
+    if (!isStale()) await setLog($, { isLoaded: true, error: gitErrorText(err) })
   }
 }
 
@@ -620,6 +641,7 @@ async function searchLog($: EngineInterface, text: string) {
 // 換分頁時清掉搜尋；不在這裡重讀，回到 log 分頁時才讀。
 async function clearLogQuery($: EngineInterface) {
   history = undefined
+  dropLogLoads()
   await update($, logQuery, () => '')
 }
 
@@ -637,8 +659,8 @@ async function openCommits($: EngineInterface, commits: GitCommit[]) {
   try {
     const r = await git($, ['diff-tree', '-r', '-M', '--name-status', '-z', '--no-commit-id', ...commitRange(commits)])
     change = r.exitCode === 0 ? { files: parseCommitFiles(r.stdout) } : { files: [], commitError: r.stderr.trim() }
-  } catch {
-    change = { files: [], commitError: NO_GIT }
+  } catch (err) {
+    change = { files: [], commitError: gitErrorText(err) }
   }
   await update($, log, l => (l.opened.map(c => c.sha).join() === key ? { ...l, ...change } : l))
 }
@@ -694,13 +716,14 @@ async function readStages($: EngineInterface, path: string, key: string | null):
 // 分出沒動過的、只有一邊改（自動合入）的、真的衝突的段落；讀不到版本才退回只看衝突標記。
 // 同一個檔案重讀時，沒變的段落保留已經做的選擇；結果跟現在畫的一樣就不寫，面板不會白白重畫。
 async function loadMerge($: EngineInterface, path: string) {
-  const [text, listed, m] = await Promise.all([
+  const [text, listed, m, v] = await Promise.all([
     $.fs.read(inRepo(path)).catch(() => null),
     listStages($, path).catch(() => null),
     read($, merge),
+    read($, view),
   ])
   const parsed = text === null ? null : parseConflicts(text)
-  let next: MergeView = { ...EMPTY_MERGE, path }
+  let next: MergeView = { ...EMPTY_MERGE, path, op: v.op }
   if (parsed !== null) {
     const { base, ours, theirs } = await readStages($, path, listed?.key ?? null)
     const chunks = ours !== null && theirs !== null ? merge3(base, ours, theirs) : parsed.chunks
@@ -817,10 +840,16 @@ async function takeSide($: EngineInterface, side: 'ours' | 'theirs' | 'as-is') {
 }
 
 // 交給 Claude 解這個檔案：當作使用者自己打的訊息送出，session 空下來就會跑。
+// 檔名來自被合併的分支，會原樣放進以使用者身分送出的訊息：有反引號、換行這些的就不送，免得檔名夾帶指令。
 async function askClaude($: EngineInterface) {
-  const [m, v] = await Promise.all([read($, merge), read($, view)])
+  const m = await read($, merge)
   if (m.path === '') return
-  const during = v.op === '' ? '' : ` (a ${v.op} is in progress; do not continue or abort it)`
+  if (!isPromptSafePath(m.path)) {
+    await setMerge($, { error: 'Ask Claude is off for this file: its name has a backtick or a control character.' })
+
+    return
+  }
+  const during = m.op === '' ? '' : ` (a ${m.op} is in progress; do not continue or abort it)`
   await $.prompt.submit({
     text: `Resolve the git conflicts in \`${inRepo(m.path)}\`${during}. Keep what both sides meant to do, remove every conflict marker, then run \`git add\` on the file.`,
     asUser: true,
@@ -834,7 +863,7 @@ async function askClaude($: EngineInterface) {
 async function runOp($: EngineInterface, op: Exclude<MergeOp, ''>, args: string[], done: string, env?: Record<string, string>) {
   let opError = ''
   try {
-    await gitOk($, args, env === undefined ? undefined : { env })
+    await gitOk($, args, { env })
     $.ui.toast(`${OP_LABEL[op]} ${done}`)
   } catch (err) {
     opError = errorText(err)
@@ -866,22 +895,24 @@ async function continueOp($: EngineInterface) {
 
 // ───── Services 分頁 ─────
 
-// Windows 用 PowerShell，其他（macOS）用 ps、lsof、kill。
+// Windows 用 PowerShell，其他（macOS）用 ps、lsof、kill。平台不會變，問一次就記著。
+let windows: boolean | undefined
+
 async function isWindows($: EngineInterface) {
-  return (await $.env.get('OS')) === 'Windows_NT'
+  windows ??= (await $.env.get('OS')) === 'Windows_NT'
+
+  return windows
 }
 
 async function scanWindows($: EngineInterface) {
-  const r = await $.process.run(SCAN_ARGV)
-  if (r.exitCode !== 0) throw failure(r, 'Process scan')
+  const r = await runOk($, SCAN_ARGV, 'Process scan')
 
   return JSON.parse(r.stdout) as ScanResult
 }
 
 // 先用 ps 列出所有程序和 port，再只對用得到的程序讀工作目錄和執行檔。
 async function scanMac($: EngineInterface) {
-  const r = await $.process.run(MAC_SCAN_ARGV, { env: MAC_ENV })
-  if (r.exitCode !== 0) throw failure(r, 'Process scan')
+  const r = await runOk($, MAC_SCAN_ARGV, 'Process scan', { env: MAC_ENV })
   const all = parseMacScan(r.stdout)
   const want = wantedPids(all)
   // 有讀不到的程序（root 跑的）lsof 會回 1，照樣用它讀到的。
@@ -897,16 +928,15 @@ async function scan($: EngineInterface) {
   return { items: findServices(result, cwd), alive: new Set(result.pids) }
 }
 
-// 砍整棵程序樹。macOS 沒有 taskkill /T，先用 ps 找出子孫再一起 kill -9。
+// 砍整棵程序樹。子孫要比父程序晚開才算（PID 被重用的不算），兩邊都一樣：
+// Windows 交給 KILL_ARGV 的 PowerShell，macOS 先用 ps 找出子孫再一起 kill -9。
 async function killTree($: EngineInterface, pid: number) {
   if (await isWindows($)) {
-    const kill = await $.process.run(['taskkill', '/PID', String(pid), '/T', '/F'])
-    if (kill.exitCode !== 0) throw failure(kill, 'taskkill')
+    await runOk($, KILL_ARGV, 'Stop', { env: { SOAP_PID: String(pid) } })
 
     return
   }
-  const ps = await $.process.run(MAC_PPIDS_ARGV)
-  if (ps.exitCode !== 0) throw failure(ps, 'ps')
+  const ps = await runOk($, MAC_PPIDS_ARGV, 'ps', { env: MAC_ENV })
   const kill = await $.process.run(['kill', '-9', ...descendants(ps.stdout, pid).map(String)])
   // 樹裡有程序剛好自己先結束（No such process）不算失敗。
   const errors = kill.stderr.split('\n').filter(l => l.trim() !== '' && !/no such process/i.test(l))
@@ -958,14 +988,16 @@ async function runServiceAction($: EngineInterface, target: Service, action: Ser
     const current = (await scan($)).items.find(s => s.pid === target.pid && s.startedAt === target.startedAt)
     if (current === undefined) throw new Error(`${target.tool} · ${target.name} already exited.`)
     if (action === 'restart' && current.command === '') throw new Error(`Cannot read the command line of ${current.tool} · ${current.name}.`)
+    if (action === 'restart' && !(await isWindows($)) && !isShellSafe(current.command)) {
+      throw new Error(`Cannot rerun ${current.tool} · ${current.name}: its command has quotes or shell characters that ps does not keep. Restart it yourself.`)
+    }
 
     await killTree($, current.pid)
 
     if (action === 'restart') {
       await $.clock.sleep(RESTART_GAP_MS)
       const argv = (await isWindows($)) ? LAUNCH_ARGV : MAC_LAUNCH_ARGV
-      const launch = await $.process.run(argv, { env: { SOAP_CMD: current.command, SOAP_DIR: current.dir } })
-      if (launch.exitCode !== 0) throw failure(launch, 'Restart')
+      const launch = await runOk($, argv, 'Restart', { env: { SOAP_CMD: current.command, SOAP_DIR: current.dir } })
       watchRestart($, `${current.tool} · ${current.name}`, Number(launch.stdout.trim()))
       $.ui.toast(`Restarted ${current.tool} · ${current.name}`)
     } else {
@@ -1032,6 +1064,7 @@ async function selectSubTab($: EngineInterface, id: GitSubTab) {
 // branch 分頁的 log 按鈕：換到 log 分頁看那個分支，從最近的 LOG_PAGE 筆開始。
 // 按目前分支那列就是回到「跟著目前分支」，之後切分支 log 也跟著換。
 async function viewLog($: EngineInterface, b: GitBranch) {
+  dropLogLoads()
   await update($, log, () => ({ ...EMPTY_LOG, ref: b.isCurrent ? '' : branchRef(b) }))
   await selectSubTab($, 'log')
 }
@@ -1045,8 +1078,8 @@ async function copyBranchName($: EngineInterface, name: string, surface: RenderS
   const r = await $.ui.copy({ text: name, surface })
   if (!r.isCopied) return setView($, { ...NO_MESSAGES, branchError: `Couldn't copy ${name} (${r.reason})` })
   uncopyTimer?.cancel()
-  await update($, view, v => ({ ...v, copied: name }))
-  uncopyTimer = $.clock.after(COPIED_MS, () => void update($, view, v => (v.copied === '' ? v : { ...v, copied: '' })))
+  await setView($, { copied: name })
+  uncopyTimer = $.clock.after(COPIED_MS, () => void setView($, { copied: '' }))
 }
 
 // 畫面上的按鈕能做的事（ui/actions.ts 的約定），全部接到上面的動作。
@@ -1059,7 +1092,6 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     openMerge: path => openMerge($, path),
     showMoreFiles: () => update($, fileLimit, n => n + FILE_PAGE),
     searchBranches: text => update($, branchQuery, () => text),
-    clearBranchQuery: () => update($, branchQuery, () => ''),
     toggleRemote: () => update($, showRemote, open => !open),
     toggleBranchFolder: (key, isOpen) => update($, branchFolders, folders => ({ ...folders, [key]: isOpen })),
     switchBranch: (name, isRemote) => switchBranch($, name, isRemote),
@@ -1097,7 +1129,7 @@ export const register: Register = on => {
       description: 'Open Soap Panel (Git panel)',
     })
     // 先開面板（畫「讀取中…」），git 在背景讀，不擋住 session 開始。
-    void $.ui.open({ id: PANE, title: PANEL_TITLE })
+    void $.ui.open(PANE_ARGS)
     void refresh($).catch(() => undefined)
     $.clock.every(FOCUS_WATCH_MS, () => void focusWhenShown($))
     // 用量直接跟引擎拿（不花錢），這裡只負責讓重置倒數每分鐘重畫一次。
@@ -1116,18 +1148,14 @@ export const register: Register = on => {
 
   on('command.run', { command: 'soap-panel' }, async $ => {
     await refresh($)
-    await $.ui.open({ id: PANE, title: PANEL_TITLE })
+    await $.ui.open(PANE_ARGS)
 
     return { text: 'Soap Panel opened.' }
   })
 
-  // 每個回合結束後，檔案可能已經變了，順手更新。
-  on('turn.complete', async ($, e, next) => {
-    try {
-      await refresh($)
-    } catch {
-      // 讀不到就維持舊畫面，不要擋住回合結束。
-    }
+  // 每個回合結束後，檔案可能已經變了，順手更新。不等它讀完，免得擋住回合結束；讀不到就維持舊畫面。
+  on('turn.complete', ($, e, next) => {
+    void refresh($).catch(() => undefined)
 
     return next(e)
   })
@@ -1137,15 +1165,10 @@ export const register: Register = on => {
   // 先把焦點給它，回來的第一下才點得到。
   on('ui.close', async ($, e, next) => {
     const result = await next(e)
-    if (e.id === DIFF_PANE && e.origin.kind === 'person') {
-      await update($, diffPane, () => EMPTY_DIFF)
-      await focusPanel($)
-    }
+    if (e.origin.kind !== 'person' || (e.id !== DIFF_PANE && e.id !== MERGE_PANE)) return result
     // 合併面板被按掉：放掉選到一半的結果（檔案沒動過，下次打開從頭選）。
-    if (e.id === MERGE_PANE && e.origin.kind === 'person') {
-      await clearMerge($)
-      await focusPanel($)
-    }
+    await (e.id === DIFF_PANE ? update($, diffPane, () => EMPTY_DIFF) : clearMerge($))
+    await focusPanel($)
 
     return result
   }).catch(($, e, next) => next(e)) // 清不掉就算了，絕不能擋住關面板。
@@ -1200,8 +1223,6 @@ export const register: Register = on => {
 
   // 解衝突的三欄面板。按了之後按鈕被換掉會丟焦點，由 act 在之後補回來。
   on('ui.render', { component: 'Pane', requestId: MERGE_PANE }, async ($, e) => {
-    const [m, v] = await Promise.all([read($, merge), read($, view)])
-
-    return renderMergePane($.ui.resolve(e), m, isMergeBusy, v.op, actionsFor($, e.surface), fn => act($, MERGE_PANE, fn))
+    return renderMergePane($.ui.resolve(e), await read($, merge), isMergeBusy, actionsFor($, e.surface), fn => act($, MERGE_PANE, fn))
   })
 }

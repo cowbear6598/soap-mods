@@ -3,6 +3,7 @@
 import type { ProcessRunResult } from 'claude-code'
 
 import type { GitFile, GitSync, RepoSummary } from '../../types'
+import { errorText, isMissingCommand } from '../errors'
 import { isConflict, splitPath } from './parse'
 
 // 一個 repo：根目錄、.git 資料夾、資料夾名稱。status 給的路徑都相對根目錄，
@@ -22,6 +23,22 @@ export const SYNC_ARGS: Record<GitSync, string[]> = {
 }
 
 export const NO_GIT = 'git not found. Make sure it is installed and on your PATH.'
+
+// 每次跑 git 都帶的環境變數。repo 自己的設定（.git/config）可以讓 git 執行指令：core.fsmonitor、
+// log.showSignature 搭 gpg.program。面板每個回合都會自己跑 git，資料夾裡有別人給的 repo 時不能讓它決定要跑什麼，
+// 所以用 GIT_CONFIG_COUNT 蓋過去（優先權跟 -c 一樣，git 2.31 起）。
+// GIT_OPTIONAL_LOCKS=0：背景讀 status 時不搶 index.lock，不會跟使用者自己跑的 git 撞在一起。
+export const GIT_ENV: Record<string, string> = {
+  GIT_CONFIG_COUNT: '2',
+  GIT_CONFIG_KEY_0: 'core.fsmonitor',
+  GIT_CONFIG_VALUE_0: 'false',
+  GIT_CONFIG_KEY_1: 'log.showSignature',
+  GIT_CONFIG_VALUE_1: 'false',
+  GIT_OPTIONAL_LOCKS: '0',
+}
+
+// 跑 git 失敗時給人看的訊息：git 根本跑不起來就說沒裝，其餘照錯誤原文。
+export const gitErrorText = (err: unknown) => (isMissingCommand(err) ? NO_GIT : errorText(err))
 
 export const isNotRepo = (r: ProcessRunResult) => r.stderr.includes('not a git repository')
 

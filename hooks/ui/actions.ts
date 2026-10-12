@@ -37,7 +37,6 @@ export type Actions = {
   showMoreFiles: () => unknown
   // branch
   searchBranches: (text: string) => unknown
-  clearBranchQuery: () => unknown
   toggleRemote: () => unknown
   toggleBranchFolder: (key: string, isOpen: boolean) => unknown
   switchBranch: (name: string, isRemote: boolean) => unknown

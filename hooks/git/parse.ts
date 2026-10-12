@@ -1,6 +1,6 @@
 import type { CommitFile, FileKind, GitBranch, GitCommit, GitFile, GitView, LogView } from '../../types'
 
-export const MAX_DIFF_CHARS = 60000
+const MAX_DIFF_CHARS = 60000
 
 /** `git status --porcelain=v1 -b -z` output → changed files; the `## branch` line is skipped. */
 export function parseStatus(out: string): GitFile[] {
@@ -34,15 +34,8 @@ export function toHunks(diff: string): { source: string; isTruncated: boolean } 
   return { source: hunks.slice(0, cut === -1 ? MAX_DIFF_CHARS : cut), isTruncated: true }
 }
 
-export const BRANCH_FORMAT = [
-  '%(HEAD)',
-  '%(refname)',
-  '%(refname:short)',
-  '%(upstream:short)',
-  '%(upstream:track)',
-  '%(committerdate:relative)',
-  '%(contents:subject)',
-].join('%09')
+// 只要 ref 本身的欄位：不拿 commit 的日期、subject，git 就不用每次 refresh 都去讀上千個 commit。
+export const BRANCH_FORMAT = ['%(HEAD)', '%(refname)', '%(refname:short)', '%(upstream:short)', '%(upstream:track)'].join('%09')
 
 // 分支上千個時每次 refresh 都要排；共用一個 Collator 比每次 localeCompare 快很多，順序一樣。
 const byName = new Intl.Collator().compare
@@ -53,7 +46,7 @@ export function parseBranches(out: string): GitBranch[] {
 
   for (const line of out.split('\n')) {
     if (line === '') continue
-    const [head = '', ref = '', name = '', upstream = '', track = '', date = '', ...subject] = line.split('\t')
+    const [head = '', ref = '', name = '', upstream = '', track = ''] = line.split('\t')
     // `origin/HEAD` is a pointer, not a branch.
     if (ref.endsWith('/HEAD')) continue
 
@@ -63,8 +56,6 @@ export function parseBranches(out: string): GitBranch[] {
       isRemote: ref.startsWith('refs/remotes/'),
       upstream,
       track,
-      date,
-      subject: subject.join('\t'),
     })
   }
 
@@ -80,6 +71,12 @@ export function parseBranches(out: string): GitBranch[] {
 export function searchWords(query: string): string[] {
   return query.toLowerCase().split(/\s+/).filter(w => w !== '')
 }
+
+/** Whether a path can go into a prompt as is: no backtick, line break or other control character to smuggle text in. */
+export const isPromptSafePath = (path: string) => !/[`\u0000-\u001f\u007f]/.test(path)
+
+/** Whether a search box holds anything to search for. */
+export const hasQuery = (query: string) => searchWords(query).length > 0
 
 /** Items whose `text` holds every word of `query`, ignoring case; all of them when it is blank. */
 function filterWords<T>(items: T[], query: string, text: (item: T) => string): T[] {
@@ -114,7 +111,6 @@ export function fileKind(file: GitFile): FileKind {
 }
 
 export type FileGroupId = 'staged' | 'unstaged' | 'untracked'
-export type { FileKind }
 
 export type FileEntry = {
   file: GitFile

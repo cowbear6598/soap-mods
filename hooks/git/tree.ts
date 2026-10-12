@@ -62,7 +62,7 @@ function compact(f: BranchFolder): BranchFolder {
   return f
 }
 
-export type TreeRow =
+type TreeRow =
   | { kind: 'folder'; folder: BranchFolder; depth: number; isOpen: boolean }
   /** label 是分支名稱扣掉所在資料夾的路徑。 */
   | { kind: 'branch'; branch: GitBranch; label: string; depth: number }
