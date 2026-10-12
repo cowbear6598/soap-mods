@@ -241,8 +241,9 @@ async function focusWhenShown($: EngineInterface) {
 
 // 找 repo：session 資料夾本身是 repo 就只有它；不是的話看下一層有 .git 的資料夾。
 // 已經找過的不再問 git，只有新的才跑一次 rev-parse。
+// 用 session.root 不用 session.cwd：cwd 會跟著 Bash 的 cd 跑（例如 cd 進 a 去 commit），其他 repo 就不見了。
 async function findRepos($: EngineInterface): Promise<Repo[]> {
-  const cwd = await $.session.cwd()
+  const cwd = await $.session.root()
   const self = parseRepo(await git($, REPO_ARGS, { cwd }))
   if (self !== undefined) return [self]
   const entries = await $.fs.list(cwd).catch(() => [])
@@ -849,7 +850,7 @@ async function scanMac($: EngineInterface) {
 
 // 掃一次：這個資料夾的服務，和目前所有活著的 PID（重跑後的檢查用）。
 async function scan($: EngineInterface) {
-  const [result, cwd] = await Promise.all([(await isWindows($)) ? scanWindows($) : scanMac($), $.session.cwd()])
+  const [result, cwd] = await Promise.all([(await isWindows($)) ? scanWindows($) : scanMac($), $.session.root()])
 
   return { items: findServices(result, cwd), alive: new Set(result.pids) }
 }

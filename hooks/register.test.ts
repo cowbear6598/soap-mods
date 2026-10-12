@@ -83,7 +83,7 @@ test('the pane lists changes, shows a diff and the branches, and switches sub ta
   on('ui.panes', () => ({ value: [] }))
   on('ui.close', () => ({ value: undefined }))
   on('clock.now', () => ({ value: 0 }))
-  on('session.cwd', () => ({ value: '/repo' }))
+  on('session.root', () => ({ value: '/repo' }))
   on('process.run', (_$, e) => {
     const cmd = e.argv.slice(3)
     if (cmd[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
@@ -197,7 +197,7 @@ test('deleting a local branch turns its trash into a check that deletes, and giv
 
     return { value: undefined }
   })
-  on('session.cwd', () => ({ value: '/repo' }))
+  on('session.root', () => ({ value: '/repo' }))
   on('process.run', (_$, e) => {
     const cmd = e.argv.slice(3)
     if (cmd[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
@@ -262,7 +262,7 @@ test('Fetch and Pull run git without asking for a password, toast when done, and
 
     return { value: undefined }
   })
-  on('session.cwd', () => ({ value: '/repo' }))
+  on('session.root', () => ({ value: '/repo' }))
   on('process.run', (_$, e) => {
     const cmd = e.argv.slice(3)
     if (cmd[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
@@ -306,7 +306,7 @@ test('long file and branch lists draw the first 50, with Show more for files and
   on('ui.panes', () => ({ value: [] }))
   on('ui.close', () => ({ value: undefined }))
   on('clock.now', () => ({ value: 0 }))
-  on('session.cwd', () => ({ value: '/repo' }))
+  on('session.root', () => ({ value: '/repo' }))
   on('process.run', (_$, e) => {
     const cmd = e.argv.slice(3)
     if (cmd[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
@@ -346,7 +346,9 @@ test('a session folder holding several repos gets a repo bar with counts, and pr
   on('ui.panes', () => ({ value: [] }))
   on('ui.close', () => ({ value: undefined }))
   on('clock.now', () => ({ value: 0 }))
-  on('session.cwd', () => ({ value: '/company' }))
+  on('session.root', () => ({ value: '/company' }))
+  // Bash 在回合中 cd 進 a 去 commit，shell 的 cwd 跟著跑，但專案根目錄不變：repo bar 還是要列出 a、b。
+  on('session.cwd', () => ({ value: '/company/a' }))
   // company/ 底下：a、b 是 repo，docs 不是，.cache 是隱藏資料夾；各 repo 的 .git 裡沒有進行中的操作。
   on('fs.list', (_$, e) => ({ value: posix(e.path) === '/company' ? [dir('b'), dir('a'), dir('docs'), dir('.cache')] : [] }))
   on('fs.exists', (_$, e) => ({ value: ['/company/a/.git', '/company/b/.git'].includes(posix(e.path) ?? '') }))
@@ -409,7 +411,7 @@ test('the log tab lists the branch commits, marks unpushed ones, loads more, and
   on('ui.panes', () => ({ value: [] }))
   on('ui.close', () => ({ value: undefined }))
   on('clock.now', () => ({ value: now }))
-  on('session.cwd', () => ({ value: '/repo' }))
+  on('session.root', () => ({ value: '/repo' }))
   on('process.run', (_$, e) => {
     const cmd = e.argv.slice(3)
     if (cmd[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
@@ -525,7 +527,7 @@ test('the Services tab lists the running services and stops one by killing its t
   const calls: string[][] = []
   on('clock.now', () => ({ value: 1000 + 12 * 60_000 }))
   on('clock.sleep', () => ({ value: undefined }))
-  on('session.cwd', () => ({ value: ROOT }))
+  on('session.root', () => ({ value: ROOT }))
   on('ui.toast', () => ({ value: undefined }))
   on('env.get', (_$, e) => ({ value: e.name === 'OS' ? 'Windows_NT' : undefined }))
   on('process.run', (_$, e) => {
@@ -566,7 +568,7 @@ test('restart kills the tree, then relaunches the same command in the same folde
   on('clock.now', () => ({ value: 0 }))
   on('clock.sleep', () => ({ value: undefined }))
   on('clock.after', () => ({ value: undefined }))
-  on('session.cwd', () => ({ value: ROOT }))
+  on('session.root', () => ({ value: ROOT }))
   on('ui.toast', () => ({ value: undefined }))
   on('env.get', (_$, e) => ({ value: e.name === 'OS' ? 'Windows_NT' : undefined }))
   on('process.run', (_$, e) => {
@@ -598,7 +600,7 @@ test('a restart that dies right away says so, and the next scan does not wipe th
   on('clock.now', () => ({ value: 0 }))
   on('clock.sleep', () => ({ value: undefined }))
   on('clock.after', () => ({ value: undefined }))
-  on('session.cwd', () => ({ value: ROOT }))
+  on('session.root', () => ({ value: ROOT }))
   on('ui.toast', () => ({ value: undefined }))
   on('env.get', (_$, e) => ({ value: e.name === 'OS' ? 'Windows_NT' : undefined }))
   on('process.run', (_$, e) => {
@@ -629,7 +631,7 @@ test('on macOS the Services tab scans with ps and lsof, stops with kill -9 on th
   on('clock.now', () => ({ value: 0 }))
   on('clock.sleep', () => ({ value: undefined }))
   on('clock.after', () => ({ value: undefined }))
-  on('session.cwd', () => ({ value: MAC_ROOT }))
+  on('session.root', () => ({ value: MAC_ROOT }))
   on('ui.toast', () => ({ value: undefined }))
   on('env.get', () => ({ value: undefined }))
   on('process.run', (_$, e) => {
@@ -686,7 +688,7 @@ function conflictRepo(on: TestOn) {
   on('ui.close', () => ({ value: undefined }))
   on('ui.toast', () => ({ value: undefined }))
   on('clock.now', () => ({ value: 0 }))
-  on('session.cwd', () => ({ value: '/repo' }))
+  on('session.root', () => ({ value: '/repo' }))
   on('fs.list', () => ({ value: [{ name: 'MERGE_HEAD', kind: 'file', size: 0, mtimeMs: 0, isLink: false }] }))
   on('fs.read', () => ({ value: CONFLICTED }))
   on('fs.write', (_$, e) => {
@@ -816,7 +818,7 @@ test('a pane brought to the front, or one whose pressed button was swapped out, 
   on('ui.close', () => ({ value: undefined }))
   on('ui.toast', () => ({ value: undefined }))
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
-  on('session.cwd', () => ({ value: '/repo' }))
+  on('session.root', () => ({ value: '/repo' }))
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
   on('fs.list', () => ({ value: [{ name: 'MERGE_HEAD', kind: 'file', size: 0, mtimeMs: 0, isLink: false }] }))
   on('fs.read', () => ({ value: CONFLICTED }))
