@@ -11,6 +11,7 @@ export const EMPTY: GitView = {
   error: '',
   branchError: '',
   deleteArmed: null,
+  copied: '',
   op: '',
   opError: '',
   isAbortArmed: false,

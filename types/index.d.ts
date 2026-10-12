@@ -38,6 +38,8 @@ export type GitView = {
    * isForce: the plain delete failed for unmerged commits and the next press forces it.
    */
   deleteArmed: { name: string; isForce: boolean } | null
+  /** Branch whose copy button was just pressed and shows a check for COPIED_MS, '' when none. */
+  copied: string
   /** The operation stopped for conflicts, '' when none. */
   op: MergeOp
   /** Why the last abort, continue or resolve failed, '' when none; cleared on any tab change. */

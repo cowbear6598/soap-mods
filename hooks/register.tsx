@@ -33,6 +33,7 @@ import type {
   TabId,
 } from '../types'
 import {
+  COPIED_MS,
   DELETE_ARM_MS,
   FILE_PAGE,
   FOCUS_WATCH_MS,
@@ -996,11 +997,17 @@ async function viewLog($: EngineInterface, b: GitBranch) {
   await selectSubTab($, 'log')
 }
 
-// branch 分頁的複製按鈕：把分支名稱（遠端的含 origin/）放到按的那個畫面的剪貼簿。
+// 複製圖示換成綠底打勾後，COPIED_MS 換回來的計時；又按了一次就先停掉舊的。
+let uncopyTimer: Timer | undefined
+
+// branch 分頁的複製按鈕：把分支名稱（遠端的含 origin/）放到按的那個畫面的剪貼簿，
+// 按鈕變成綠底打勾 COPIED_MS 再換回來。
 async function copyBranchName($: EngineInterface, name: string, surface: RenderSurface) {
   const r = await $.ui.copy({ text: name, surface })
-  if (r.isCopied) $.ui.toast(`Copied ${name}`)
-  else await setView($, { ...NO_MESSAGES, branchError: `Couldn't copy ${name} (${r.reason})` })
+  if (!r.isCopied) return setView($, { ...NO_MESSAGES, branchError: `Couldn't copy ${name} (${r.reason})` })
+  uncopyTimer?.cancel()
+  await update($, view, v => ({ ...v, copied: name }))
+  uncopyTimer = $.clock.after(COPIED_MS, () => void update($, view, v => (v.copied === '' ? v : { ...v, copied: '' })))
 }
 
 // 畫面上的按鈕能做的事（ui/actions.ts 的約定），全部接到上面的動作。

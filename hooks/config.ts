@@ -86,6 +86,8 @@ export const WARN: Tint = { theme: 'warning', hex: '#d4a72c' }
 export const DANGER: Tint = { theme: 'error', hex: '#e5534b' }
 // 分支的打勾：紅底白勾（終端機是按鈕前的紅色方塊），一看就知道再按會刪。
 export const ARMED_TINT: Tint = { theme: DANGER.theme, hex: ACTIVE_ICON, background: DANGER.hex }
+// 分支名稱複製好了：綠底白勾，COPIED_MS 後換回複製圖示。
+export const COPIED_TINT: Tint = { theme: GOOD.theme, hex: ACTIVE_ICON, background: GOOD.hex }
 
 // 上層 Tab。之後要加新的 Tab，在這裡加一筆，再到 ui/panel.tsx 的 TAB_BODIES 補上它的內容。
 export const TABS: { id: TabId; label: string; icon: IconName }[] = [
@@ -106,7 +108,8 @@ export const LOG_PAGE = 30
 // branch 分頁每個資料夾（含最外層）直屬的分支最多畫幾個；分支上千個時全畫會卡死，其餘用搜尋找。
 export const BRANCH_ROW_LIMIT = 50
 // Local、Remote 各最多畫幾列（資料夾、分支都算）：搜尋時資料夾全部打開，每個資料夾各 50 個加起來還是會太多。
-export const BRANCH_TREE_LIMIT = 200
+// 每列有三顆 Svg 圖示鈕，上千個分支時搜尋打一個字就幾乎全中，畫到 200 列桌面版會卡住、打字沒反應。
+export const BRANCH_TREE_LIMIT = 50
 // branch 分頁資料夾列的顏色（天空藍；也可以寫主題色名稱）；終端機的按鈕吃不到顏色，只有桌面版看得到。
 export const FOLDER_COLOR = '#38bdf8'
 // diff 分頁每組一開始畫幾個檔案；Show more 再多畫這麼多個。沒 ignore 的資料夾會冒出上千個 untracked 檔案。
@@ -131,6 +134,8 @@ export const RESTART_GAP_MS = 500
 export const RESTART_CHECK_MS = [2_000, 5_000, 15_000, 30_000]
 // 分支的垃圾桶換成打勾後，多久沒再按就收回去。
 export const DELETE_ARM_MS = 3_000
+// 複製分支名稱後，綠底打勾留多久。
+export const COPIED_MS = 2_000
 // branch 分頁的 Fetch／Pull 最多等多久（git 預設只等 30 秒，大 repo 抓不完）。
 export const SYNC_TIMEOUT_MS = 300_000
 

@@ -1,5 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
+import { GOOD } from './config'
 import { CONFLICTED, MAC_FILES_OUT, MAC_PPIDS_OUT, MAC_ROOT, MAC_SCAN_OUT, ROOT, SCAN } from './test-fixtures'
 
 // 面板的 props：引擎畫面板時一定會給，測試照實給一份。
@@ -244,6 +245,40 @@ test('deleting a local branch turns its trash into a check that deletes, and giv
   expect(deletes).toEqual(['branch -d dev', 'branch -D dev'])
   expect(toasts).toEqual(['Deleted dev'])
   expect(await ui.find({ key: 'switch:l:dev' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('copying a branch name turns its copy button into a check for 2s', async ($, on) => {
+  const clock = mock.clock(on)
+  const copies: string[] = []
+  on('ui.panes', () => ({ value: [] }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.close', () => ({ value: undefined }))
+  on('ui.copy', (_$, e) => {
+    copies.push(e.text)
+
+    return { value: { isCopied: true } }
+  })
+  on('session.root', () => ({ value: '/repo' }))
+  on('process.run', (_$, e) => {
+    const cmd = e.argv.slice(3)
+    if (cmd[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
+    if (cmd[0] === 'status') return ok('## main\0')
+    if (cmd[0] === 'for-each-ref') return ok('*\trefs/heads/main\tmain\t\t\t1 hour ago\tAdd panel\n \trefs/heads/dev\tdev\t\t\t2 days ago\tWip\n')
+
+    return ok('')
+  })
+  await $.command.run({ command: 'soap-panel', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 120 } })
+
+  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'terminal', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  await ui.press({ key: 'sub:branch' })
+  await ui.press({ key: 'copy:l:dev' })
+  expect(copies).toEqual(['dev'])
+  // 按了的那顆變成綠底，別顆不變；2 秒後換回來。
+  expect((await ui.find({ key: 'copy:l:dev:box' }))?.props.backgroundColor).toBe(GOOD.hex)
+  expect((await ui.find({ key: 'copy:l:main:box' }))?.props.backgroundColor).toBeUndefined()
+  await clock.advance(2_000)
+  expect((await ui.find({ key: 'copy:l:dev:box' }))?.props.backgroundColor).toBeUndefined()
   await ui.unmount()
 })
 
