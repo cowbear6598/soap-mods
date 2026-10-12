@@ -236,6 +236,8 @@ declare module 'claude-code' {
       view: GitView
       /** Whether the remote branches section is expanded. */
       showRemote: boolean
+      /** Branch tab folders opened or closed by hand, keyed `l:<path>` / `r:<path>`; the rest use their default. */
+      branchFolders: Record<string, boolean>
       /** Text in the branch tab's search field, '' when not searching. */
       branchQuery: string
       /** Text in the log tab's search field, '' when not searching. */

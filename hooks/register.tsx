@@ -101,6 +101,8 @@ const tab = atom({ plugin: 'soap-mods', key: 'tab' } as const, 'git')
 const subTab = atom({ plugin: 'soap-mods', key: 'subTab' } as const, 'diff')
 const view = atom({ plugin: 'soap-mods', key: 'view' } as const, EMPTY)
 const showRemote = atom({ plugin: 'soap-mods', key: 'showRemote' } as const, false)
+// branch 分頁資料夾的開合，key 是「l:路徑」或「r:路徑」；沒有的照預設。
+const branchFolders = atom({ plugin: 'soap-mods', key: 'branchFolders' } as const, {})
 // branch 分頁搜尋框裡的字，換分頁就清掉。
 const branchQuery = atom({ plugin: 'soap-mods', key: 'branchQuery' } as const, '')
 // log 分頁搜尋框裡的字，一樣換分頁就清掉。
@@ -1006,6 +1008,7 @@ function actionsFor($: EngineInterface): Actions {
     searchBranches: text => update($, branchQuery, () => text),
     clearBranchQuery: () => update($, branchQuery, () => ''),
     toggleRemote: () => update($, showRemote, open => !open),
+    toggleBranchFolder: (key, isOpen) => update($, branchFolders, folders => ({ ...folders, [key]: isOpen })),
     switchBranch: (name, isRemote) => switchBranch($, name, isRemote),
     deleteBranch: name => deleteBranch($, name),
     syncBranches: kind => syncBranches($, kind),
@@ -1092,11 +1095,12 @@ export const register: Register = on => {
 
   // 畫面：這裡讀狀態，交給 ui/ 的純函式畫。
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const [activeTab, activeSub, v, isRemoteOpen, bq, fl, sv, lg, lq, usage, now] = await Promise.all([
+    const [activeTab, activeSub, v, isRemoteOpen, bf, bq, fl, sv, lg, lq, usage, now] = await Promise.all([
       read($, tab),
       read($, subTab),
       read($, view),
       read($, showRemote),
+      read($, branchFolders),
       read($, branchQuery),
       read($, fileLimit),
       read($, services),
@@ -1116,6 +1120,7 @@ export const register: Register = on => {
         subTab: activeSub,
         view: v,
         showRemote: isRemoteOpen,
+        branchFolders: bf,
         branchQuery: bq,
         fileLimit: fl,
         syncing,

@@ -338,6 +338,42 @@ test('long file and branch lists draw the first 50, with Show more for files and
   await ui.unmount()
 })
 
+test('branches with / in their name group into folders that open and close', async ($, on) => {
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.panes', () => ({ value: [] }))
+  on('ui.close', () => ({ value: undefined }))
+  on('clock.now', () => ({ value: 0 }))
+  on('session.root', () => ({ value: '/repo' }))
+  on('process.run', (_$, e) => {
+    const cmd = e.argv.slice(3)
+    if (cmd[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
+    if (cmd[0] === 'status') return ok('## soap/feature/login\0')
+    if (cmd[0] === 'for-each-ref') {
+      const local = (name: string, head = ' ') => `${head}\trefs/heads/${name}\t${name}\t\t\t1 day ago\tWip`
+
+      return ok([local('soap/feature/login', '*'), local('feature/a'), local('feature/b'), local('main'), ''].join('\n'))
+    }
+
+    return ok('')
+  })
+  await openPanel($)
+
+  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'terminal', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  await ui.press({ key: 'sub:branch' })
+  // 目前分支固定在最上面寫全名；其他分支收在資料夾裡，預設收起。
+  expect(await ui.find({ key: 'switch:l:soap/feature/login' })).toBeDefined()
+  expect(await ui.find({ key: 'switch:l:main' })).toBeDefined()
+  expect(await ui.find({ key: 'switch:l:feature/a' })).toBeUndefined()
+  await ui.press({ key: 'folder:l:feature/' })
+  expect(await ui.find({ key: 'switch:l:feature/a' })).toBeDefined()
+  await ui.press({ key: 'folder:l:feature/' })
+  expect(await ui.find({ key: 'switch:l:feature/a' })).toBeUndefined()
+  // 搜尋時資料夾全部打開。
+  await ui.input({ key: 'branch:search', text: 'b', kind: 'change' })
+  expect(await ui.find({ key: 'switch:l:feature/b' })).toBeDefined()
+  await ui.unmount()
+})
+
 test('a session folder holding several repos gets a repo bar with counts, and pressing one switches the Git tab to it', async ($, on) => {
   const dir = (name: string) => ({ name, kind: 'dir', size: 0, mtimeMs: 0, isLink: false }) as const
   const statusCwds: (string | undefined)[] = []

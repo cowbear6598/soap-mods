@@ -39,6 +39,7 @@ export type Actions = {
   searchBranches: (text: string) => unknown
   clearBranchQuery: () => unknown
   toggleRemote: () => unknown
+  toggleBranchFolder: (key: string, isOpen: boolean) => unknown
   switchBranch: (name: string, isRemote: boolean) => unknown
   deleteBranch: (name: string) => unknown
   syncBranches: (kind: GitSync) => unknown
@@ -71,6 +72,7 @@ export type PanelData = {
   subTab: GitSubTab
   view: GitView
   showRemote: boolean
+  branchFolders: Readonly<Record<string, boolean>>
   branchQuery: string
   fileLimit: number
   // 正在跑的 Fetch／Pull，'' 是沒有。

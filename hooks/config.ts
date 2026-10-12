@@ -102,8 +102,10 @@ export const SUB_TABS: { id: GitSubTab; label: string; icon: IconName }[] = [
 
 // log 分頁一次列幾筆 commit；Load more 再多列這麼多筆。
 export const LOG_PAGE = 30
-// branch 分頁的 Local、Remote 各最多畫幾列；分支上千個時全畫會卡死，其餘用搜尋找。
+// branch 分頁每個資料夾（含最外層）直屬的分支最多畫幾個；分支上千個時全畫會卡死，其餘用搜尋找。
 export const BRANCH_ROW_LIMIT = 50
+// Local、Remote 各最多畫幾列（資料夾、分支都算）：搜尋時資料夾全部打開，每個資料夾各 50 個加起來還是會太多。
+export const BRANCH_TREE_LIMIT = 200
 // diff 分頁每組一開始畫幾個檔案；Show more 再多畫這麼多個。沒 ignore 的資料夾會冒出上千個 untracked 檔案。
 export const FILE_PAGE = 50
 
