@@ -34,3 +34,10 @@ test('a group stops at total rows and counts every branch it left out', () => {
   const rows = treeRows(branchTree(['a/1', 'a/2', 'b/1', 'c'].map(branch)), () => true, Infinity, 3)
   expect(rows.map(r => (r.kind === 'more' ? `more ${r.path} ${r.hidden}` : r.kind))).toEqual(['folder', 'branch', 'branch', 'more * 2'])
 })
+
+test('skipLoneRoot drops a lone top folder like origin/, but keeps several remotes apart', () => {
+  const rows = (names: string[]) =>
+    treeRows(branchTree(names.map(branch), true), () => true).map(r => (r.kind === 'folder' ? r.folder.label : r.kind === 'branch' ? r.label : ''))
+  expect(rows(['origin/main', 'origin/feature/a'])).toEqual(['feature/', 'a', 'main'])
+  expect(rows(['origin/main', 'upstream/main'])).toEqual(['origin/', 'main', 'upstream/', 'main'])
+})

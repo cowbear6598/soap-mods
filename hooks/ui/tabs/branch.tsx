@@ -1,5 +1,5 @@
 import type { GitBranch } from '../../../types'
-import { ARMED_TINT, BRANCH_ROW_LIMIT, BRANCH_TREE_LIMIT } from '../../config'
+import { ARMED_TINT, BRANCH_ROW_LIMIT, BRANCH_TREE_LIMIT, FOLDER_COLOR } from '../../config'
 import { filterBranches, searchWords } from '../../git/parse'
 import { branchTree, treeRows } from '../../git/tree'
 import type { TabBody } from './context'
@@ -57,23 +57,26 @@ export const branchTab: TabBody = ({ w, d, a }) => {
     })
   }
 
-  // 可以開合的標題（Remote、資料夾）：搜尋時全部打開，畫成點不動的字。
-  const toggleRow = (key: string, label: string, isOpen: boolean, indent: number, onPress: () => unknown, isBold = false) =>
-    isSearching ? (
+  // 可以開合的標題：Remote 是粗體灰字，資料夾用 FOLDER_COLOR 跟分支分開。搜尋時全部打開，畫成點不動的字。
+  const toggleRow = (key: string, label: string, isOpen: boolean, indent: number, onPress: () => unknown, isFolder = true) => {
+    const style = isFolder ? { color: FOLDER_COLOR } : { isBold: true, isDim: true }
+
+    return isSearching ? (
       <Box key={key} paddingLeft={indent}>
-        <Text bold={isBold} dimColor>
+        <Text bold={style.isBold} dimColor={style.isDim} color={style.color}>
           {label}
         </Text>
       </Box>
     ) : (
-      w.pressRow({ key, label: `${label} ${isOpen ? '▾' : '▸'}`, isDim: true, isBold, indent, onPress })
+      w.pressRow({ key, label: `${label} ${isOpen ? '▾' : '▸'}`, ...style, indent, onPress })
     )
+  }
 
   // 一組（Local／Remote）的樹，目前分支不在裡面。資料夾列寫「feature/ · 12 ▸」，跟分支名稱一樣縮排；
   // 開合狀態存在 branchFolders，key 是「l:路徑」或「r:路徑」。
   const treeBody = (group: 'l' | 'r', list: GitBranch[]) =>
     treeRows(
-      branchTree(list),
+      branchTree(list, group === 'r'),
       (path, fallback) => isSearching || (folderState[`${group}:${path}`] ?? fallback),
       BRANCH_ROW_LIMIT,
       BRANCH_TREE_LIMIT,
@@ -129,7 +132,7 @@ export const branchTab: TabBody = ({ w, d, a }) => {
       )}
       {remotes.length > 0 && (
         <Box flexDirection="column">
-          {toggleRow('remote:toggle', `Remote · ${remotes.length}`, isRemoteOpen, 0, () => a.toggleRemote(), true)}
+          {toggleRow('remote:toggle', `Remote · ${remotes.length}`, isRemoteOpen, 0, () => a.toggleRemote(), false)}
           {isRemoteShown && treeBody('r', remotes)}
         </Box>
       )}

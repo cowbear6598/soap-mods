@@ -106,6 +106,8 @@ export const LOG_PAGE = 30
 export const BRANCH_ROW_LIMIT = 50
 // Local、Remote 各最多畫幾列（資料夾、分支都算）：搜尋時資料夾全部打開，每個資料夾各 50 個加起來還是會太多。
 export const BRANCH_TREE_LIMIT = 200
+// branch 分頁資料夾列的顏色（天空藍；也可以寫主題色名稱）；終端機的按鈕吃不到顏色，只有桌面版看得到。
+export const FOLDER_COLOR = '#38bdf8'
 // diff 分頁每組一開始畫幾個檔案；Show more 再多畫這麼多個。沒 ignore 的資料夾會冒出上千個 untracked 檔案。
 export const FILE_PAGE = 50
 

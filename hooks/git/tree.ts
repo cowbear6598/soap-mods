@@ -15,8 +15,11 @@ export type BranchFolder = {
 
 const folder = (path: string, label: string): BranchFolder => ({ path, label, folders: [], branches: [], count: 0 })
 
-/** 每個分支依名稱放進資料夾；保留傳入的順序，資料夾在前、分支在後。 */
-export function branchTree(branches: GitBranch[]): BranchFolder {
+/**
+ * 每個分支依名稱放進資料夾；保留傳入的順序，資料夾在前、分支在後。
+ * skipLoneRoot：最外層只有一個資料夾、沒有分支時（Remote 只有 origin/）跳過它，直接從它裡面開始。
+ */
+export function branchTree(branches: GitBranch[], skipLoneRoot = false): BranchFolder {
   const root = folder('', '')
   // 分支上千個時，每層用 find 找資料夾太慢；整棵樹共用一張路徑 → 資料夾的表。
   const byPath = new Map<string, BranchFolder>()
@@ -39,9 +42,11 @@ export function branchTree(branches: GitBranch[]): BranchFolder {
     }
     node.branches.push(b)
   }
-  root.folders = root.folders.map(compact)
+  const lone = root.folders[0]
+  const top = skipLoneRoot && root.branches.length === 0 && root.folders.length === 1 && lone !== undefined ? lone : root
+  top.folders = top.folders.map(compact)
 
-  return root
+  return top
 }
 
 // 只有一個子資料夾、沒有分支的那層跟子資料夾併成一列（soap/ → feature/ 變成 soap/feature/）。樹是剛建的，直接改。
@@ -66,7 +71,7 @@ export type TreeRow =
 
 /**
  * 依開合狀態攤平成要畫的列。`isOpen(path, fallback)` 決定資料夾開不開；fallback 是預設：
- * 一層裡只有這一個資料夾（沒有別的資料夾或分支，例如 Remote 底下只有 origin/）時預設打開，其餘預設收起。
+ * 一層裡只有這一個資料夾（沒有別的資料夾或分支，例如 Local 的分支全在 feature/ 底下）時預設打開，其餘預設收起。
  * 每個資料夾（含最外層）直屬的分支最多 limit 個，其餘收成一列 more；整組最多 total 列（搜尋全打開時才擋得住），
  * 超過的分支在最後收成一列 more。
  */
