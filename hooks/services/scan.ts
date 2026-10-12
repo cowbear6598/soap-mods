@@ -103,9 +103,11 @@ function trimSlash(p: string) {
   return p.replace(/[\\/]+$/, '')
 }
 
-// 比對路徑用：小寫、反斜線、去掉結尾的斜線。
+// 比對路徑用：小寫、反斜線、去掉開頭和結尾的斜線（macOS 的 /Users/x 跟拆成段再接回來的 Users\x 才比得起來）。
 function normPath(p: string) {
-  return trimSlash(p.replace(/\//g, '\\')).toLowerCase()
+  return trimSlash(p.replace(/\//g, '\\'))
+    .replace(/^\\+/, '')
+    .toLowerCase()
 }
 
 function isUnder(path: string | null, root: string) {
@@ -120,7 +122,25 @@ export function isInFolder(path: string, folder: string) {
   return isUnder(path, normPath(folder))
 }
 
-const SHELLS = ['cmd.exe', 'powershell.exe', 'pwsh.exe', 'bash.exe', 'sh.exe', 'zsh.exe', 'nu.exe']
+const SHELLS = [
+  'cmd.exe',
+  'powershell.exe',
+  'pwsh.exe',
+  'bash.exe',
+  'sh.exe',
+  'zsh.exe',
+  'nu.exe',
+  // macOS
+  'sh',
+  'bash',
+  'zsh',
+  'fish',
+  'nu',
+  'dash',
+  'login',
+  'tmux',
+  'screen',
+]
 // 往上併的時候絕不併進去的程式：shell（你開的終端機）、編輯器、IDE、終端機視窗、桌面版 Claude。
 // 它們的工作目錄常常也在專案裡，併進去的話「停止」會把它們一起砍掉。
 const HOSTS = [
@@ -138,6 +158,27 @@ const HOSTS = [
   'goland64.exe',
   'pycharm64.exe',
   'claude.exe',
+  // macOS（桌面版和引擎都叫 claude；VS Code、Cursor 這些 Electron 程式的程序叫 Electron 或 xxx Helper）
+  'launchd',
+  'finder',
+  'terminal',
+  'iterm2',
+  'ghostty',
+  'wezterm-gui',
+  'alacritty',
+  'kitty',
+  'warp',
+  'electron',
+  'code helper',
+  'code helper (plugin)',
+  'cursor helper',
+  'cursor helper (plugin)',
+  'idea',
+  'webstorm',
+  'goland',
+  'pycharm',
+  'rider',
+  'claude',
 ]
 
 // 不能當成服務的一部分：互動式 shell（cmd /c 這種一次性的包裝除外）和上面那些程式。
@@ -147,9 +188,11 @@ function isHost(p: ScanProc) {
   return HOSTS.includes(name) || (SHELLS.includes(name) && !isCmdWrapper(p))
 }
 
-// cmd /c 包一層（npm、npx 跑指令時會這樣）。
+// cmd /c 包一層（npm、npx 跑指令時會這樣）；macOS 上 npm 是用 sh -c 包。
 function isCmdWrapper(p: ScanProc) {
-  return p.name.toLowerCase() === 'cmd.exe' && /\s\/c\s/i.test(p.cmd ?? '')
+  const name = p.name.toLowerCase()
+
+  return (name === 'cmd.exe' && /\s\/c\s/i.test(p.cmd ?? '')) || (name === 'sh' && splitArgs(p.cmd ?? '')[1] === '-c')
 }
 
 // 照 Windows 的規則粗切 command line：空白分隔，雙引號裡的空白不算。
@@ -188,6 +231,10 @@ const NODE_CLIS: Record<string, string> = {
   'pnpm.js': 'pnpm',
   'yarn.js': 'yarn',
   'yarn.cjs': 'yarn',
+  npm: 'npm',
+  npx: 'npx',
+  pnpm: 'pnpm',
+  yarn: 'yarn',
 }
 
 // 工具名稱：指令的第一段，去掉路徑和 .exe；node npm-cli.js 算 npm。
@@ -225,7 +272,8 @@ function segments(path: string) {
   return out
 }
 
-const isAbsolute = (p: string) => /^[A-Za-z]:[\\/]/.test(p)
+// C:\x，或 macOS 的 /Users/x（至少兩層，cmd 的 /c、/d 開關才不會被當成路徑）。
+const isAbsolute = (p: string) => /^[A-Za-z]:[\\/]/.test(p) || /^\/[^\\/\s]+\//.test(p)
 
 // 參數裡看起來像路徑的部分（--flag=值 取值；classpath 用 ; 分開）。網址、glob、Windows 的 /c 開關、
 // 沒有斜線的單字（run、dev、app.main:app）都不算。
@@ -236,7 +284,7 @@ function pathArgs(args: string[]) {
       if (a === '' || /[\s*?<>|"]/.test(a)) return false
       // 冒號只能是磁碟代號（C:\），所以網址、app.main:app 都不算。
       if (a.includes(':')) return isAbsolute(a) && a.indexOf(':', 2) < 0
-      if (a === '.' || a === '..') return true
+      if (a === '.' || a === '..' || isAbsolute(a)) return true
       // 相對路徑：要有斜線，而且不是斜線或 - 開頭（/c、/d 是 cmd 的開關）。
       return /[\\/]/.test(a) && !/^[\\/-]/.test(a)
     })
@@ -288,15 +336,17 @@ export function serviceName(procs: ScanProc[], sessionCwd: string) {
 function guessDir(path: string, skip: number) {
   const segs = segments(path)
   const dir = cutBuildDirs(segs, skip)
+  if (dir.length >= segs.length) return undefined
 
-  return dir.length < segs.length ? dir.join('\\') : undefined
+  // 重跑要在這裡開，所以接回原本的樣子：macOS 是 /Users/x，Windows 是 C:\x。
+  return path.startsWith('/') ? `/${dir.join('/')}` : dir.join('\\')
 }
 
 // 指令當初是在哪個資料夾下的。go -C <dir> 會自己 cd 進去，讀到的工作目錄多了那一層，重跑前要退回來。
 function startDir(top: ScanProc, dir: string) {
   const sub = flagValue(splitArgs(top.cmd ?? ''), '-C')
   const trimmed = trimSlash(dir)
-  if (top.name.toLowerCase() !== 'go.exe' || sub === undefined) return trimmed
+  if (top.name.toLowerCase().replace(/\.exe$/, '') !== 'go' || sub === undefined) return trimmed
   const suffix = `\\${normPath(sub)}`
 
   return normPath(trimmed).endsWith(suffix) ? trimmed.slice(0, trimmed.length - suffix.length) : trimmed

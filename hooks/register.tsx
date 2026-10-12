@@ -69,6 +69,18 @@ import {
 import type { Repo } from './git/repo'
 import { NO_GIT, REPO_ARGS, STATUS_ARGS, SUMMARY_ARGS, SYNC_ARGS, isNotRepo, parseRepo, toSummary } from './git/repo'
 import { buildResult, detectOp, isResolved, keepChoices, merge3, nextConflict, parseConflicts, splitLines } from './merge/algo'
+import {
+  MAC_ENV,
+  MAC_LAUNCH_ARGV,
+  MAC_PPIDS_ARGV,
+  MAC_SCAN_ARGV,
+  descendants,
+  macFilesArgv,
+  parseMacFiles,
+  parseMacScan,
+  wantedPids,
+  withFiles,
+} from './services/mac'
 import { LAUNCH_ARGV, SCAN_ARGV, findServices } from './services/scan'
 import type { Actions } from './ui/actions'
 import { renderDiffPane } from './ui/diffPane'
@@ -809,13 +821,51 @@ async function continueOp($: EngineInterface) {
 
 // ───── Services 分頁 ─────
 
+// Windows 用 PowerShell，其他（macOS）用 ps、lsof、kill。
+async function isWindows($: EngineInterface) {
+  return (await $.env.get('OS')) === 'Windows_NT'
+}
+
+async function scanWindows($: EngineInterface) {
+  const r = await $.process.run(SCAN_ARGV)
+  if (r.exitCode !== 0) throw failure(r, 'Process scan')
+
+  return JSON.parse(r.stdout) as ScanResult
+}
+
+// 先用 ps 列出所有程序和 port，再只對用得到的程序讀工作目錄和執行檔。
+async function scanMac($: EngineInterface) {
+  const r = await $.process.run(MAC_SCAN_ARGV, { env: MAC_ENV })
+  if (r.exitCode !== 0) throw failure(r, 'Process scan')
+  const all = parseMacScan(r.stdout)
+  const want = wantedPids(all)
+  // 有讀不到的程序（root 跑的）lsof 會回 1，照樣用它讀到的。
+  const files = await $.process.run(macFilesArgv(want), { env: MAC_ENV })
+
+  return withFiles(all, want, parseMacFiles(files.stdout))
+}
+
 // 掃一次：這個資料夾的服務，和目前所有活著的 PID（重跑後的檢查用）。
 async function scan($: EngineInterface) {
-  const [r, cwd] = await Promise.all([$.process.run(SCAN_ARGV), $.session.cwd()])
-  if (r.exitCode !== 0) throw failure(r, 'Process scan')
-  const result = JSON.parse(r.stdout) as ScanResult
+  const [result, cwd] = await Promise.all([(await isWindows($)) ? scanWindows($) : scanMac($), $.session.cwd()])
 
   return { items: findServices(result, cwd), alive: new Set(result.pids) }
+}
+
+// 砍整棵程序樹。macOS 沒有 taskkill /T，先用 ps 找出子孫再一起 kill -9。
+async function killTree($: EngineInterface, pid: number) {
+  if (await isWindows($)) {
+    const kill = await $.process.run(['taskkill', '/PID', String(pid), '/T', '/F'])
+    if (kill.exitCode !== 0) throw failure(kill, 'taskkill')
+
+    return
+  }
+  const ps = await $.process.run(MAC_PPIDS_ARGV)
+  if (ps.exitCode !== 0) throw failure(ps, 'ps')
+  const kill = await $.process.run(['kill', '-9', ...descendants(ps.stdout, pid).map(String)])
+  // 樹裡有程序剛好自己先結束（No such process）不算失敗。
+  const errors = kill.stderr.split('\n').filter(l => l.trim() !== '' && !/no such process/i.test(l))
+  if (kill.exitCode !== 0 && errors.length > 0) throw failure(kill, 'kill')
 }
 
 // 同一時間只掃一次；掃到一半又被叫，掃完再補掃一次，畫面才不會停在舊的。
@@ -837,7 +887,7 @@ async function refreshServices($: EngineInterface) {
       } catch (err) {
         await setServices($, {
           isLoaded: true,
-          error: isMissingCommand(err) ? 'Services needs Windows PowerShell (Windows only for now).' : `Scan failed: ${errorText(err)}`,
+          error: isMissingCommand(err) ? 'Services needs PowerShell on Windows, or ps and lsof on macOS.' : `Scan failed: ${errorText(err)}`,
         })
       }
     } while (isRescanWanted)
@@ -864,12 +914,12 @@ async function runServiceAction($: EngineInterface, target: Service, action: Ser
     if (current === undefined) throw new Error(`${target.tool} · ${target.name} already exited.`)
     if (action === 'restart' && current.command === '') throw new Error(`Cannot read the command line of ${current.tool} · ${current.name}.`)
 
-    const kill = await $.process.run(['taskkill', '/PID', String(current.pid), '/T', '/F'])
-    if (kill.exitCode !== 0) throw failure(kill, 'taskkill')
+    await killTree($, current.pid)
 
     if (action === 'restart') {
       await $.clock.sleep(RESTART_GAP_MS)
-      const launch = await $.process.run(LAUNCH_ARGV, { env: { SOAP_CMD: current.command, SOAP_DIR: current.dir } })
+      const argv = (await isWindows($)) ? LAUNCH_ARGV : MAC_LAUNCH_ARGV
+      const launch = await $.process.run(argv, { env: { SOAP_CMD: current.command, SOAP_DIR: current.dir } })
       if (launch.exitCode !== 0) throw failure(launch, 'Restart')
       watchRestart($, `${current.tool} · ${current.name}`, Number(launch.stdout.trim()))
       $.ui.toast(`Restarted ${current.tool} · ${current.name}`)

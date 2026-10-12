@@ -29,14 +29,16 @@ CptSoap 的 Claude Code Panel mod。
 
 中間那欄不能直接打字修改（引擎沒有多行編輯器）。結果是從 git 的三個版本算出來的，**你在編輯器裡手動改過的內容不會顯示，按 Apply 會蓋掉**；要手動解的話，自己改完把衝突標記都清掉，面板就會改成整個檔案選，按 **Mark resolved as is**。面板會在回合結束或輸入 `/soap-panel` 時重讀，沒變的段落保留已經做的選擇。
 
-**Services**（目前只支援 Windows）列出 session 資料夾底下正在跑的服務。不管是你自己開的，還是 AI 在背景開的都算，例如 `npm run dev`、`dotnet run`、`bun run dev`。每筆服務顯示指令、所在資料夾、LISTEN 的 port、跑了多久和 PID，右邊有兩顆按鈕：
+**Services**（Windows 和 macOS）列出 session 資料夾底下正在跑的服務。不管是你自己開的，還是 AI 在背景開的都算，例如 `npm run dev`、`dotnet run`、`bun run dev`。每筆服務顯示指令、所在資料夾、LISTEN 的 port、跑了多久和 PID，右邊有兩顆按鈕：
 
 - **重跑**：砍掉整棵程序樹，在同一個資料夾用同一個指令重開。重開的服務在背景執行、不開視窗，不存 log。新程序 30 秒內就結束的話，面板會顯示重跑失敗（原因要自己跑一次那個指令看）。
-- **停止**：砍掉整棵程序樹（`taskkill /T /F`）。
+- **停止**：砍掉整棵程序樹（Windows 用 `taskkill /T /F`，macOS 用 `ps` 找出子孫再 `kill -9`）。
+
+macOS 用 `ps` 和 `lsof` 掃描。重跑的指令是 `ps` 讀到的那行，原本的引號已經不見了，所以參數裡有空白的路徑重跑會壞（Windows 沒這個問題）。
 
 服務照 repo 分組（跟 diff 分頁的 Staged／Unstaged 一樣），組的順序跟 Git 分頁那排 repo 一樣；不在任何 repo 裡的放在最後的 **Other**。
 
-判斷方式：**有開 port**，而且工作目錄或執行檔在 session 資料夾底下，就算一個服務。不看是什麼語言，所以 Node、.NET、Go、Rust、Python…都一樣。父子程序會併成一筆，例如 `npm → cmd /c → node vite`、`go run → go-server.exe`、`cargo run → app.exe`；往上併到你的終端機（shell）、編輯器或 IDE 就停，所以「停止」不會砍到它們。桌面版 `.claude/launch.json` 預覽開的伺服器也會列出。不會列出的有：沒開 port 的程式（language server、背景 script），以及 Claude Code 引擎自己和它直接開的程序（MCP server 等）。分頁開著時每 5 秒掃一次。
+判斷方式：**有開 port**，而且工作目錄或執行檔在 session 資料夾底下，就算一個服務。不看是什麼語言，所以 Node、.NET、Go、Rust、Python…都一樣。父子程序會併成一筆，例如 `npm → cmd /c → node vite`（macOS 是 `npm → sh -c → node vite`）、`go run → go-server.exe`、`cargo run → app.exe`；往上併到你的終端機（shell）、編輯器或 IDE 就停，所以「停止」不會砍到它們。桌面版 `.claude/launch.json` 預覽開的伺服器也會列出。不會列出的有：沒開 port 的程式（language server、背景 script），以及 Claude Code 引擎自己和它直接開的程序（MCP server 等）。分頁開著時每 5 秒掃一次。
 
 面板最底下固定顯示用量，左右各一半：`5h · 93% · 2h 26m` 和 `Weekly · 99% · 2d 18h 5m`（剩餘 %、離重置多久），下面一條剩餘量的 bar。多於 50% 綠、多於 20% 黃、其餘紅。只有訂閱帳號才有數字，送出第一則訊息前會顯示 `—`。
 

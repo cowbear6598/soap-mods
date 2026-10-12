@@ -95,3 +95,52 @@ SCAN.pids = SCAN.procs.map(p => p.pid)
 
 // 停在 merge、有一段衝突的檔案。
 export const CONFLICTED = ['import a', '<<<<<<< HEAD', 'const x = 1', '=======', 'const x = 2', '>>>>>>> feature', 'end', ''].join('\n')
+
+// macOS：桌面版（Claude 80）開引擎（claude 100），引擎用 /bin/sh 900 掃描。使用者在終端機（-zsh 10）跑
+// npm run dev（npm → sh -c vite → node vite）；引擎自己開的 MCP server（node 30）不算。
+// 第二行是同一刻的本地時間和 epoch（這裡時區是 +8）。
+export const MAC_ROOT = '/Users/me/proj'
+export const MAC_EPOCH = Date.UTC(2026, 9, 12, 2, 0, 0) / 1000
+export const MAC_SCAN_OUT = `900
+2026 10 12 10 00 00 ${MAC_EPOCH}
+#comm
+    1     0 Tue Oct  6 15:08:47 2026     /sbin/launchd
+   80     1 Mon Oct 12 09:00:00 2026     /Applications/Claude.app/Contents/MacOS/Claude
+  100    80 Mon Oct 12 09:00:01 2026     /Users/me/Library/Application Support/Claude/claude-code/2.1.295/claude.app/Contents/MacOS/claude
+  900   100 Mon Oct 12 10:00:00 2026     /bin/sh
+   10     1 Mon Oct 12 09:10:00 2026     -zsh
+   11    10 Mon Oct 12 09:20:00 2026     node
+   12    11 Mon Oct 12 09:20:01 2026     /bin/sh
+   13    12 Mon Oct 12 09:20:01 2026     node
+   30   100 Mon Oct 12 09:00:02 2026     node
+#args
+    1 /sbin/launchd
+   80 /Applications/Claude.app/Contents/MacOS/Claude
+  100 claude
+  900 /bin/sh -c echo
+   10 -zsh
+   11 npm run dev
+   12 sh -c vite
+   13 node /Users/me/proj/web/node_modules/.bin/vite
+   30 node mcp-server.js
+#ports
+p13
+f20
+n*:5173
+f21
+n[::1]:5173
+p30
+f22
+n127.0.0.1:9999
+`
+const NODE = '/Users/me/.nvm/versions/node/v24.14.0/bin/node'
+export const MAC_FILES_OUT = [
+  ...['p10', 'fcwd', `n${MAC_ROOT}`, 'ftxt', 'n/bin/zsh'],
+  ...['p11', 'fcwd', `n${MAC_ROOT}/web`, 'ftxt', `n${NODE}`, 'ftxt', 'n/usr/lib/dyld'],
+  ...['p12', 'fcwd', `n${MAC_ROOT}/web`, 'ftxt', 'n/bin/sh'],
+  ...['p13', 'fcwd', `n${MAC_ROOT}/web`, 'ftxt', `n${NODE}`],
+  ...['p30', 'fcwd', `n${MAC_ROOT}`, 'ftxt', `n${NODE}`],
+  '',
+].join('\n')
+// ps -axo pid=,ppid=：npm 那棵樹底下還有一個 esbuild（99）。
+export const MAC_PPIDS_OUT = ['    1     0', '   11    10', '   12    11', '   13    12', '   99    13', '   30   100', ''].join('\n')

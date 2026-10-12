@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { CONFLICTED, ROOT, SCAN } from './test-fixtures'
+import { CONFLICTED, MAC_FILES_OUT, MAC_PPIDS_OUT, MAC_ROOT, MAC_SCAN_OUT, ROOT, SCAN } from './test-fixtures'
 
 // 面板的 props：引擎畫面板時一定會給，測試照實給一份。
 const PANE_PROPS = {
@@ -488,6 +488,7 @@ test('the Services tab lists the running services and stops one by killing its t
   on('clock.sleep', () => ({ value: undefined }))
   on('session.cwd', () => ({ value: ROOT }))
   on('ui.toast', () => ({ value: undefined }))
+  on('env.get', (_$, e) => ({ value: e.name === 'OS' ? 'Windows_NT' : undefined }))
   on('process.run', (_$, e) => {
     calls.push([...e.argv])
     if (e.argv[0] === 'powershell') return ok(JSON.stringify(SCAN))
@@ -528,6 +529,7 @@ test('restart kills the tree, then relaunches the same command in the same folde
   on('clock.after', () => ({ value: undefined }))
   on('session.cwd', () => ({ value: ROOT }))
   on('ui.toast', () => ({ value: undefined }))
+  on('env.get', (_$, e) => ({ value: e.name === 'OS' ? 'Windows_NT' : undefined }))
   on('process.run', (_$, e) => {
     if (e.argv[0] === 'taskkill') kills.push(e.argv[2] ?? '')
     if (e.argv[0] === 'powershell' && e.init?.env?.SOAP_CMD !== undefined) {
@@ -559,6 +561,7 @@ test('a restart that dies right away says so, and the next scan does not wipe th
   on('clock.after', () => ({ value: undefined }))
   on('session.cwd', () => ({ value: ROOT }))
   on('ui.toast', () => ({ value: undefined }))
+  on('env.get', (_$, e) => ({ value: e.name === 'OS' ? 'Windows_NT' : undefined }))
   on('process.run', (_$, e) => {
     if (e.argv[0] === 'powershell' && e.init?.env?.SOAP_CMD !== undefined) return ok('4321\r\n')
     // 重開的程序 4321 不在活著的 PID 裡：一開就掛了。
@@ -578,6 +581,40 @@ test('a restart that dies right away says so, and the next scan does not wipe th
   await ui.press({ key: 'tab:git' })
   await ui.press({ key: 'tab:services' })
   expect(await ui.find({ type: 'Text', text: /Restart failed/ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('on macOS the Services tab scans with ps and lsof, stops with kill -9 on the tree, and restarts with sh', async ($, on) => {
+  const kills: string[][] = []
+  const launches: Record<string, string>[] = []
+  on('clock.now', () => ({ value: 0 }))
+  on('clock.sleep', () => ({ value: undefined }))
+  on('clock.after', () => ({ value: undefined }))
+  on('session.cwd', () => ({ value: MAC_ROOT }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('env.get', () => ({ value: undefined }))
+  on('process.run', (_$, e) => {
+    if (e.argv[0] === 'kill') kills.push([...e.argv])
+    if (e.argv[0] === 'ps') return ok(MAC_PPIDS_OUT)
+    if (e.argv[0] === 'lsof') return ok(MAC_FILES_OUT)
+    if (e.argv[0] === '/bin/sh' && e.init?.env?.SOAP_CMD !== undefined) {
+      launches.push(e.init.env)
+
+      return ok('4321\n')
+    }
+    if (e.argv[0] === '/bin/sh') return ok(MAC_SCAN_OUT)
+
+    return ok('')
+  })
+
+  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'desktop', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  await ui.press({ key: 'tab:services' })
+  expect(await ui.find({ type: 'Text', text: 'npm' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'web' })).toBeDefined()
+  await ui.press({ key: 'svc:stop:11' })
+  expect(kills).toEqual([['kill', '-9', '11', '12', '13', '99']])
+  await ui.press({ key: 'svc:restart:11' })
+  expect(launches).toEqual([{ SOAP_CMD: 'npm run dev', SOAP_DIR: `${MAC_ROOT}/web` }])
   await ui.unmount()
 })
 
