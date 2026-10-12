@@ -44,6 +44,7 @@ export type Actions = {
   deleteBranch: (name: string) => unknown
   syncBranches: (kind: GitSync) => unknown
   viewLog: (b: GitBranch) => unknown
+  copyBranchName: (name: string) => unknown
   // log
   searchLog: (text: string) => unknown
   loadMoreLog: () => unknown

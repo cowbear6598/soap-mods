@@ -9,7 +9,7 @@
 //   ui/            畫面：拿到資料和 Actions 畫出樹（panel、tabs/、diffPane、mergePane）
 
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, PaneOpenArgs, Register, Timer } from 'claude-code'
+import type { EngineInterface, PaneOpenArgs, Register, RenderSurface, Timer } from 'claude-code'
 
 import type {
   CommitFile,
@@ -996,8 +996,15 @@ async function viewLog($: EngineInterface, b: GitBranch) {
   await selectSubTab($, 'log')
 }
 
+// branch 分頁的複製按鈕：把分支名稱（遠端的含 origin/）放到按的那個畫面的剪貼簿。
+async function copyBranchName($: EngineInterface, name: string, surface: RenderSurface) {
+  const r = await $.ui.copy({ text: name, surface })
+  if (r.isCopied) $.ui.toast(`Copied ${name}`)
+  else await setView($, { ...NO_MESSAGES, branchError: `Couldn't copy ${name} (${r.reason})` })
+}
+
 // 畫面上的按鈕能做的事（ui/actions.ts 的約定），全部接到上面的動作。
-function actionsFor($: EngineInterface): Actions {
+function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
   return {
     selectTab: id => selectTab($, id),
     selectSubTab: id => selectSubTab($, id),
@@ -1013,6 +1020,7 @@ function actionsFor($: EngineInterface): Actions {
     deleteBranch: name => deleteBranch($, name),
     syncBranches: kind => syncBranches($, kind),
     viewLog: b => viewLog($, b),
+    copyBranchName: name => copyBranchName($, name, surface),
     searchLog: text => searchLog($, text),
     loadMoreLog: () => loadMoreLog($),
     openCommit: c => openCommit($, c),
@@ -1131,7 +1139,7 @@ export const register: Register = on => {
         usage: usage?.rateLimits ?? [],
         now,
       },
-      actionsFor($),
+      actionsFor($, e.surface),
       fn => act($, PANE, fn),
     )
   })
@@ -1143,6 +1151,6 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: MERGE_PANE }, async ($, e) => {
     const [m, v] = await Promise.all([read($, merge), read($, view)])
 
-    return renderMergePane($.ui.resolve(e), m, isMergeBusy, v.op, actionsFor($), fn => act($, MERGE_PANE, fn))
+    return renderMergePane($.ui.resolve(e), m, isMergeBusy, v.op, actionsFor($, e.surface), fn => act($, MERGE_PANE, fn))
   })
 }

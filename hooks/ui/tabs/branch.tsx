@@ -22,9 +22,10 @@ export const branchTab: TabBody = ({ w, d, a }) => {
   const indentAt = (depth: number) => 2 + depth * 2
 
   // 目前分支的 ● 落在縮排的空位裡，名稱跟其他分支對齊；點它不做事。
-  // 右邊的 log 圖示按了到 log 分頁看這個分支；不是目前分支的本地分支前面多一個垃圾桶，按了換成打勾。
+  // 右邊的複製圖示按了複製分支名稱（遠端的含 origin/）；log 圖示按了到 log 分頁看這個分支；不是目前分支的本地分支前面多一個垃圾桶，按了換成打勾。
   const branchRow = (b: GitBranch, label = b.name, depth = 0) => {
     const id = `${b.isRemote ? 'r' : 'l'}:${b.name}`
+    const copyButton = w.iconButton(`copy:${id}`, 'copy', 'Copy name', false, () => a.copyBranchName(b.name))
     const logButton = w.iconButton(`log:${id}`, 'log', 'Log', false, () => a.viewLog(b))
     const canDelete = !b.isRemote && !b.isCurrent
     const armed = canDelete && v.deleteArmed?.name === b.name ? v.deleteArmed : null
@@ -51,6 +52,7 @@ export const branchTab: TabBody = ({ w, d, a }) => {
       trailing: (
         <Box key={`trailing:${id}`} gap={1} alignItems="center">
           {deleteButton}
+          {copyButton}
           {logButton}
         </Box>
       ),
