@@ -102,6 +102,8 @@ export const SUB_TABS: { id: GitSubTab; label: string; icon: IconName }[] = [
 
 // log 分頁一次列幾筆 commit；Load more 再多列這麼多筆。
 export const LOG_PAGE = 30
+// branch 分頁的 Local、Remote 各最多畫幾列；分支上千個時全畫會卡死，其餘用搜尋找。
+export const BRANCH_ROW_LIMIT = 50
 
 // 面板最底下的用量：左邊 5h、右邊 weekly，各占一半。kind 是引擎回報的視窗名稱。
 export const USAGE_WINDOWS = [

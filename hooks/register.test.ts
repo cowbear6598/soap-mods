@@ -12,6 +12,9 @@ const PANE_PROPS = {
   view: {},
 } as const
 
+// 引擎會把 fs、process 的路徑轉成這台電腦的絕對路徑（Windows 加磁碟代號、換反斜線），比對前轉回 /repo 這種寫法。
+const posix = (p: string | undefined) => p?.replace(/\\/g, '/').replace(/^[A-Za-z]:/, '')
+
 test('the pane draws the Git tab with its four sub tabs on each surface', async ($, on) => {
   on('clock.now', () => ({ value: 0 }))
   for (const surface of ['terminal', 'desktop'] as const) {
@@ -80,10 +83,10 @@ test('the pane lists changes, shows a diff and the branches, and switches sub ta
   on('ui.panes', () => ({ value: [] }))
   on('ui.close', () => ({ value: undefined }))
   on('clock.now', () => ({ value: 0 }))
-  on('session.cwd', () => ({ value: 'C:/repo' }))
+  on('session.cwd', () => ({ value: '/repo' }))
   on('process.run', (_$, e) => {
     const cmd = e.argv.slice(3)
-    if (cmd[0] === 'rev-parse') return ok('C:/repo\nC:/repo/.git\n')
+    if (cmd[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
     if (cmd[0] === 'switch') return { value: { ...ok('').value, exitCode: 128, stderr: SWITCH_FAILED } }
     if (cmd[0] === 'status') return ok('## main...origin/main [ahead 1]\0 M a.ts\0')
     if (cmd[0] === 'diff') return ok('diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-a\n+b\n')
@@ -194,10 +197,10 @@ test('deleting a local branch turns its trash into a check that deletes, and giv
 
     return { value: undefined }
   })
-  on('session.cwd', () => ({ value: 'C:/repo' }))
+  on('session.cwd', () => ({ value: '/repo' }))
   on('process.run', (_$, e) => {
     const cmd = e.argv.slice(3)
-    if (cmd[0] === 'rev-parse') return ok('C:/repo\nC:/repo/.git\n')
+    if (cmd[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
     if (cmd[0] === 'status') return ok('## main\0')
     if (cmd[0] === 'branch') {
       deletes.push(cmd.join(' '))
@@ -259,10 +262,10 @@ test('Fetch and Pull run git without asking for a password, toast when done, and
 
     return { value: undefined }
   })
-  on('session.cwd', () => ({ value: 'C:/repo' }))
+  on('session.cwd', () => ({ value: '/repo' }))
   on('process.run', (_$, e) => {
     const cmd = e.argv.slice(3)
-    if (cmd[0] === 'rev-parse') return ok('C:/repo\nC:/repo/.git\n')
+    if (cmd[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
     if (cmd[0] === 'status') return ok('## main\0')
     if (cmd[0] === 'fetch' || cmd[0] === 'pull') {
       syncs.push(`${cmd.join(' ')} prompt=${e.init?.env?.GIT_TERMINAL_PROMPT} timeout=${e.init?.timeoutMs}`)
@@ -301,29 +304,27 @@ test('a session folder holding several repos gets a repo bar with counts, and pr
   const dir = (name: string) => ({ name, kind: 'dir', size: 0, mtimeMs: 0, isLink: false }) as const
   const statusCwds: (string | undefined)[] = []
   const logCwds: (string | undefined)[] = []
-  // Windows 上引擎會把路徑轉成反斜線，比對前轉回來。
-  const slash = (p: string | undefined) => p?.replace(/\\/g, '/')
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('ui.panes', () => ({ value: [] }))
   on('ui.close', () => ({ value: undefined }))
   on('clock.now', () => ({ value: 0 }))
-  on('session.cwd', () => ({ value: 'C:/company' }))
+  on('session.cwd', () => ({ value: '/company' }))
   // company/ 底下：a、b 是 repo，docs 不是，.cache 是隱藏資料夾；各 repo 的 .git 裡沒有進行中的操作。
-  on('fs.list', (_$, e) => ({ value: slash(e.path) === 'C:/company' ? [dir('b'), dir('a'), dir('docs'), dir('.cache')] : [] }))
-  on('fs.exists', (_$, e) => ({ value: ['C:/company/a/.git', 'C:/company/b/.git'].includes(slash(e.path) ?? '') }))
+  on('fs.list', (_$, e) => ({ value: posix(e.path) === '/company' ? [dir('b'), dir('a'), dir('docs'), dir('.cache')] : [] }))
+  on('fs.exists', (_$, e) => ({ value: ['/company/a/.git', '/company/b/.git'].includes(posix(e.path) ?? '') }))
   on('process.run', (_$, e) => {
-    const cwd = slash(e.init?.cwd)
+    const cwd = posix(e.init?.cwd)
     const args = e.argv.slice(3)
     if (args[0] === 'rev-parse') {
-      if (cwd === 'C:/company') return { value: { ...ok('').value, exitCode: 128, stderr: 'fatal: not a git repository (or any of the parent directories): .git' } }
+      if (cwd === '/company') return { value: { ...ok('').value, exitCode: 128, stderr: 'fatal: not a git repository (or any of the parent directories): .git' } }
 
       return ok(`${cwd}\n${cwd}/.git\n`)
     }
     if (args[0] === 'log') logCwds.push(cwd)
     if (args[0] === 'status') {
       statusCwds.push(cwd)
-      if (cwd === 'C:/company/a') return ok('## main\0 M a1.ts\0 M a2.ts\0')
-      if (cwd === 'C:/company/b') return ok('## main\0UU b1.ts\0')
+      if (cwd === '/company/a') return ok('## main\0 M a1.ts\0 M a2.ts\0')
+      if (cwd === '/company/b') return ok('## main\0UU b1.ts\0')
     }
 
     return ok('')
@@ -341,12 +342,12 @@ test('a session folder holding several repos gets a repo bar with counts, and pr
   // log 只在 log 分頁時讀。
   expect(logCwds).toEqual([])
   await ui.press({ key: 'sub:log' })
-  expect(logCwds.at(-1)).toBe('C:/company/a')
+  expect(logCwds.at(-1)).toBe('/company/a')
 
   await ui.press({ key: 'repo:b' })
   expect((await ui.find({ key: 'repo:b' }))?.props).toMatchObject({ variant: 'primary' })
   // log 也換成 b 的。
-  expect(logCwds.at(-1)).toBe('C:/company/b')
+  expect(logCwds.at(-1)).toBe('/company/b')
   await ui.press({ key: 'sub:diff' })
   expect(await ui.find({ key: 'file:unstaged:a1.ts' })).toBeUndefined()
   await ui.press({ key: 'sub:conflict' })
@@ -370,10 +371,10 @@ test('the log tab lists the branch commits, marks unpushed ones, loads more, and
   on('ui.panes', () => ({ value: [] }))
   on('ui.close', () => ({ value: undefined }))
   on('clock.now', () => ({ value: now }))
-  on('session.cwd', () => ({ value: 'C:/repo' }))
+  on('session.cwd', () => ({ value: '/repo' }))
   on('process.run', (_$, e) => {
     const cmd = e.argv.slice(3)
-    if (cmd[0] === 'rev-parse') return ok('C:/repo\nC:/repo/.git\n')
+    if (cmd[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
     if (cmd[0] === 'status') return ok('## main...origin/main [ahead 2]\0')
     if (cmd[0] === 'for-each-ref') {
       return ok(
@@ -647,11 +648,11 @@ function conflictRepo(on: TestOn) {
   on('ui.close', () => ({ value: undefined }))
   on('ui.toast', () => ({ value: undefined }))
   on('clock.now', () => ({ value: 0 }))
-  on('session.cwd', () => ({ value: 'C:/repo' }))
+  on('session.cwd', () => ({ value: '/repo' }))
   on('fs.list', () => ({ value: [{ name: 'MERGE_HEAD', kind: 'file', size: 0, mtimeMs: 0, isLink: false }] }))
   on('fs.read', () => ({ value: CONFLICTED }))
   on('fs.write', (_$, e) => {
-    writes.push({ path: e.path, text: e.text })
+    writes.push({ path: posix(e.path) ?? '', text: e.text })
 
     return { value: undefined }
   })
@@ -662,9 +663,9 @@ function conflictRepo(on: TestOn) {
   })
   on('process.run', (_$, e) => {
     const args = e.argv.slice(3)
-    calls.push({ args, cwd: e.init?.cwd, env: e.init?.env })
+    calls.push({ args, cwd: posix(e.init?.cwd), env: e.init?.env })
     if (args[0] === 'status') return ok(isAdded ? '## main\0M  src/a.ts\0' : '## main\0UU src/a.ts\0')
-    if (args[0] === 'rev-parse') return ok('C:/repo\nC:/repo/.git\n')
+    if (args[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
     if (args[0] === 'show') return showStage(args)
     if (args[0] === 'add') isAdded = true
 
@@ -724,11 +725,10 @@ test('the conflict tab lists conflicted files, and the merge pane resolves one, 
   await pane.unmount()
 
   // 寫回 repo 根目錄底下的檔案，在根目錄 git add。
-  // Windows 上引擎會把路徑轉成反斜線。
-  expect(writes.map(w => ({ ...w, path: w.path.replace(/\\/g, '/') }))).toEqual([
-    { path: 'C:/repo/src/a.ts', text: 'import a\nconst x = 1\nconst x = 2\nend\n' },
+  expect(writes).toEqual([
+    { path: '/repo/src/a.ts', text: 'import a\nconst x = 1\nconst x = 2\nend\n' },
   ])
-  expect(calls.some(c => c.args.join(' ') === 'add -- src/a.ts' && c.cwd === 'C:/repo')).toBe(true)
+  expect(calls.some(c => c.args.join(' ') === 'add -- src/a.ts' && c.cwd === '/repo')).toBe(true)
 
   // 衝突都解完了：可以 continue，merge 是直接用預設訊息 commit、不開編輯器。
   expect(await ui.find({ type: 'Text', text: 'All conflicts resolved.' })).toBeDefined()
@@ -755,12 +755,12 @@ test('abort asks once more before running, and Ask Claude sends the file to the 
   await pane.press({ key: 'merge:claude' })
   expect(prompts.length).toBe(1)
   // 給 Claude 的是完整路徑：session 資料夾不是 repo 時，相對路徑會找不到檔案。
-  expect(prompts[0]).toContain('`C:/repo/src/a.ts`')
+  expect(prompts[0]).toContain('`/repo/src/a.ts`')
   await pane.unmount()
 
   await ui.press({ key: 'op:abort' })
   await ui.press({ key: 'op:abort' })
-  expect(calls.some(c => c.args.join(' ') === 'merge --abort' && c.cwd === 'C:/repo')).toBe(true)
+  expect(calls.some(c => c.args.join(' ') === 'merge --abort' && c.cwd === '/repo')).toBe(true)
   await ui.unmount()
 })
 
@@ -778,19 +778,19 @@ test('a pane brought to the front, or one whose pressed button was swapped out, 
   on('ui.close', () => ({ value: undefined }))
   on('ui.toast', () => ({ value: undefined }))
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
-  on('session.cwd', () => ({ value: 'C:/repo' }))
+  on('session.cwd', () => ({ value: '/repo' }))
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
   on('fs.list', () => ({ value: [{ name: 'MERGE_HEAD', kind: 'file', size: 0, mtimeMs: 0, isLink: false }] }))
   on('fs.read', () => ({ value: CONFLICTED }))
   on('process.run', (_$, e) => {
     const args = e.argv.slice(3)
     if (args[0] === 'status') return ok('## main\0UU src/a.ts\0')
-    if (args[0] === 'rev-parse') return ok('C:/repo\nC:/repo/.git\n')
+    if (args[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
     if (args[0] === 'show') return showStage(args)
 
     return ok('')
   })
-  await $.session.start({ cwd: 'C:/repo', surface: 'desktop', isInteractive: true })
+  await $.session.start({ cwd: '/repo', surface: 'desktop', isInteractive: true })
 
   // 剛啟動時 Soap Panel 在前面但沒焦點：不搶（人可能正在輸入框打字）。
   await clock.advance(200)

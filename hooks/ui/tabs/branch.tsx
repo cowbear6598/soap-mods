@@ -1,11 +1,12 @@
 import type { GitBranch } from '../../../types'
-import { ARMED_TINT } from '../../config'
+import { ARMED_TINT, BRANCH_ROW_LIMIT } from '../../config'
 import { filterBranches, searchWords } from '../../git/parse'
 import type { TabBody } from './context'
 
 // branch 分頁。parseBranches 已經排好：目前分支第一個，其餘照名稱。切換後被點的那列會搬位置、面板丟掉焦點，
 // 由 focusWhenShown 補回來。
 // 搜尋時只留名稱符合的分支，Remote 直接展開（不用再按 ▸），沒有符合的那組整組不畫。
+// 每組最多畫 BRANCH_ROW_LIMIT 列，超過的提示用搜尋縮小範圍。
 export const branchTab: TabBody = ({ w, d, a }) => {
   const { Box, Button, Text } = w
   const { view: v, branchQuery: query, showRemote: isRemoteOpen } = d
@@ -52,6 +53,15 @@ export const branchTab: TabBody = ({ w, d, a }) => {
     })
   }
 
+  const cappedRows = (group: string, list: GitBranch[]) => [
+    ...list.slice(0, BRANCH_ROW_LIMIT).map(branchRow),
+    list.length > BRANCH_ROW_LIMIT && (
+      <Box key={`more:${group}`} paddingLeft={2}>
+        <Text dimColor>{`… ${list.length - BRANCH_ROW_LIMIT} more; search to narrow down`}</Text>
+      </Box>
+    ),
+  ]
+
   // Fetch／Pull 跟搜尋框同一行、放右邊，按了才跑；跑的時候那顆寫「Fetching…」／「Pulling…」，兩顆都按不動（register 擋掉）。
   const syncButtons = [
     <Button key="branch:fetch" label={d.syncing === 'fetch' ? 'Fetching…' : 'Fetch'} onPress={w.press(() => a.syncBranches('fetch'))} />,
@@ -81,7 +91,7 @@ export const branchTab: TabBody = ({ w, d, a }) => {
               <Text dimColor>No current branch (detached HEAD?)</Text>
             </Box>
           )}
-          {locals.map(branchRow)}
+          {cappedRows('local', locals)}
         </Box>
       )}
       {remotes.length > 0 && (
@@ -98,7 +108,7 @@ export const branchTab: TabBody = ({ w, d, a }) => {
               onPress: () => a.toggleRemote(),
             })
           )}
-          {isRemoteShown && remotes.map(branchRow)}
+          {isRemoteShown && cappedRows('remote', remotes)}
         </Box>
       )}
     </Box>
