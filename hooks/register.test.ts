@@ -300,6 +300,44 @@ test('Fetch and Pull run git without asking for a password, toast when done, and
   await ui.unmount()
 })
 
+test('long file and branch lists draw the first 50, with Show more for files and search for branches', async ($, on) => {
+  const names = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => `${prefix}${String(i).padStart(2, '0')}`)
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.panes', () => ({ value: [] }))
+  on('ui.close', () => ({ value: undefined }))
+  on('clock.now', () => ({ value: 0 }))
+  on('session.cwd', () => ({ value: '/repo' }))
+  on('process.run', (_$, e) => {
+    const cmd = e.argv.slice(3)
+    if (cmd[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
+    if (cmd[0] === 'status') return ok(`## main\0${names('f', 70).map(f => `?? ${f}.ts\0`).join('')}`)
+    if (cmd[0] === 'for-each-ref') {
+      const remotes = names('origin/b', 60).map(b => ` \trefs/remotes/${b}\t${b}\t\t\t1 day ago\tWip`)
+
+      return ok(['*\trefs/heads/main\tmain\t\t\t1 hour ago\tAdd panel', ...remotes, ''].join('\n'))
+    }
+
+    return ok('')
+  })
+  await openPanel($)
+
+  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'terminal', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  expect(await ui.find({ key: 'file:untracked:f49.ts' })).toBeDefined()
+  expect(await ui.find({ key: 'file:untracked:f50.ts' })).toBeUndefined()
+  await ui.press({ key: 'file:more:untracked' })
+  expect(await ui.find({ key: 'file:untracked:f69.ts' })).toBeDefined()
+  expect(await ui.find({ key: 'file:more:untracked' })).toBeUndefined()
+
+  await ui.press({ key: 'sub:branch' })
+  await ui.press({ key: 'remote:toggle' })
+  expect(await ui.find({ key: 'switch:r:origin/b49' })).toBeDefined()
+  expect(await ui.find({ key: 'switch:r:origin/b50' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: '… 10 more; search to narrow down' })).toBeDefined()
+  await ui.input({ key: 'branch:search', text: 'b55', kind: 'change' })
+  expect(await ui.find({ key: 'switch:r:origin/b55' })).toBeDefined()
+  await ui.unmount()
+})
+
 test('a session folder holding several repos gets a repo bar with counts, and pressing one switches the Git tab to it', async ($, on) => {
   const dir = (name: string) => ({ name, kind: 'dir', size: 0, mtimeMs: 0, isLink: false }) as const
   const statusCwds: (string | undefined)[] = []

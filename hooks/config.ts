@@ -104,6 +104,8 @@ export const SUB_TABS: { id: GitSubTab; label: string; icon: IconName }[] = [
 export const LOG_PAGE = 30
 // branch 分頁的 Local、Remote 各最多畫幾列；分支上千個時全畫會卡死，其餘用搜尋找。
 export const BRANCH_ROW_LIMIT = 50
+// diff 分頁每組一開始畫幾個檔案；Show more 再多畫這麼多個。沒 ignore 的資料夾會冒出上千個 untracked 檔案。
+export const FILE_PAGE = 50
 
 // 面板最底下的用量：左邊 5h、右邊 weekly，各占一半。kind 是引擎回報的視窗名稱。
 export const USAGE_WINDOWS = [

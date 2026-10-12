@@ -34,6 +34,7 @@ export type Actions = {
   // diff
   openDiff: (path: string) => unknown
   openMerge: (path: string) => unknown
+  showMoreFiles: () => unknown
   // branch
   searchBranches: (text: string) => unknown
   clearBranchQuery: () => unknown
@@ -71,6 +72,7 @@ export type PanelData = {
   view: GitView
   showRemote: boolean
   branchQuery: string
+  fileLimit: number
   // 正在跑的 Fetch／Pull，'' 是沒有。
   syncing: GitSync | ''
   services: ServicesView

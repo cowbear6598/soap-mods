@@ -34,6 +34,7 @@ import type {
 } from '../types'
 import {
   DELETE_ARM_MS,
+  FILE_PAGE,
   FOCUS_WATCH_MS,
   LOG_PAGE,
   MERGE_COLUMNS,
@@ -104,6 +105,7 @@ const showRemote = atom({ plugin: 'soap-mods', key: 'showRemote' } as const, fal
 const branchQuery = atom({ plugin: 'soap-mods', key: 'branchQuery' } as const, '')
 // log 分頁搜尋框裡的字，一樣換分頁就清掉。
 const logQuery = atom({ plugin: 'soap-mods', key: 'logQuery' } as const, '')
+const fileLimit = atom({ plugin: 'soap-mods', key: 'fileLimit' } as const, FILE_PAGE)
 const services = atom({ plugin: 'soap-mods', key: 'services' } as const, EMPTY_SERVICES)
 const merge = atom({ plugin: 'soap-mods', key: 'merge' } as const, EMPTY_MERGE)
 const log = atom({ plugin: 'soap-mods', key: 'log' } as const, EMPTY_LOG)
@@ -999,6 +1001,7 @@ function actionsFor($: EngineInterface): Actions {
     selectRepo: name => selectRepo($, name),
     openDiff: path => openDiff($, path),
     openMerge: path => openMerge($, path),
+    showMoreFiles: () => update($, fileLimit, n => n + FILE_PAGE),
     searchBranches: text => update($, branchQuery, () => text),
     clearBranchQuery: () => update($, branchQuery, () => ''),
     toggleRemote: () => update($, showRemote, open => !open),
@@ -1088,12 +1091,13 @@ export const register: Register = on => {
 
   // 畫面：這裡讀狀態，交給 ui/ 的純函式畫。
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const [activeTab, activeSub, v, isRemoteOpen, bq, sv, lg, lq, usage, now] = await Promise.all([
+    const [activeTab, activeSub, v, isRemoteOpen, bq, fl, sv, lg, lq, usage, now] = await Promise.all([
       read($, tab),
       read($, subTab),
       read($, view),
       read($, showRemote),
       read($, branchQuery),
+      read($, fileLimit),
       read($, services),
       read($, log),
       read($, logQuery),
@@ -1112,6 +1116,7 @@ export const register: Register = on => {
         view: v,
         showRemote: isRemoteOpen,
         branchQuery: bq,
+        fileLimit: fl,
         syncing,
         services: sv,
         servicePending,

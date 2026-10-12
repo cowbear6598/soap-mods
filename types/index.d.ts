@@ -240,6 +240,8 @@ declare module 'claude-code' {
       branchQuery: string
       /** Text in the log tab's search field, '' when not searching. */
       logQuery: string
+      /** How many files each diff tab group draws; Show more raises it. */
+      fileLimit: number
       services: ServicesView
       merge: MergeView
       log: LogView

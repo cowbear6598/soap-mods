@@ -44,6 +44,9 @@ export const BRANCH_FORMAT = [
   '%(contents:subject)',
 ].join('%09')
 
+// 分支上千個時每次 refresh 都要排；共用一個 Collator 比每次 localeCompare 快很多，順序一樣。
+const byName = new Intl.Collator().compare
+
 /** `git for-each-ref --format=BRANCH_FORMAT` output → branches, current first. */
 export function parseBranches(out: string): GitBranch[] {
   const branches: GitBranch[] = []
@@ -69,7 +72,7 @@ export function parseBranches(out: string): GitBranch[] {
     if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1
     if (a.isRemote !== b.isRemote) return a.isRemote ? 1 : -1
 
-    return a.name.localeCompare(b.name)
+    return byName(a.name, b.name)
   })
 }
 
