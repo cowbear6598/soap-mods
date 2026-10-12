@@ -474,6 +474,7 @@ test('the log tab lists the branch commits, marks unpushed ones, loads more, and
   const logArgs: string[][] = []
   const revListArgs: string[][] = []
   const diffOpens: string[] = []
+  const diffTreeArgs: string[][] = []
   on('ui.open', (_$, e) => {
     if (e.id === 'soap-diff') diffOpens.push(e.title ?? '')
 
@@ -511,6 +512,7 @@ test('the log tab lists the branch commits, marks unpushed ones, loads more, and
 
       return ok(`${sha(0)}\n${sha(1)}\n`)
     }
+    if (cmd[0] === 'diff-tree') diffTreeArgs.push(cmd)
     if (cmd[0] === 'diff-tree' && cmd.includes('--name-status')) return ok(['M', 'src/a.ts', 'R100', 'old.ts', 'new.ts', ''].join('\0'))
     if (cmd[0] === 'diff-tree') return ok('diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-a\n+b\n')
 
@@ -525,7 +527,9 @@ test('the log tab lists the branch commits, marks unpushed ones, loads more, and
   expect(await ui.find({ key: `commit:${sha(29)}` })).toBeDefined()
   expect(await ui.find({ key: `commit:${sha(30)}` })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: short(0) })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'CptSoap · 3d' })).toBeDefined()
+  // 作者、時間各一欄。
+  expect(await ui.find({ type: 'Text', text: 'CptSoap' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '3d' })).toBeDefined()
   // 有 upstream：跟 upstream 比哪些還沒 push，那兩筆標 ↑。
   expect(revListArgs.at(-1)).toEqual(['rev-list', '--max-count=30', 'HEAD', '--not', 'origin/main'])
   expect(await ui.findAll({ type: 'Text', text: '↑' })).toHaveLength(2)
@@ -551,6 +555,42 @@ test('the log tab lists the branch commits, marks unpushed ones, loads more, and
   await diff.unmount()
   await ui.press({ key: 'log:back' })
   expect(await ui.find({ key: `commit:${sha(1)}` })).toBeDefined()
+
+  // Select range：點起點（再點一次取消）、再點終點，兩筆之間（含）一起打開：最舊那筆之前 → 最新那筆。
+  await ui.press({ key: 'log:range' })
+  expect(await ui.find({ type: 'Text', text: 'Press the first commit of the range.' })).toBeDefined()
+  await ui.press({ key: `commit:${sha(0)}` })
+  await ui.press({ key: `commit:${sha(0)}` })
+  expect(await ui.find({ type: 'Text', text: 'Press the first commit of the range.' })).toBeDefined()
+  await ui.press({ key: `commit:${sha(0)}` })
+  expect(await ui.find({ type: 'Text', text: 'Press the other end of the range.' })).toBeDefined()
+  await ui.press({ key: `commit:${sha(2)}` })
+  expect(diffTreeArgs.at(-1)?.slice(-2)).toEqual([sha(3), sha(0)])
+  expect(await ui.find({ type: 'Text', text: `3 commits · ${short(2)}…${short(0)}` })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Files · 2' })).toBeDefined()
+  await ui.press({ key: 'commit-file:src/a.ts' })
+  expect(diffTreeArgs.at(-1)).toContain(sha(3))
+  expect(diffOpens.at(-1)).toBe(`src/a.ts @ ${short(2)}…${short(0)}`)
+  // 差異面板的 Previous／Next（n／m）：換成同一批的上一個／下一個檔案，到頭了不動。
+  const steps = await $.ui.mount({ plugin: 'soap-mods', surface: 'terminal', component: 'Pane', requestId: 'soap-diff', props: PANE_PROPS })
+  expect(await steps.find({ type: 'Text', text: '1 of 2 files' })).toBeDefined()
+  await steps.press({ key: 'diff:next' })
+  expect(diffOpens.at(-1)).toBe(`new.ts @ ${short(2)}…${short(0)}`)
+  expect(diffTreeArgs.at(-1)?.slice(-2)).toEqual(['old.ts', 'new.ts'])
+  expect(await steps.find({ type: 'Text', text: '2 of 2 files' })).toBeDefined()
+  const opens = diffOpens.length
+  await steps.press({ key: 'diff:next' })
+  expect(diffOpens).toHaveLength(opens)
+  await steps.press({ key: 'diff:prev' })
+  expect(await steps.find({ type: 'Text', text: '1 of 2 files' })).toBeDefined()
+  await steps.unmount()
+  // Back 回列表，選範圍結束：點 commit 又是打開那一筆。
+  await ui.press({ key: 'log:back' })
+  expect(await ui.find({ type: 'Text', text: 'Press the first commit of the range.' })).toBeUndefined()
+  // Cancel 也結束。
+  await ui.press({ key: 'log:range' })
+  await ui.press({ key: 'log:range' })
+  expect(await ui.find({ type: 'Text', text: 'Press the first commit of the range.' })).toBeUndefined()
 
   // 搜尋：搜整條分支（包括還沒列出來的），每個字都要有、不分大小寫；整條歷史只讀一次，打字時直接過濾。
   const fullReads = () => logArgs.filter(a => !a.some(x => x.startsWith('--max-count='))).length

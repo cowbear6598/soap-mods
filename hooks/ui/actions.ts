@@ -49,8 +49,12 @@ export type Actions = {
   searchLog: (text: string) => unknown
   loadMoreLog: () => unknown
   openCommit: (c: GitCommit) => unknown
+  toggleRangePick: () => unknown
+  pickRange: (c: GitCommit) => unknown
   closeCommit: () => unknown
-  openCommitDiff: (c: GitCommit, f: CommitFile) => unknown
+  openCommitDiff: (commits: GitCommit[], f: CommitFile, files: CommitFile[]) => unknown
+  // 差異面板
+  stepCommitFile: (step: 1 | -1) => unknown
   // conflict
   abortOp: () => unknown
   cancelAbort: () => unknown

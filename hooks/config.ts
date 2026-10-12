@@ -57,6 +57,12 @@ export const ICONS = {
 export type IconName = keyof typeof ICONS
 
 export const ICON_PX = 16
+
+// log 分頁每一列的固定欄寬（字數）：短 sha（桌面版字寬不一，多留一格）、作者名稱（太長截斷）、
+// 多久前（最長像「11mo」）。subject 吃掉剩下的寬度。
+export const LOG_SHA_WIDTH = 8
+export const LOG_AUTHOR_WIDTH = 10
+export const LOG_AGO_WIDTH = 4
 // 選中的 tab 恆亮的底色。
 export const ACTIVE_BG = '#3a3a3a'
 // 圖示按鈕的寬度：這串空白撐出按鈕，底色、hover、圖示都對齊這塊區域。

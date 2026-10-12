@@ -84,15 +84,17 @@ export type DiffPaneView = {
   /** Repo-relative path, '' when nothing is shown. */
   path: string
   kind: FileKind
-  /** Short sha of the commit for a commit file, '' for a work tree file. */
-  at: string
   diff: string
   isTruncated: boolean
   /** Why reading the diff failed, '' when none. */
   error: string
+  /** For a commit file: the commits it was opened from (newest first; the title's `@ sha`), [] for a work tree file. */
+  commits: GitCommit[]
+  /** For a commit file: all the files of those commits, which Previous / Next step through; [] for a work tree file. */
+  files: CommitFile[]
 }
 
-/** The log tab: one branch's commits, and the commit opened to its files. */
+/** The log tab: one branch's commits, and the commits opened to their files. */
 export type LogView = {
   /** Full ref of the branch picked with a branch row's log button (`refs/heads/dev`); '' follows the current branch. */
   ref: string
@@ -108,11 +110,18 @@ export type LogView = {
   isTruncated: boolean
   /** Why the last log read failed, '' when none. */
   error: string
-  /** The commit whose files are listed instead of the commits, null when none. */
-  commit: GitCommit | null
-  /** The opened commit's files, null while they are read. */
+  /** Select range is on: pressing a commit picks a range end instead of opening it. */
+  isPicking: boolean
+  /** Sha of the range's first end, pressed while picking; '' when none yet. Only a listed one. */
+  rangeStart: string
+  /**
+   * The commits whose files are listed instead of the commits, newest first; [] when none.
+   * Several are read as one change: from before the oldest to the newest.
+   */
+  opened: GitCommit[]
+  /** The opened commits' files, null while they are read. */
   files: CommitFile[] | null
-  /** Why reading the commit's files failed, '' when none. */
+  /** Why reading the commits' files failed, '' when none. */
   commitError: string
 }
 

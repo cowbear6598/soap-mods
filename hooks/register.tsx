@@ -55,6 +55,7 @@ import {
   LOG_FORMAT,
   branchRef,
   commitRange,
+  commitsLabel,
   fileKind,
   filterCommits,
   isConflict,
@@ -169,7 +170,7 @@ async function paneArgs($: EngineInterface, id: string): Promise<PaneOpenArgs> {
   if (id === DIFF_PANE) {
     const d = await read($, diffPane)
 
-    return { id, title: d.at === '' ? d.path : `${d.path} @ ${d.at}` }
+    return { id, title: d.commits.length === 0 ? d.path : `${d.path} @ ${commitsLabel(d.commits)}` }
   }
 
   return { id: PANE, title: PANEL_TITLE }
@@ -188,8 +189,8 @@ async function bringToFront($: EngineInterface, id: string) {
 // 只在從看不見變成看得見的那一刻給，平常在輸入框打字不會被搶。
 // 按完按鈕也可能丟焦點（切分支時被點的那列搬位置、abort 後整區消失），
 // 所以每個按鈕的動作做完後的一小段時間內也補（act）。
-// 要補焦點的面板。diff 面板沒有按鈕，不用。
-const FOCUS_PANES = [PANE, MERGE_PANE]
+// 要補焦點的面板。diff 面板看 commit 的檔案時有 Previous／Next。
+const FOCUS_PANES = [PANE, MERGE_PANE, DIFF_PANE]
 // 上一輪看的時候在不在前面；沒記錄當作在（剛啟動不搶焦點）。
 const wasShown = new Map<string, boolean>()
 let isWatching = false
@@ -318,7 +319,7 @@ async function refresh($: EngineInterface) {
   const repoBar = (files: GitFile[]) => others.map(o => o ?? toSummary(active, files))
 
   if (status.exitCode !== 0) {
-    await update($, diffPane, d => (d.at === '' ? EMPTY_DIFF : d))
+    await update($, diffPane, d => (d.commits.length === 0 ? EMPTY_DIFF : d))
     await setView($, {
       isLoaded: true,
       isRepo: false,
@@ -336,7 +337,7 @@ async function refresh($: EngineInterface) {
   // 差異面板開著工作區的檔案就重讀；那個檔案已經沒有變更了（readDiff 給空的），把面板也關掉。
   // 開著的是 commit 裡的檔案就不用動，commit 不會變。
   const shown = await read($, diffPane)
-  const pane = shown.at === '' && shown.path !== '' ? await readDiff($, files, shown.path) : shown
+  const pane = shown.commits.length === 0 && shown.path !== '' ? await readDiff($, files, shown.path) : shown
   if (isStale()) return
   await Promise.all([
     setView($, {
@@ -413,7 +414,7 @@ async function readDiff($: EngineInterface, files: GitFile[], path: string): Pro
     ? runDiff($, ['diff', ...DIFF_FLAGS, '--no-index', '--', '/dev/null', path])
     : runDiff($, ['diff', ...DIFF_FLAGS, 'HEAD', '--', path], ['diff', ...DIFF_FLAGS, '--cached', '--', path]))
 
-  return { path, kind: fileKind(file), at: '', ...result }
+  return { ...EMPTY_DIFF, path, kind: fileKind(file), ...result }
 }
 
 // 點檔案：一定開一個獨立的 diff 面板並切過去；關掉面板交給面板自己的關閉鈕。
@@ -423,12 +424,30 @@ async function openDiff($: EngineInterface, path: string) {
   await bringToFront($, DIFF_PANE)
 }
 
-// 點 commit 裡的檔案：在 diff 面板看它在這個 commit 的差異。改名的檔案兩個路徑都要給，git 才認得出是改名。
-async function openCommitDiff($: EngineInterface, c: GitCommit, f: CommitFile) {
+// 讀 commit 裡一個檔案在這（幾）個 commit 的差異。改名的檔案兩個路徑都要給，git 才認得出是改名。
+// files 是同一批的全部檔案，差異面板的 Previous／Next 照它走。
+async function readCommitDiff($: EngineInterface, commits: GitCommit[], f: CommitFile, files: CommitFile[]): Promise<DiffPaneView> {
   const paths = f.oldPath === '' ? [f.path] : [f.oldPath, f.path]
-  const result = await runDiff($, ['diff-tree', '-p', '-M', ...DIFF_FLAGS, '--no-commit-id', ...commitRange(c), '--', ...paths])
-  await update($, diffPane, () => ({ path: f.path, kind: letterKind(f.letter), at: c.shortSha, ...result }))
+  const result = await runDiff($, ['diff-tree', '-p', '-M', ...DIFF_FLAGS, '--no-commit-id', ...commitRange(commits), '--', ...paths])
+
+  return { path: f.path, kind: letterKind(f.letter), ...result, commits, files }
+}
+
+// 點 commit 裡的檔案：在 diff 面板看它的差異。
+async function openCommitDiff($: EngineInterface, commits: GitCommit[], f: CommitFile, files: CommitFile[]) {
+  const pane = await readCommitDiff($, commits, f, files)
+  await update($, diffPane, () => pane)
   await bringToFront($, DIFF_PANE)
+}
+
+// 差異面板的 Previous／Next：換成同一批 commit 的上一個／下一個檔案。面板已經在前面，重新 open 只為了換標題。
+async function stepCommitFile($: EngineInterface, step: 1 | -1) {
+  const d = await read($, diffPane)
+  const next = d.files[d.files.findIndex(f => f.path === d.path) + step]
+  if (next === undefined) return
+  const pane = await readCommitDiff($, d.commits, next, d.files)
+  await update($, diffPane, () => pane)
+  await focusPane($, DIFF_PANE)
 }
 
 // ───── branch 分頁 ─────
@@ -516,7 +535,8 @@ async function syncBranches($: EngineInterface, kind: GitSync) {
 
 // ───── log 分頁 ─────
 
-const NO_COMMIT: Partial<LogView> = { commit: null, files: null, commitError: '' }
+// 關掉打開的 commit；選範圍也一起結束。
+const NO_COMMIT: Partial<LogView> = { opened: [], files: null, commitError: '', isPicking: false, rangeStart: '' }
 
 type LogRead = { commits: GitCommit[]; unpushed: string[]; isTruncated: boolean; error: string }
 
@@ -571,7 +591,9 @@ async function loadLog($: EngineInterface, { isFresh = true, limit }: { isFresh?
     if ((await read($, logQuery)) !== query) return
     const commits = found.commits.slice(0, count)
     const ahead = new Set(found.unpushed)
-    await setLog($, {
+    const listed = new Set(commits.map(c => c.sha))
+    await update($, log, cur => ({
+      ...cur,
       ref: isPicked ? l.ref : '',
       isLoaded: true,
       limit: count,
@@ -580,8 +602,10 @@ async function loadLog($: EngineInterface, { isFresh = true, limit }: { isFresh?
       isTruncated: found.isTruncated,
       // 只留列出來的那些，整條歷史的可能很多。
       unpushed: commits.filter(c => ahead.has(c.sha)).map(c => c.sha),
+      // 選範圍點過的起點只留還列著的（搜尋濾掉、或歷史變了就不算）：範圍要靠列表的順序分出中間有哪些。
+      rangeStart: listed.has(cur.rangeStart) ? cur.rangeStart : '',
       error: found.error,
-    })
+    }))
   } catch {
     await setLog($, { isLoaded: true, error: NO_GIT })
   }
@@ -603,17 +627,32 @@ async function loadMoreLog($: EngineInterface) {
   await loadLog($, { isFresh: false, limit: (await read($, log)).limit + LOG_PAGE })
 }
 
-// 點 commit：列表換成它改了哪些檔案。讀到的時候已經換成別筆（或按了 Back）就丟掉。
-async function openCommit($: EngineInterface, c: GitCommit) {
-  await setLog($, { ...NO_COMMIT, commit: c })
+// 點 commit（或選好範圍）：列表換成它們合起來改了哪些檔案，commits 是新的在前。
+// 讀到的時候已經換成別筆（或按了 Back）就丟掉。
+async function openCommits($: EngineInterface, commits: GitCommit[]) {
+  if (commits.length === 0) return
+  const key = commits.map(c => c.sha).join()
+  await setLog($, { ...NO_COMMIT, opened: commits })
   let change: Partial<LogView>
   try {
-    const r = await git($, ['diff-tree', '-r', '-M', '--name-status', '-z', '--no-commit-id', ...commitRange(c)])
+    const r = await git($, ['diff-tree', '-r', '-M', '--name-status', '-z', '--no-commit-id', ...commitRange(commits)])
     change = r.exitCode === 0 ? { files: parseCommitFiles(r.stdout) } : { files: [], commitError: r.stderr.trim() }
   } catch {
     change = { files: [], commitError: NO_GIT }
   }
-  await update($, log, l => (l.commit?.sha === c.sha ? { ...l, ...change } : l))
+  await update($, log, l => (l.opened.map(c => c.sha).join() === key ? { ...l, ...change } : l))
+}
+
+// 選範圍時點 commit：第一下是起點（再點一次取消），第二下是終點，兩筆之間（含）一起打開。
+async function pickRange($: EngineInterface, c: GitCommit) {
+  const l = await read($, log)
+  const start = l.commits.findIndex(x => x.sha === l.rangeStart)
+  const end = l.commits.findIndex(x => x.sha === c.sha)
+  if (start === -1 || start === end || end === -1) {
+    await setLog($, { rangeStart: start === end ? '' : c.sha })
+    return
+  }
+  await openCommits($, l.commits.slice(Math.min(start, end), Math.max(start, end) + 1))
 }
 
 // ───── 解衝突（合併面板） ─────
@@ -1030,9 +1069,12 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     copyBranchName: name => copyBranchName($, name, surface),
     searchLog: text => searchLog($, text),
     loadMoreLog: () => loadMoreLog($),
-    openCommit: c => openCommit($, c),
+    openCommit: c => openCommits($, [c]),
+    toggleRangePick: () => update($, log, l => ({ ...l, isPicking: !l.isPicking, rangeStart: '' })),
+    pickRange: c => pickRange($, c),
     closeCommit: () => setLog($, NO_COMMIT),
-    openCommitDiff: (c, f) => openCommitDiff($, c, f),
+    openCommitDiff: (commits, f, files) => openCommitDiff($, commits, f, files),
+    stepCommitFile: step => stepCommitFile($, step),
     abortOp: () => abortOp($),
     cancelAbort: () => setView($, { isAbortArmed: false }),
     continueOp: () => continueOp($),
@@ -1152,7 +1194,9 @@ export const register: Register = on => {
   })
 
   // 選中檔案的差異，開在自己的面板裡。
-  on('ui.render', { component: 'Pane', requestId: DIFF_PANE }, async ($, e) => renderDiffPane($.ui.resolve(e), await read($, diffPane)))
+  on('ui.render', { component: 'Pane', requestId: DIFF_PANE }, async ($, e) =>
+    renderDiffPane($.ui.resolve(e), await read($, diffPane), actionsFor($, e.surface), fn => act($, DIFF_PANE, fn)),
+  )
 
   // 解衝突的三欄面板。按了之後按鈕被換掉會丟焦點，由 act 在之後補回來。
   on('ui.render', { component: 'Pane', requestId: MERGE_PANE }, async ($, e) => {

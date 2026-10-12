@@ -200,9 +200,29 @@ export function filterCommits(commits: GitCommit[], query: string): GitCommit[] 
   return filterWords(commits, query, c => `${c.subject}\n${c.author}\n${c.sha}`)
 }
 
-/** What a commit is compared with: a merge commit its first parent (what the merge brought in), a root commit nothing. */
-export function commitRange(c: GitCommit): string[] {
-  return c.parents[0] === undefined ? ['--root', c.sha] : [c.parents[0], c.sha]
+/** git's empty tree: what a root commit is compared with when it is the oldest of several. */
+const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
+
+/**
+ * What commits (newest first) are compared with, as one change: the oldest one's first parent against the newest.
+ * A merge commit is compared with its first parent (what the merge brought in), a root commit with nothing.
+ */
+export function commitRange(commits: GitCommit[]): string[] {
+  const newest = commits[0]
+  const oldest = commits.at(-1)
+  if (newest === undefined || oldest === undefined) return []
+  const base = oldest.parents[0]
+  if (base !== undefined) return [base, newest.sha]
+
+  return newest === oldest ? ['--root', newest.sha] : [EMPTY_TREE, newest.sha]
+}
+
+/** The diff pane's `@` for commits (newest first): the short sha, or `oldest…newest` for several. */
+export function commitsLabel(commits: GitCommit[]): string {
+  const newest = commits[0]?.shortSha ?? ''
+  const oldest = commits.at(-1)?.shortSha ?? ''
+
+  return commits.length > 1 ? `${oldest}…${newest}` : newest
 }
 
 /** `git diff-tree -r --name-status -z` output → files; a rename or copy carries its source path. */

@@ -71,7 +71,8 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
   // 包它的那層比整行寬很多、超出的部分被裁掉，按鈕就不會被壓到整行寬而在最右邊畫出「…」，
   // 看得到的 hover 亮底剛好是整行。
   // 終端機：疊上去的空白會蓋掉底下的字，所以只有名稱是按鈕。
-  // isTruncated：名稱太長時在桌面版截成「…」，讓 rest 留在同一行（commit 的 subject）。
+  // isTruncated：名稱撐滿剩下的寬度、太長時在桌面版截成「…」，rest 留在同一行、貼著最右邊（commit 的 subject 和時間）。
+  // 要 minWidth 0 才縮得比內容窄，不然長的名稱會把 rest 擠出畫面。
   // trailing：放在整行最右邊、自己能按的東西（branch 列的 log 圖示），不在透明按鈕底下，才按得到。
   const pressRow = (row: Row) => {
     if (isTerminal) {
@@ -92,10 +93,10 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
     const hasTrailing = row.trailing !== undefined
     const pressable = (
       <Box key={`${row.key}:row`} position="relative" flexGrow={hasTrailing ? 1 : undefined} flexShrink={hasTrailing ? 1 : undefined}>
-        <Box gap={1} paddingLeft={row.indent ?? 2}>
+        <Box gap={1} paddingLeft={row.indent ?? 2} flexGrow={row.isTruncated ? 1 : undefined} minWidth={row.isTruncated ? 0 : undefined}>
           {row.lead}
           {row.isTruncated ? (
-            <Box flexShrink={1} overflow="hidden">
+            <Box flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
               {label}
             </Box>
           ) : (
