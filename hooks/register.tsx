@@ -19,7 +19,6 @@ import type {
   EngineInterface,
   PaneOpenArgs,
   ProcessRunInit,
-  PromptEditInput,
   Register,
   RenderChildren,
   RenderSurface,
@@ -69,8 +68,6 @@ import {
   RESTART_GAP_MS,
   SERVICES_SCAN_MS,
   SPEC_DIR,
-  STRAY_HELD_MS,
-  STRAY_QUIET_MS,
   SYNC_TIMEOUT_MS,
   USAGE_TICK_MS,
 } from './config'
@@ -239,8 +236,8 @@ const inRepo = (path: string) => (repos.current === undefined ? path : `${repos.
 // 2. 引擎不知道的：按的按鈕重畫後不見了（整塊換成差異、合併，那列消失），桌面版的焦點會掉到輸入框，
 //    引擎卻還以為 Soap Panel 拿著鍵盤，給焦點也補不回來，快捷鍵就跑去輸入框。
 //    要把焦點圈移到看得到的按鈕上才行：每次畫完檢查剛按的那顆還在不在（checkPressed）。
-// 3. 按了這個畫面沒綁的字母（log 分頁按 m）：桌面版把那個鍵交給輸入框，焦點跟著跑過去。引擎不讓 mod 收沒綁的鍵，
-//    只能在輸入框那邊攔：Soap Panel 剛剛還拿著鍵盤、輸入框卻收到一個字，就吞掉它，焦點還給 Soap Panel（isStrayKey）。
+// 3. 按了這個畫面沒綁的字母（log 分頁按 m）：桌面版把那個鍵交給輸入框，焦點跟著跑過去。
+//    面板把沒綁的字母、數字都綁在藏起來、不做事的按鈕上，鍵就不會漏出去（ui/panel.tsx 的 strayKeys）。
 // 上一輪看的時候在不在前面；沒記錄當作在（剛啟動不搶焦點）。
 let wasShown: boolean | undefined
 let isWatching = false
@@ -249,12 +246,6 @@ let refocusUntil: number | undefined
 // 剛按的按鈕（key，處理完是 undefined）、它換掉後焦點圈的首選（to），看到什麼時候（until：
 // 動作還在跑是 Infinity，做完再給 REFOCUS_AFTER_PRESS_MS）。這段時間內畫面上沒了這顆，就把焦點圈移走。
 let pressed: { key?: string; to?: string; until: number } | undefined
-// 上次看到 Soap Panel 拿著鍵盤的時間；輸入框上次收到字的時間之後多久內還算在打字。
-let heldAt: number | undefined
-let typingUntil = 0
-// 焦點圈最後落在哪顆按鈕、上一次畫出來的樹：把焦點還給 Soap Panel 時，焦點圈放回原處（不在了就照 ringAnchor 找）。
-let ringAt: string | undefined
-let drawnTree: RenderChildren | undefined
 
 async function isPaneShown($: EngineInterface) {
   const pane = (await $.ui.panes()).find(p => p.id === PANE)
@@ -281,7 +272,6 @@ async function scrollTop($: EngineInterface) {
 function act($: EngineInterface, fn: () => unknown, ringKey?: string) {
   return async (e: UiPressArgument) => {
     const mine = { key: e.element, to: ringKey, until: Infinity }
-    ringAt = e.element
     pressed = mine
     try {
       await fn()
@@ -328,7 +318,6 @@ async function focusWhenShown($: EngineInterface) {
   try {
     const pane = (await $.ui.panes()).find(p => p.id === PANE)
     const isShown = pane?.isShown === true
-    if (isShown && pane?.isFocused === true) heldAt = await $.clock.now()
     if (isShown && pane?.isFocused === false) {
       const isJustPressed = refocusUntil !== undefined && (await $.clock.now()) < refocusUntil
       if (wasShown === false || isJustPressed) {
@@ -343,26 +332,6 @@ async function focusWhenShown($: EngineInterface) {
   } finally {
     isWatching = false
   }
-}
-
-// 輸入框收到的這一下是不是在 Soap Panel 上按錯的快捷鍵：一個字（沒按 ctrl、cmd），Soap Panel 剛剛還拿著鍵盤，
-// 輸入框之前也沒在打字。人自己點去輸入框打字時，Soap Panel 早就沒拿著鍵盤了；連續打字的第二個字起也不算。
-async function isStrayKey($: EngineInterface, e: PromptEditInput) {
-  const now = await $.clock.now()
-  const isTyping = now < typingUntil
-  typingUntil = now + STRAY_QUIET_MS
-  const k = e.key
-  if (k === undefined || k.ctrl === true || k.meta === true || [...k.key].length !== 1 || e.inputText !== k.key) return false
-
-  return !isTyping && heldAt !== undefined && now - heldAt <= STRAY_HELD_MS
-}
-
-// 把鍵盤還給 Soap Panel，焦點圈放回原本那顆；它不在了就放到 ringAnchor 找的那顆（Back、分頁圖示）。
-async function reclaimFocus($: EngineInterface) {
-  await focusPanel($).catch(() => undefined)
-  const keys = buttonKeys(drawnTree ?? [])
-  const anchor = ringAt !== undefined && keys.has(ringAt) ? ringAt : ringAnchor(keys, await read($, tab), await read($, subTab))
-  if (anchor !== undefined) await ringOn($, anchor)
 }
 
 // ───── 找 repo、重讀 Git 分頁 ─────
@@ -1584,22 +1553,6 @@ export const register: Register = on => {
   on('tool.call', { tool: 'Write' }, async ($, e, next) => checkPlan($, e.file_path, await next(e))).catch(($, e, next) => next(e))
   on('tool.call', { tool: 'Edit' }, async ($, e, next) => checkPlan($, e.file_path, await next(e))).catch(($, e, next) => next(e))
 
-  // 在 Soap Panel 上按了沒綁的字母，跑到輸入框來了：吞掉，焦點還給 Soap Panel（見「面板與焦點」的第 3 種）。
-  on('prompt.edit', async ($, e, next) => {
-    if (!(await isStrayKey($, e))) return next(e)
-    void reclaimFocus($)
-
-    return { text: e.text, cursor: e.cursor }
-  }).catch(($, e, next) => next(e))
-
-  // 記下焦點圈落在哪顆（人按 Tab、方向鍵、點的，或 ringOn 移的），把焦點還給 Soap Panel 時放回去。
-  on('ui.focus', { requestId: PANE }, async ($, e, next) => {
-    const r = await next(e)
-    if (r.deny === undefined && e.element !== undefined) ringAt = e.element
-
-    return r
-  }).catch(($, e, next) => next(e))
-
   // 畫面：這裡讀狀態，交給 ui/ 的純函式畫。
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const [activeTab, activeSub, v, isRemoteOpen, bf, bq, fl, sv, fileList, specs, lg, lq, shown, usage, now] = await Promise.all([
@@ -1648,7 +1601,6 @@ export const register: Register = on => {
       actionsFor($, e.surface),
       (fn, ringKey) => act($, fn, ringKey),
     )
-    drawnTree = tree
     checkPressed($, tree, now, activeTab, activeSub)
     checkCover($, shown.kind, now, activeTab, activeSub)
 

@@ -164,8 +164,3 @@ export const SYNC_TIMEOUT_MS = 300_000
 // 多久看一次面板是不是剛被切到前面（要補焦點）；按完按鈕後多久內丟了焦點也補回來。見 register.tsx 的 focusWhenShown。
 export const FOCUS_WATCH_MS = 200
 export const REFOCUS_AFTER_PRESS_MS = 600
-// 輸入框收到一個字時，Soap Panel 在這段時間內還拿著鍵盤，就當作是在面板上按了沒綁的快捷鍵（見 register.tsx 的 isStrayKey）。
-// 要比 FOCUS_WATCH_MS 長一點：最後一次看到它拿著鍵盤，最多是一輪之前。
-export const STRAY_HELD_MS = 300
-// 輸入框在這段時間內才剛收到別的字（正在打字），就不當作按錯的快捷鍵。
-export const STRAY_QUIET_MS = 400

@@ -2,11 +2,14 @@
 // 打開了衝突檔案、檔案的差異或 Files 分頁的檔案時，上面整塊換成合併（mergeView）、差異（diffView）或內容（fileView），Back 回來。
 // 加分頁：config.ts 的 TABS／SUB_TABS 加一筆，這裡的 TAB_BODIES／SUB_TAB_BODIES 加它的內容。
 
+import type { RenderChildren } from 'claude-code'
+
 import type { GitSubTab, TabId } from '../../types'
 import { DANGER, SUB_TABS, TABS } from '../config'
 import { isConflict } from '../git/parse'
 import type { Actions, PanelData, Press, Ui } from './actions'
 import { diffView } from './diffView'
+import { unboundHotkeys } from './keys'
 import { fileView } from './fileView'
 import { mergeView } from './mergeView'
 import { branchTab } from './tabs/branch'
@@ -18,7 +21,7 @@ import { logTab } from './tabs/log'
 import { servicesTab } from './tabs/services'
 import { specTab } from './tabs/spec'
 import { usageBar } from './usage'
-import { makeWidgets } from './widgets'
+import { type Widgets, makeWidgets } from './widgets'
 
 const SUB_TAB_BODIES: Record<GitSubTab, TabBody> = {
   diff: diffTab,
@@ -95,29 +98,47 @@ export function renderPanel(ui: Ui, d: PanelData, a: Actions, press: Press) {
   const isGit = d.tab === 'git'
   const cover = coverView(ui, d, a, press)
 
+  const content =
+    cover !== null ? (
+      <Box flexDirection="column" flexGrow={1}>
+        {cover}
+      </Box>
+    ) : (
+      <Box flexDirection="column" gap={1} flexGrow={1}>
+        <Box flexDirection="column">
+          {w.iconBar('tab', TABS, d.tab, id => a.selectTab(id))}
+          {w.divider}
+          {isGit && gitHeader(ctx)}
+        </Box>
+        {isGit && d.view.error !== '' && <Text color="error">{d.view.error}</Text>}
+        {TAB_BODIES[d.tab](ctx)}
+      </Box>
+    )
+
   // 整棵樹至少跟面板一樣高、內容區撐滿剩下的高度，用量就會被推到面板最底下；
   // 內容比面板還長時用量跟在後面。面板的高度只有引擎知道（bodyRows），百分比高度量不到。
   return (
     <Box flexDirection="column" minHeight={d.bodyRows}>
-      {cover !== null ? (
-        <Box flexDirection="column" flexGrow={1}>
-          {cover}
-        </Box>
-      ) : (
-        <Box flexDirection="column" gap={1} flexGrow={1}>
-          <Box flexDirection="column">
-            {w.iconBar('tab', TABS, d.tab, id => a.selectTab(id))}
-            {w.divider}
-            {isGit && gitHeader(ctx)}
-          </Box>
-          {isGit && d.view.error !== '' && <Text color="error">{d.view.error}</Text>}
-          {TAB_BODIES[d.tab](ctx)}
-        </Box>
-      )}
+      {content}
       <Box flexDirection="column" marginTop={1}>
         {w.divider}
         {usageBar(w, d.usage, d.now)}
       </Box>
+      {strayKeys(w, content)}
+    </Box>
+  )
+}
+
+// 這個畫面沒綁的字母、數字，各綁一顆藏起來、按了不做事的按鈕：沒人接的鍵桌面版會交給輸入框，焦點跟著跑過去
+// （log 分頁按 m）。畫在最後面：同一個 hotkey 後畫的贏，就算撞到也是看得到的那顆。
+function strayKeys(w: Widgets, content: RenderChildren) {
+  const { Box, Button } = w
+
+  return (
+    <Box key="stray" display="none">
+      {unboundHotkeys(content).map(k => (
+        <Button key={`stray:${k}`} label={k} hotkey={k} onPress={() => undefined} />
+      ))}
     </Box>
   )
 }

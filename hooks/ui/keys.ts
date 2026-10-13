@@ -3,21 +3,40 @@
 
 import type { RenderChildren } from 'claude-code'
 
-type Node = { type?: unknown; props?: { key?: unknown }; children?: RenderChildren }
+type Node = { type?: unknown; props?: { key?: unknown; hotkey?: unknown }; children?: RenderChildren }
 
-/** Every Button key drawn in `tree`. */
-export function buttonKeys(tree: RenderChildren): Set<string> {
-  const keys = new Set<string>()
+// 走過樹裡每顆 Button，收集 pick 給的字串（沒有就略過）。
+function collectButtons(tree: RenderChildren, pick: (props: Node['props']) => unknown): Set<string> {
+  const found = new Set<string>()
   const walk = (node: RenderChildren) => {
     if (Array.isArray(node)) return node.forEach(walk)
     if (typeof node !== 'object' || node === null) return
     const { type, props, children } = node as Node
-    if (type === 'Button' && typeof props?.key === 'string') keys.add(props.key)
+    const value = type === 'Button' ? pick(props) : undefined
+    if (typeof value === 'string') found.add(value)
     walk(children)
   }
   walk(tree)
 
-  return keys
+  return found
+}
+
+/** Every Button key drawn in `tree`. */
+export function buttonKeys(tree: RenderChildren): Set<string> {
+  return collectButtons(tree, props => props?.key)
+}
+
+// Button 的 hotkey 只能是一個小寫字母或數字。
+const HOTKEYS = [...'abcdefghijklmnopqrstuvwxyz0123456789']
+
+/**
+ * The hotkeys no Button in `tree` binds. Soap Panel binds these to hidden buttons that do nothing:
+ * an unbound key pressed in the pane would otherwise go to the prompt box and take the focus with it.
+ */
+export function unboundHotkeys(tree: RenderChildren): string[] {
+  const bound = collectButtons(tree, props => props?.hotkey)
+
+  return HOTKEYS.filter(k => !bound.has(k))
 }
 
 /** The icon of the tab in view: the sub tab's under Git, else the tab's (keys as panel.tsx's iconBar draws them). */
