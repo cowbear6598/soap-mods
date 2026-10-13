@@ -5,7 +5,7 @@ import { backButton } from '../stepBar'
 import type { Widgets } from '../widgets'
 import type { TabBody, TabContext } from './context'
 
-// Spec 分頁：soap-plan skill 在 .soap/tasks/<feature>/plan.yaml 寫的計劃，一個 feature 一列，最新改的在上面。
+// Spec 分頁：plan skill 在 .soap/tasks/<feature>/plan.yaml 寫的計劃，一個 feature 一列，最新改的在上面。
 // 點了在分頁裡看它的 Description／Goals／Verify，最上面 ← Back（b）回清單。
 // plan.yaml 格式不對時先列出哪裡不對（紅字），讀得到的部分照樣畫。
 export const specTab: TabBody = ctx => (ctx.d.spec.open === '' ? specList(ctx) : planView(ctx))
@@ -15,7 +15,7 @@ function specList({ w, d, a }: TabContext) {
   const s = d.spec
   if (!s.isLoaded) return <Text dimColor>Loading…</Text>
   if (s.error !== '') return <Text color="error">{s.error}</Text>
-  if (s.specs.length === 0) return <Text dimColor>No specs yet. Run /soap-plan to write one.</Text>
+  if (s.specs.length === 0) return <Text dimColor>No specs yet. Run /soap-mods:plan to write one.</Text>
 
   return (
     <Box flexDirection="column">

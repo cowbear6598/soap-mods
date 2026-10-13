@@ -1,4 +1,4 @@
-// Spec 分頁和 plan.yaml 檢查的純邏輯：讀 soap-plan skill 寫的 plan.yaml、挑出格式哪裡不對、排 feature 清單。
+// Spec 分頁和 plan.yaml 檢查的純邏輯：讀 plan skill 寫的 plan.yaml、挑出格式哪裡不對、排 feature 清單。
 // 引擎裡沒有 YAML 套件，這裡只讀 plan.yaml 用得到的那一小部分：最上層的「key: 值」、引號字串、
 // > 和 | 區塊、- 清單、[] 和 [a, b]。其他寫法（巢狀物件、錨點）一律算格式錯誤。
 
@@ -178,7 +178,7 @@ export function readPlan(text: string): { plan: Plan; problems: string[] } {
   }
 }
 
-/** Whether `path` (any separator) is a plan the soap-plan skill writes: `…/.soap/tasks/<feature>/plan.yaml`. */
+/** Whether `path` (any separator) is a plan the plan skill writes: `…/.soap/tasks/<feature>/plan.yaml`. */
 export const isPlanPath = (path: string) => /(^|\/)\.soap\/tasks\/[^/]+\/plan\.yaml$/.test(path.replace(/\\/g, '/'))
 
 /** Newest plan first; folders without a plan.yaml last, by name. */

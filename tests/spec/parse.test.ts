@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import { isPlanPath, parseYaml, readPlan, sortSpecs } from '../../hooks/spec/parse'
 
-// soap-plan skill 寫出來的樣子：folded description、清單、[]、引號、選填的公司欄位。
+// plan skill 寫出來的樣子：folded description、清單、[]、引號、選填的公司欄位。
 const PLAN = `branch: "feature/PROJ-123-login"
 issue-number: "PROJ-123"
 description: >

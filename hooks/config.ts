@@ -128,7 +128,7 @@ export const FILE_PAGE = 50
 export const FILES_ROW_LIMIT = 200
 // 點檔案看內容：比這大的不讀（bytes）。
 export const FILE_VIEW_MAX_BYTES = 1_000_000
-// Spec 分頁：soap-plan skill 把每個 feature 的計劃寫在這個資料夾（相對 session 資料夾）底下的 <feature>/plan.yaml。
+// Spec 分頁：plan skill 把每個 feature 的計劃寫在這個資料夾（相對 session 資料夾）底下的 <feature>/plan.yaml。
 export const SPEC_DIR = '.soap/tasks'
 export const PLAN_FILE = 'plan.yaml'
 

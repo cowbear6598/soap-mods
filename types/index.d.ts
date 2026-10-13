@@ -281,7 +281,7 @@ export type FileView = {
   stamp: string
 }
 
-/** A plan the soap-plan skill writes to `.soap/tasks/<feature>/plan.yaml`, as read; a missing or wrong field is empty. */
+/** A plan the plan skill writes to `.soap/tasks/<feature>/plan.yaml`, as read; a missing or wrong field is empty. */
 export type Plan = {
   branch: string
   issueNumber: string

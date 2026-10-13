@@ -75,15 +75,15 @@ test('the Spec tab lists the plans newest first, opens one to its Description, G
   await ui.unmount()
 })
 
-test('with no .soap/tasks the Spec tab says to run /soap-plan, and at turn end it picks up a new plan and rereads the open one', async ($, on) => {
+test('with no .soap/tasks the Spec tab says to run /soap-mods:plan, and at turn end it picks up a new plan and rereads the open one', async ($, on) => {
   const state = { folders: [] as string[], plans: {} as Record<string, { text: string; mtimeMs: number }> }
   tasks(on, state)
 
   const ui = await mountPane($)
   await ui.press({ key: 'tab:spec' })
-  expect(await ui.find({ type: 'Text', text: 'No specs yet. Run /soap-plan to write one.' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'No specs yet. Run /soap-mods:plan to write one.' })).toBeDefined()
 
-  // Claude 跑了 /soap-plan：回合結束後清單出現。
+  // Claude 跑了 /soap-mods:plan：回合結束後清單出現。
   state.folders = ['login']
   state.plans['login/plan.yaml'] = { text: LOGIN, mtimeMs: 1 }
   await endTurn($, ui)
@@ -118,7 +118,7 @@ test('writing a plan.yaml with Write or Edit checks it: a broken one adds what t
 
   const plan = `${TASKS}/login/plan.yaml`
   const broken = await $.tool.call({ tool: 'Write', file_path: plan, content: 'description: x\ngoal:\n  - y\n' })
-  expect(broken.context?.at(-1)).toMatch(/is not a valid soap-plan plan\.yaml[\s\S]*- missing "goals"[\s\S]*- use "goals", not "goal"/)
+  expect(broken.context?.at(-1)).toMatch(/is not a valid soap-mods plan\.yaml[\s\S]*- missing "goals"[\s\S]*- use "goals", not "goal"/)
   expect(toasts.at(-1)).toMatch(/^plan\.yaml has 5 problems: missing "goals"/)
 
   // Edit 修好之後：整份重讀，沒問題就不加東西。

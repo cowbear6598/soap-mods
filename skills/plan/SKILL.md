@@ -1,10 +1,10 @@
 ---
-name: soap-plan
+name: plan
 description: Create a minimal, repository-grounded implementation plan as .soap/tasks/<feature>/plan.yaml by inspecting the code and clarifying unresolved requirements. Use only when explicitly invoked. Do not use for implementation.
 disable-model-invocation: true
 ---
 
-# Soap Plan
+# Plan
 
 Inspect the current implementation and write a persistent plan directly. Do not implement the planned change.
 

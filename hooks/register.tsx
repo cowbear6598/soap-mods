@@ -1297,7 +1297,7 @@ async function checkPlanWrite($: EngineInterface, path: string) {
   void $.ui.toast(`plan.yaml has ${problems.length} problem${problems.length === 1 ? '' : 's'}: ${problems[0]}`)
 
   return [
-    `${path} is not a valid soap-plan plan.yaml. Fix it:`,
+    `${path} is not a valid soap-mods plan.yaml. Fix it:`,
     ...problems.map(p => `- ${p}`),
     'Required keys: description (non-empty string), goals, constraints, related, verify (lists; [] when empty). Optional: branch, issue-number (strings).',
   ].join('\n')
