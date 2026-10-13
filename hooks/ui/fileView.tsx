@@ -1,5 +1,4 @@
-// Files 分頁點開的檔案內容，畫在 Soap Panel 裡蓋掉分頁（跟 diffView 一樣，鍵盤一直在 Soap Panel 上，n／m／b 才按得到）。
-// 最上面一排是 ← Back（b）；資料夾裡有好幾個檔案時接著「3 of 15 files」和 Previous／Next（n／m）。
+// Files 分頁點開的檔案內容，畫在 Soap Panel 裡蓋掉分頁。
 
 import type { FileView, FilesView } from '../../types'
 import { fileSteps } from '../files/list'

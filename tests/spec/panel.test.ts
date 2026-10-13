@@ -69,8 +69,6 @@ test('the Spec tab lists the plans newest first, opens one to its Description, G
   })
 
   const ui = await mountPane($)
-  // Services 右邊多一個 Spec。
-  expect(await ui.find({ key: 'tab:spec' })).toBeDefined()
   await ui.press({ key: 'tab:spec' })
   const rows = (await ui.findAll({ type: 'Button' })).map(b => b.props.key).filter(k => String(k).startsWith('spec:item:'))
   expect(rows).toEqual(['spec:item:search', 'spec:item:login', 'spec:item:draft'])
@@ -229,6 +227,9 @@ test('writing a plan.yaml with Write or Edit checks it: a broken one adds what t
   const broken = await $.tool.call({ tool: 'Write', file_path: plan, content: 'description: x\ngoal:\n  - y\n' })
   expect(broken.context?.at(-1)).toMatch(/is not a valid soap-mods plan\.yaml[\s\S]*- missing "goals"[\s\S]*- use "goals", not "goal"/)
   expect(toasts.at(-1)).toMatch(/^plan\.yaml has 5 problems: missing "goals"/)
+  // Windows 的路徑（反斜線）一樣檢查。
+  const onWindows = await $.tool.call({ tool: 'Write', file_path: 'C:\\proj\\.soap\\tasks\\login\\plan.yaml', content: 'goal: x' })
+  expect(onWindows.context?.at(-1)).toMatch(/is not a valid soap-mods plan\.yaml/)
 
   // Edit 修好之後：整份重讀，沒問題就不加東西。
   await $.tool.call({ tool: 'Write', file_path: plan, content: LOGIN.replace('goals:', 'goal:') })

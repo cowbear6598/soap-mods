@@ -3,7 +3,6 @@ import { DANGER } from '../../config'
 import { isInFolder } from '../../services/scan'
 import type { TabBody } from './context'
 
-// Services 分頁。
 export const servicesTab: TabBody = ({ w, d, a }) => {
   const { Box, Text } = w
   const { view: v, services: sv } = d

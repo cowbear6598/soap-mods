@@ -5,7 +5,6 @@ import type { UsageReading } from './actions'
 import { stretchedSvg } from './svg'
 import type { Widgets } from './widgets'
 
-// 剩餘量的顏色：多於 50% 綠、多於 20% 黃、其餘紅。
 function usageLevel(remaining: number) {
   return remaining > 50 ? GOOD : remaining > 20 ? WARN : DANGER
 }

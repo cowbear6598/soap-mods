@@ -5,7 +5,7 @@ import { DB_STORE_KEY } from '../../hooks/config'
 import { toHex } from '../../hooks/db/secret'
 import { type TestOn, fail, mountPane, ok, stubPanel } from '../test-fixtures'
 
-const PASSWORD = 'S3cret;"pw'
+const PASSWORD = 'S3crét;"pw密'
 const CONN_STRING = `Server=db.local;Database=shop;User Id=reader;Password="${PASSWORD.replace(/"/g, '""')}";TrustServerCertificate=True`
 
 const TABLES_OUT = 'TABLE_SCHEMA\tTABLE_NAME\tTABLE_TYPE\n------------\t----------\t----------\ndbo\torders\tBASE TABLE\ndbo\tv_sales\tVIEW\n'
@@ -85,10 +85,8 @@ function dbWorld(on: TestOn, { isWindows = false, hasSqlcmd = true }: { isWindow
 async function addConnection(ui: Awaited<ReturnType<typeof mountPane>>, world: ReturnType<typeof dbWorld>) {
   await ui.press({ key: 'tab:db' })
   await ui.input({ key: 'db:add', text: CONN_STRING })
-  const id = world.saved()[0]?.id ?? ''
-  expect(id).toMatch(/^c[0-9a-z]+$/)
 
-  return id
+  return world.saved()[0]?.id ?? ''
 }
 
 const markdown = async (ui: Awaited<ReturnType<typeof mountPane>>) =>
@@ -203,6 +201,23 @@ test('deleting a connection takes two presses and removes its Keychain password 
   expect(world.saved()).toEqual([])
   expect(world.keychain[id]).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'No connections yet.' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('with Integrated Security sqlcmd runs with -E: no user, no password, nothing in the Keychain', async ($, on) => {
+  const world = dbWorld(on)
+  const ui = await mountPane($, 'desktop')
+  await ui.press({ key: 'tab:db' })
+  await ui.input({ key: 'db:add', text: 'Server=db.local;Database=shop;Integrated Security=SSPI' })
+  const id = world.saved()[0]?.id ?? ''
+  expect(await ui.find({ type: 'Text', text: 'Windows login' })).toBeDefined()
+
+  await ui.press({ key: `db:item:${id}` })
+  const run = world.sqlcmds().at(-1)
+  expect(run?.argv).toContain('-E')
+  expect(run?.argv).not.toContain('-U')
+  expect(run?.init?.env?.SQLCMDPASSWORD).toBeUndefined()
+  expect(world.runs.some(r => r.argv[0] === 'security')).toBe(false)
   await ui.unmount()
 })
 

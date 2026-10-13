@@ -1,4 +1,4 @@
-import { ARMED_TINT, PLAN_FILE } from '../../config'
+import { PLAN_FILE } from '../../config'
 import { planPath } from '../../spec/parse'
 import { backButton } from '../stepBar'
 import type { Widgets } from '../widgets'
@@ -21,26 +21,17 @@ function specList({ w, d, a }: TabContext) {
     <Box flexDirection="column" gap={1}>
       {s.deleteError !== '' && <Text color="error">{s.deleteError}</Text>}
       <Box flexDirection="column">
-        {s.specs.map(spec => {
-          const isArmed = s.deleteArmed === spec.name
-
-          return w.pressRow({
+        {s.specs.map(spec =>
+          w.pressRow({
             key: `spec:item:${spec.name}`,
             label: spec.name,
             isDim: !spec.hasPlan,
             isTruncated: true,
             rest: !spec.hasPlan && <Text dimColor>{`no ${PLAN_FILE}`}</Text>,
             onPress: () => a.openSpec(spec.name),
-            trailing: w.iconButton(
-              `spec:delete:${spec.name}`,
-              isArmed ? 'check' : 'trash',
-              isArmed ? 'Confirm' : 'Delete',
-              false,
-              () => a.deleteSpec(spec.name),
-              isArmed ? ARMED_TINT : undefined,
-            ),
-          })
-        })}
+            trailing: w.deleteButton(`spec:delete:${spec.name}`, s.deleteArmed === spec.name, () => a.deleteSpec(spec.name)),
+          }),
+        )}
       </Box>
     </Box>
   )

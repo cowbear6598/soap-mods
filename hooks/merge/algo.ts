@@ -80,7 +80,7 @@ export function parseConflicts(text: string): MergeText | null {
 }
 
 /** One place where `a` and `b` differ: `a[aStart, aEnd)` became `b[bStart, bEnd)`. */
-export type DiffHunk = { aStart: number; aEnd: number; bStart: number; bEnd: number }
+type DiffHunk = { aStart: number; aEnd: number; bStart: number; bEnd: number }
 
 // The diff keeps a row per step, so its memory grows with the square of the
 // differences; past this many it stops and calls the whole middle one change.
@@ -91,7 +91,7 @@ const MAX_DIFF_EDITS = 2000
  * shortest edit; the common head and tail are trimmed first). Past
  * MAX_DIFF_EDITS differences, the whole trimmed middle is one change.
  */
-export function diffLines(a: string[], b: string[]): DiffHunk[] {
+function diffLines(a: string[], b: string[]): DiffHunk[] {
   let head = 0
   while (head < a.length && head < b.length && a[head] === b[head]) head += 1
   let endA = a.length

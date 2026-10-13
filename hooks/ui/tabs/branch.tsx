@@ -1,5 +1,5 @@
 import type { GitBranch } from '../../../types'
-import { ARMED_TINT, BRANCH_ROW_LIMIT, BRANCH_TREE_LIMIT, COPIED_TINT, FOLDER_COLOR, SWITCH_ARMED_HINT } from '../../config'
+import { BRANCH_ROW_LIMIT, BRANCH_TREE_LIMIT, COPIED_TINT, FOLDER_COLOR, SWITCH_ARMED_HINT } from '../../config'
 import { filterBranches, hasQuery } from '../../git/parse'
 import { branchTree, treeRows } from '../../git/tree'
 import type { TabBody } from './context'
@@ -38,15 +38,7 @@ export const branchTab: TabBody = ({ w, d, a }) => {
     const canDelete = !b.isRemote && !b.isCurrent
     const armed = canDelete && v.deleteArmed?.name === b.name ? v.deleteArmed : null
     const deleteButton =
-      canDelete &&
-      w.iconButton(
-        `delete:${id}`,
-        armed === null ? 'trash' : 'check',
-        armed === null ? 'Delete' : armed.isForce ? 'Force delete' : 'Confirm',
-        false,
-        () => a.deleteBranch(b.name),
-        armed === null ? undefined : ARMED_TINT,
-      )
+      canDelete && w.deleteButton(`delete:${id}`, armed !== null, () => a.deleteBranch(b.name), armed?.isForce === true ? 'Force delete' : 'Confirm')
 
     const isSwitchArmed = !b.isCurrent && v.switchArmed === id
 

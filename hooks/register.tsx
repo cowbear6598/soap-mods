@@ -1,19 +1,6 @@
 // 進入點：狀態（atom）、所有碰到 $ 的動作，和引擎事件的接線。
 // 引擎只讓這個檔案碰 $ 和 atom（傳 $ 給 import 進來的函式、用別的檔案的 atom 都會被擋），
-// 所以這裡只放「跑 git、讀寫狀態、開關面板」；其餘都是 import 進來的純函式：
-//   config.ts      常數（面板、分頁、顏色、時間）
-//   defaults.ts    狀態的初始值
-//   patch.ts       改物件 atom 的幾個欄位（沒變就不寫）
-//   cover.ts       蓋住分頁的畫面（差異、合併、檔案內容），一次一個
-//   latest.ts      非同步讀取只寫最新的那次
-//   neighbour.ts   Previous／Next 的上一個／下一個
-//   git/           解析 git 輸出（parse）、repo 的參數和解析（repo）
-//   merge/algo.ts  三方合併
-//   services/      找服務（scan）
-//   files/         Files 分頁的排序、路徑（list）
-//   spec/          Spec 分頁：讀 plan.yaml、挑格式錯誤（parse）
-//   db/            DB 分頁：連線字串、只准 SELECT、sqlcmd 的參數和輸出（sql），密碼存哪裡（secret）
-//   ui/            畫面：拿到資料和 Actions 畫出樹（panel、tabs/、diffView、mergeView）
+// 其餘都是 import 進來的純函式。
 
 import { atom, read, update } from 'claude-code'
 import type {
@@ -125,7 +112,6 @@ import {
   columnsQuery,
   connectionId,
   connectionName,
-  listed,
   parseColumns,
   parseConnectionString,
   parseTable,
@@ -133,6 +119,7 @@ import {
   previewQuery,
   savedConnections,
   selectOnlyError,
+  withoutSecret,
   sqlcmdArgv,
   tableKey,
 } from './db/sql'
@@ -141,7 +128,7 @@ import { isPlanPath, planFixNote, planPath, readPlan, sortSpecs } from './spec/p
 import type { Actions, DbBusy } from './ui/actions'
 import { buttonKeys, ringAnchor, tabIconKey } from './ui/keys'
 import { renderPanel } from './ui/panel'
-import { latestOnly } from './latest'
+import { coalesce, latestOnly } from './latest'
 import { neighbour } from './neighbour'
 import { patch } from './patch'
 
@@ -238,7 +225,6 @@ async function git($: EngineInterface, args: string[], init: GitInit = {}) {
   })
 }
 
-// 跑 git，結束碼不是 0 就丟出它的錯誤訊息。
 async function gitOk($: EngineInterface, args: string[], init?: GitInit) {
   const r = await git($, args, init)
   if (r.exitCode !== 0) throw failure(r, `git ${args.join(' ')}`)
@@ -254,7 +240,6 @@ async function runOk($: EngineInterface, argv: string[], what: string, init?: Pr
   return r
 }
 
-// repo 裡的相對路徑 → 絕對路徑（讀寫檔案用）。
 const inRepo = (path: string) => (repos.current === undefined ? path : `${repos.current.root}/${path}`)
 
 // ───── 面板與焦點 ─────
@@ -277,10 +262,12 @@ let refocusUntil: number | undefined
 // 動作還在跑是 Infinity，做完再給 REFOCUS_AFTER_PRESS_MS）。這段時間內畫面上沒了這顆，就把焦點圈移走。
 let pressed: { key?: string; to?: string; until: number } | undefined
 
-async function isPaneShown($: EngineInterface) {
-  const pane = (await $.ui.panes()).find(p => p.id === PANE)
+async function findPane($: EngineInterface) {
+  return (await $.ui.panes()).find(p => p.id === PANE)
+}
 
-  return pane?.isShown === true
+async function isPaneShown($: EngineInterface) {
+  return (await findPane($))?.isShown === true
 }
 
 async function focusPanel($: EngineInterface) {
@@ -346,7 +333,7 @@ async function focusWhenShown($: EngineInterface) {
   if (isWatching) return
   isWatching = true
   try {
-    const pane = (await $.ui.panes()).find(p => p.id === PANE)
+    const pane = await findPane($)
     const isShown = pane?.isShown === true
     if (isShown && pane?.isFocused === false) {
       const isJustPressed = refocusUntil !== undefined && (await $.clock.now()) < refocusUntil
@@ -417,30 +404,13 @@ function parseOnce<T>(parse: (out: string) => T) {
 const parseActiveStatus = parseOnce(parseStatus)
 const parseActiveBranches = parseOnce(parseBranches)
 
-// 同一時間只讀一次：讀到一半又被叫（回合結束、按了按鈕、換了 repo），讀完再補讀一次；
-// 等著的呼叫拿到同一個 promise，補讀完才結束。有補讀排著時，這次讀到的可能是舊的，就不寫，交給補讀。
-let refreshing: Promise<void> | undefined
-let isRefreshWanted = false
+// 讀到一半又被叫（回合結束、按了按鈕、換了 repo）就讀完再補讀一次；有補讀排著時，這次讀到的可能是舊的，就不寫，交給補讀。
+const gitReads = coalesce()
 
 function refresh($: EngineInterface): Promise<void> {
   isGitStale = false
-  if (refreshing !== undefined) {
-    isRefreshWanted = true
 
-    return refreshing
-  }
-  refreshing = (async () => {
-    try {
-      do {
-        isRefreshWanted = false
-        await readGit($)
-      } while (isRefreshWanted)
-    } finally {
-      refreshing = undefined
-    }
-  })()
-
-  return refreshing
+  return gitReads.run(() => readGit($))
 }
 
 // 回合結束時 git 狀態看不到（停在 Files、Spec 分頁、Soap Panel 不在前面）就不讀，只記著；
@@ -474,7 +444,7 @@ async function readRepos($: EngineInterface, active: Repo) {
 
 // 重新讀 git 狀態、檔案清單、分支清單，保留原本點開的檔案；最後只寫一次 view，只重畫一次。
 async function readGit($: EngineInterface) {
-  const isStale = () => isRefreshWanted
+  const isStale = gitReads.isWanted
   let snap
   try {
     repos.list = await findRepos($)
@@ -560,11 +530,6 @@ async function selectRepo($: EngineInterface, name: string) {
   await refresh($)
 }
 
-// 換分頁時清掉切換／刪除分支、abort／continue 失敗的訊息和待確認的刪除、abort；沒有要清的就不寫，免得面板白白重畫。
-async function clearGitMessages($: EngineInterface) {
-  await setView($, NO_MESSAGES)
-}
-
 // ───── 差異（畫在 Soap Panel 裡） ─────
 
 const DIFF_FLAGS = ['--no-color', '--no-ext-diff', '--no-textconv']
@@ -604,15 +569,12 @@ async function readDiff($: EngineInterface, files: GitFile[], path: string): Pro
   return { ...EMPTY_DIFF, path, kind: fileKind(file), ...result, files: diffSteps(files) }
 }
 
-// 在 Soap Panel 裡看這個檔案的差異（蓋掉分頁），捲回最上面從頭看。
-// 不另開面板：鍵盤一直在 Soap Panel 上，Back／Previous／Next 的快捷鍵才按得到。
-// 按的那列不見了，焦點圈由 checkPressed 移到 Back。
+// 在 Soap Panel 裡看這個檔案的差異（蓋掉分頁），捲回最上面從頭看。按的那列不見了，焦點圈由 checkPressed 移到 Back。
 async function showDiff($: EngineInterface, pane: DiffPaneView) {
   await update($, cover, c => showCover(c, 'diff', pane))
   await scrollTop($)
 }
 
-// 點檔案：在 Soap Panel 裡看它的差異；Back 回分頁。
 async function openDiff($: EngineInterface, path: string) {
   await showDiff($, await readDiff($, (await read($, view)).files, path))
 }
@@ -626,12 +588,10 @@ async function readCommitDiff($: EngineInterface, commits: GitCommit[], f: Commi
   return { path: f.path, kind: letterKind(f.letter), ...result, commits, files }
 }
 
-// 點 commit 裡的檔案：看它在這（幾）個 commit 的差異。
 async function openCommitDiff($: EngineInterface, commits: GitCommit[], f: CommitFile, files: CommitFile[]) {
   await showDiff($, await readCommitDiff($, commits, f, files))
 }
 
-// 差異的 Previous／Next：換成上一個／下一個檔案。
 async function stepDiffFile($: EngineInterface, step: 1 | -1) {
   const d = await readDiffCover($)
   const next = neighbour(d.files, f => f.path === d.path, step)
@@ -661,7 +621,7 @@ async function switchBranch($: EngineInterface, name: string, isRemote: boolean)
   }
 
   // 不跳 toast：目前分支的 ● 本來就會移過去。丟掉的焦點交給 focusWhenShown 補。
-  await clearGitMessages($)
+  await setView($, NO_MESSAGES)
   await refresh($)
 }
 
@@ -697,7 +657,7 @@ async function deleteBranch($: EngineInterface, name: string) {
   }
 
   $.ui.toast(`Deleted ${name}`)
-  await clearGitMessages($)
+  await setView($, NO_MESSAGES)
   await refresh($)
 }
 
@@ -716,7 +676,7 @@ async function syncBranches($: EngineInterface, kind: GitSync) {
   if (syncing !== '') return
   setSyncing($, kind)
   disarmTimer?.cancel()
-  await clearGitMessages($)
+  await setView($, NO_MESSAGES)
   try {
     const r = await gitOk($, SYNC_ARGS[kind], { env: { GIT_TERMINAL_PROMPT: '0' }, timeoutMs: SYNC_TIMEOUT_MS })
     $.ui.toast(kind === 'fetch' ? 'Fetched' : r.stdout.includes('Already up to date') ? 'Already up to date' : 'Pulled')
@@ -950,7 +910,6 @@ async function jumpConflict($: EngineInterface, step: 1 | -1) {
   await $.ui.scroll({ in: PANE, to: { key: `conflict:${at}` }, block: 'start' }).catch(() => undefined)
 }
 
-// 點衝突的檔案：在 Soap Panel 裡蓋掉分頁，畫三欄合併，從最上面開始看。
 async function openMerge($: EngineInterface, path: string) {
   await loadMerge($, path)
   await scrollTop($)
@@ -1128,32 +1087,27 @@ async function killTree($: EngineInterface, pid: number) {
   if (kill.exitCode !== 0 && errors.length > 0) throw failure(kill, 'kill')
 }
 
-// 同一時間只掃一次；掃到一半又被叫，掃完再補掃一次，畫面才不會停在舊的。
-let isScanning = false
-let isRescanWanted = false
+// 掃到一半又被叫就掃完再補掃一次，畫面才不會停在舊的。
+const serviceScans = coalesce()
+// 上一次掃到的所有活著的 PID（重跑後的檢查用）；掃不了是 undefined。
+let alivePids: Set<number> | undefined
 
-async function refreshServices($: EngineInterface) {
-  if (isScanning) {
-    isRescanWanted = true
-
-    return
-  }
-  isScanning = true
-  try {
-    do {
-      isRescanWanted = false
-      try {
-        await setServices($, { isLoaded: true, items: (await scan($)).items, error: '' })
-      } catch (err) {
-        await setServices($, {
-          isLoaded: true,
-          error: isMissingCommand(err) ? 'Services needs PowerShell on Windows, or ps and lsof on macOS.' : `Scan failed: ${errorText(err)}`,
-        })
-      }
-    } while (isRescanWanted)
-  } finally {
-    isScanning = false
-  }
+// isQuiet：掃不了不在畫面上說（重跑後的檢查，下一個時間點再看）。
+function refreshServices($: EngineInterface, isQuiet = false): Promise<void> {
+  return serviceScans.run(async () => {
+    try {
+      const { items, alive } = await scan($)
+      alivePids = alive
+      await setServices($, { isLoaded: true, items, error: '' })
+    } catch (err) {
+      alivePids = undefined
+      if (isQuiet) return
+      await setServices($, {
+        isLoaded: true,
+        error: isMissingCommand(err) ? 'Services needs PowerShell on Windows, or ps and lsof on macOS.' : `Scan failed: ${errorText(err)}`,
+      })
+    }
+  })
 }
 
 // 正在停掉／重跑的服務。跟 syncing 一樣放模組變數不放 atom，免得被熱重載中斷後那個 PID 的按鈕永遠按不動。
@@ -1196,25 +1150,17 @@ async function runServiceAction($: EngineInterface, target: Service, action: Ser
   await refreshServices($)
 }
 
-// 重跑後的檢查：每個時間點重掃一次（順便更新清單），新程序已經不在了就算重跑失敗，在面板上提示
-// （沒存 log，原因要自己跑一次看）。
+// 重跑後的檢查：每個時間點重掃一次（跟定時掃描共用，不會同時跑兩個），新程序已經不在了就算重跑失敗，
+// 在面板上提示（沒存 log，原因要自己跑一次看）。掃不了就等下一個時間點。
 function watchRestart($: EngineInterface, name: string, pid: number) {
   let isDone = false
   for (const ms of RESTART_CHECK_MS) {
     $.clock.after(ms, async () => {
       if (isDone) return
-      try {
-        const { items, alive } = await scan($)
-        isDone = !alive.has(pid)
-        await setServices($, {
-          isLoaded: true,
-          items,
-          error: '',
-          ...(isDone ? { actionError: `Restart failed: ${name} exited right after starting. Run its command yourself to see why.` } : {}),
-        })
-      } catch {
-        // 掃不了就算了，下一個時間點再看。
-      }
+      await refreshServices($, true)
+      if (alivePids === undefined || alivePids.has(pid)) return
+      isDone = true
+      await setServices($, { actionError: `Restart failed: ${name} exited right after starting. Run its command yourself to see why.` })
     })
   }
 }
@@ -1280,7 +1226,6 @@ async function showFile($: EngineInterface, path: string) {
   if (prev.path !== path) await scrollTop($)
 }
 
-// 檔案內容的 Previous／Next：照 Files 分頁的檔案順序換成上一個／下一個。
 async function stepFile($: EngineInterface, step: 1 | -1) {
   const [shown, list] = await Promise.all([readFileCover($), read($, files)])
   const next = neighbour(fileSteps(list), p => p === shown.path, step)
@@ -1367,7 +1312,6 @@ async function doSpec($: EngineInterface) {
 // 刪整個 feature 資料夾（含 assets）：macOS 用 rm -rf，Windows 用 PowerShell 的 Remove-Item；路徑從環境變數給，不拼進指令。
 const REMOVE_DIR_ARGV = powershellArgv("$ErrorActionPreference = 'Stop'; Remove-Item -LiteralPath $env:SOAP_DIR -Recurse -Force")
 
-// Spec 的打勾 DELETE_ARM_MS 後收回去的計時；再按（刪掉或按了別的垃圾桶）就先停掉舊的。
 let specDisarmTimer: Timer | undefined
 
 // 刪 Spec 要按兩次：垃圾桶按了換成打勾，DELETE_ARM_MS 內再按才刪掉整個 .soap/tasks/<feature>/；按別的垃圾桶，原本的就收回。
@@ -1447,12 +1391,12 @@ async function readSaved($: EngineInterface) {
 // 存進 $.store，畫面上的清單直接用存進去的那份，不用再讀一次。
 async function writeSaved($: EngineInterface, saved: SavedConnection[], change: Partial<DbView> = {}) {
   await $.store.set(DB_STORE_KEY, saved)
-  await setDb($, { ...change, isLoaded: true, connections: saved.map(listed) })
+  await setDb($, { ...change, isLoaded: true, connections: saved.map(withoutSecret) })
 }
 
 async function loadDbConnections($: EngineInterface) {
   try {
-    await setDb($, { isLoaded: true, connections: (await readSaved($)).map(listed) })
+    await setDb($, { isLoaded: true, connections: (await readSaved($)).map(withoutSecret) })
   } catch (err) {
     await setDb($, { isLoaded: true, error: `Couldn't read the saved connections: ${errorText(err)}` })
   }
@@ -1525,7 +1469,6 @@ async function addDbConnection($: EngineInterface, text: string) {
   }
 }
 
-// 連線的打勾 DELETE_ARM_MS 後收回去的計時。
 let dbDisarmTimer: Timer | undefined
 
 // 刪連線要按兩次，跟 Spec 一樣；刪的時候密碼一起刪。
@@ -1555,18 +1498,21 @@ const tableLoads = latestOnly()
 const columnLoads = latestOnly()
 const queryRuns = latestOnly()
 
-// 點連線：讀它的資料表和 view。
-async function openDbConnection($: EngineInterface, id: string) {
-  const isStale = tableLoads.start()
+// 晚到的資料表、欄位、查詢結果都不寫，密碼也丟掉。
+function dropConnection($: EngineInterface) {
+  tableLoads.drop()
+  columnLoads.drop()
   queryRuns.drop()
+  opened = undefined
   setDbBusy($, '')
+}
+
+async function openDbConnection($: EngineInterface, id: string) {
+  dropConnection($)
+  const isStale = tableLoads.start()
   const [saved] = await Promise.all([readSaved($), setDb($, { ...NO_DB_CONNECTION, open: id, deleteArmed: '' }), scrollTop($)])
   const c = saved.find(x => x.id === id)
-  if (c === undefined) {
-    opened = undefined
-
-    return setDb($, { ...NO_DB_CONNECTION, error: 'That connection was deleted.' })
-  }
+  if (c === undefined) return setDb($, { ...NO_DB_CONNECTION, error: 'That connection was deleted.' })
   opened = { c, password: readSecret($, c) }
   // 沒人等的時候讀不到也不要變成未處理的錯誤；要用時 runSql 會再丟出來。
   opened.password.catch(() => undefined)
@@ -1579,11 +1525,7 @@ async function openDbConnection($: EngineInterface, id: string) {
 }
 
 async function closeDbConnection($: EngineInterface) {
-  tableLoads.drop()
-  columnLoads.drop()
-  queryRuns.drop()
-  opened = undefined
-  setDbBusy($, '')
+  dropConnection($)
   await setDb($, NO_DB_CONNECTION)
 }
 
@@ -1615,7 +1557,6 @@ async function loadColumns($: EngineInterface, t: DbTable) {
   }
 }
 
-// 點資料表：展開它的欄位、預覽前幾列；再點一次收起來。
 async function toggleDbTable($: EngineInterface, t: DbTable) {
   const key = tableKey(t)
   if ((await read($, db)).table === key) {
@@ -1650,7 +1591,7 @@ async function reloadFilesWhenShown($: EngineInterface) {
 // 換分頁（上層 Tab 或子分頁）時清掉的東西：錯誤訊息、待確認的 abort、branch 和 log 的搜尋、
 // log 點開的 commit（回來時是整個 commit 列表）。
 async function leaveTab($: EngineInterface) {
-  await Promise.all([clearGitMessages($), update($, branchQuery, () => ''), clearLogQuery($), setLog($, NO_COMMIT)])
+  await Promise.all([setView($, NO_MESSAGES), update($, branchQuery, () => ''), clearLogQuery($), setLog($, NO_COMMIT)])
 }
 
 async function selectTab($: EngineInterface, id: TabId) {
@@ -1677,7 +1618,6 @@ async function viewLog($: EngineInterface, b: GitBranch) {
   await selectSubTab($, 'log')
 }
 
-// 複製圖示換成綠底打勾後，COPIED_MS 換回來的計時；又按了一次就先停掉舊的。
 let uncopyTimer: Timer | undefined
 
 // branch 分頁的複製按鈕：把分支名稱（遠端的含 origin/）放到按的那個畫面的剪貼簿，
@@ -1690,7 +1630,6 @@ async function copyBranchName($: EngineInterface, name: string, surface: RenderS
   uncopyTimer = $.clock.after(COPIED_MS, () => void setView($, { copied: '' }))
 }
 
-// 畫面上的按鈕能做的事（ui/actions.ts 的約定），全部接到上面的動作。
 function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
   return {
     selectTab: id => selectTab($, id),
@@ -1749,9 +1688,6 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     // 先開面板（畫「讀取中…」），git 在背景讀，不擋住 session 開始。
     void $.ui.open(PANE_ARGS)
-    // 舊版另開的差異、合併面板（現在都畫在 Soap Panel 裡），熱重載後還開著就關掉。
-    void $.ui.close({ id: 'soap-diff' }).catch(() => undefined)
-    void $.ui.close({ id: 'soap-merge' }).catch(() => undefined)
     void refresh($).catch(() => undefined)
     $.clock.every(FOCUS_WATCH_MS, () => void focusWhenShown($))
     // 用量直接跟引擎拿（不花錢），這裡只負責讓重置倒數每分鐘重畫一次。
@@ -1788,11 +1724,9 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // plan.yaml 寫完檢查格式（checkPlan）。
   on('tool.call', { tool: 'Write' }, async ($, e, next) => checkPlan($, e.file_path, await next(e))).catch(($, e, next) => next(e))
   on('tool.call', { tool: 'Edit' }, async ($, e, next) => checkPlan($, e.file_path, await next(e))).catch(($, e, next) => next(e))
 
-  // 畫面：這裡讀狀態，交給 ui/ 的純函式畫。
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const [activeTab, activeSub, v, isRemoteOpen, bf, bq, fl, sv, fileList, specs, dbView, lg, lq, shown, usage, now] = await Promise.all([
       read($, tab),

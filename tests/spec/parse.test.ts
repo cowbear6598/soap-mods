@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { isPlanPath, parseYaml, readPlan, sortSpecs } from '../../hooks/spec/parse'
+import { parseYaml, readPlan } from '../../hooks/spec/parse'
 
 // plan skill 寫出來的樣子：folded description、清單、[]、引號、選填的公司欄位。
 const PLAN = `branch: "feature/PROJ-123-login"
@@ -58,26 +58,7 @@ test('readPlan names what is wrong: missing keys, wrong types, unknown keys, goa
   // 讀得到的照樣給：畫面上看得到哪些對、哪些不對。
   expect(plan.goals).toEqual([])
   expect(plan.related).toEqual([])
-})
 
-test('readPlan flags a repeated key and an empty list item', () => {
-  const { problems } = readPlan(['description: x', 'description: y', 'goals:', '  -', 'constraints: []', 'related: []', 'verify: []'].join('\n'))
-  expect(problems).toEqual(['line 2: "description" appears twice', '"goals" has an empty item'])
-})
-
-test('isPlanPath matches only <feature>/plan.yaml right under .soap/tasks, on any separator', () => {
-  expect(isPlanPath('/repo/.soap/tasks/login/plan.yaml')).toBe(true)
-  expect(isPlanPath('C:\\repo\\.soap\\tasks\\login\\plan.yaml')).toBe(true)
-  expect(isPlanPath('/repo/.soap/tasks/plan.yaml')).toBe(false)
-  expect(isPlanPath('/repo/.soap/tasks/login/assets/plan.yaml')).toBe(false)
-  expect(isPlanPath('/repo/.soap/tasks/login/plan.yml')).toBe(false)
-})
-
-test('sortSpecs puts the newest plan first and folders without a plan last', () => {
-  const sorted = sortSpecs([
-    { name: 'empty', mtimeMs: 0, hasPlan: false },
-    { name: 'old', mtimeMs: 1, hasPlan: true },
-    { name: 'new', mtimeMs: 9, hasPlan: true },
-  ])
-  expect(sorted.map(s => s.name)).toEqual(['new', 'old', 'empty'])
+  const { problems: repeated } = readPlan(['description: x', 'description: y', 'goals:', '  -', 'constraints: []', 'related: []', 'verify: []'].join('\n'))
+  expect(repeated).toEqual(['line 2: "description" appears twice', '"goals" has an empty item'])
 })

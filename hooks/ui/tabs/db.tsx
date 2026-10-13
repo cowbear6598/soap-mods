@@ -1,5 +1,5 @@
 import type { DbConnection, DbResult, DbTable } from '../../../types'
-import { ARMED_TINT, DB_CELL_WIDTH, DB_TABLE_LIMIT } from '../../config'
+import { DB_CELL_WIDTH, DB_TABLE_LIMIT } from '../../config'
 import { connectionName, tableKey } from '../../db/sql'
 import { backButton } from '../stepBar'
 import type { TabBody, TabContext } from './context'
@@ -14,10 +14,8 @@ function connectionList({ w, d, a }: TabContext) {
   const db = d.db
   if (!db.isLoaded) return <Text dimColor>Loading…</Text>
 
-  const row = (c: DbConnection) => {
-    const isArmed = db.deleteArmed === c.id
-
-    return w.pressRow({
+  const row = (c: DbConnection) =>
+    w.pressRow({
       key: `db:item:${c.id}`,
       label: connectionName(c),
       // 不縮排：跟下面的輸入框對齊。
@@ -25,16 +23,8 @@ function connectionList({ w, d, a }: TabContext) {
       isTruncated: true,
       rest: <Text dimColor>{c.isIntegrated ? 'Windows login' : c.user}</Text>,
       onPress: () => a.openDbConnection(c.id),
-      trailing: w.iconButton(
-        `db:delete:${c.id}`,
-        isArmed ? 'check' : 'trash',
-        isArmed ? 'Confirm' : 'Delete',
-        false,
-        () => a.deleteDbConnection(c.id),
-        isArmed ? ARMED_TINT : undefined,
-      ),
+      trailing: w.deleteButton(`db:delete:${c.id}`, db.deleteArmed === c.id, () => a.deleteDbConnection(c.id)),
     })
-  }
 
   return (
     <Box flexDirection="column" gap={1}>

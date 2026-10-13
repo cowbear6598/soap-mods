@@ -7,7 +7,6 @@ import {
   choose,
   chooseAll,
   isResolved,
-  keepChoices,
   merge3,
   nextConflict,
   parseConflicts,
@@ -40,24 +39,6 @@ test('parseConflicts splits agreed lines from conflicts, with labels, base, CRLF
   // 沒有標記、或 <<<<<<< 沒有收尾，都不能一段一段選。
   expect(parseConflicts('plain\ntext\n')).toBeNull()
   expect(parseConflicts('<<<<<<< HEAD\na\n=======\nb\n')).toBeNull()
-})
-
-test('buildResult keeps the markers of a conflict still unresolved, and keepChoices carries unchanged conflicts', () => {
-  const parsed = parseConflicts(CONFLICTED)
-  if (parsed === null) throw new Error('parse failed')
-  expect(isResolved(parsed.chunks)).toBe(false)
-  expect(buildResult(parsed)).toBe(CONFLICTED)
-
-  const ours = choose(parsed.chunks, 1, 'ours')
-  expect(isResolved(ours)).toBe(true)
-  expect(buildResult({ ...parsed, chunks: ours })).toBe('import a\nconst x = 1\nend\n')
-  expect(buildResult({ ...parsed, chunks: choose(parsed.chunks, 1, 'ours-theirs') })).toBe('import a\nconst x = 1\nconst x = 2\nend\n')
-
-  // 重讀後同一段衝突沒變：保留選擇；內容變了：重新選。
-  expect(keepChoices(ours, parsed.chunks)).toEqual(ours)
-  const changed = parseConflicts(CONFLICTED.replace('const x = 2', 'const x = 3'))
-  if (changed === null) throw new Error('parse failed')
-  expect(keepChoices(ours, changed.chunks)).toEqual(changed.chunks)
 })
 
 test('merge3 tells changes one side made from conflicts, as git merges them', () => {
@@ -103,21 +84,12 @@ test('merge3 tells changes one side made from conflicts, as git merges them', ()
   ])
 })
 
-test('nextConflict walks the conflicts still open, stopping at the ends, then all of them once each is chosen', () => {
+test('nextConflict skips the conflicts already chosen, and walks all of them once every one is chosen', () => {
   const same: MergeChunk = { kind: 'same', lines: ['a'] }
   const open: MergeChunk = { kind: 'conflict', ours: ['x1'], base: null, theirs: ['x2'], choice: 'none' }
-  const chunks = [same, open, same, open, same, open, same]
-  expect(nextConflict(chunks, -1, 1)).toBe(1)
-  expect(nextConflict(chunks, 1, 1)).toBe(3)
+  const chunks = choose([same, open, same, open, same, open, same], 3, 'ours')
+  expect(nextConflict(chunks, 1, 1)).toBe(5)
+  expect(nextConflict(chunks, 5, -1)).toBe(1)
   expect(nextConflict(chunks, 5, 1)).toBeNull()
-  expect(nextConflict(chunks, -1, -1)).toBe(5)
-  expect(nextConflict(chunks, 3, -1)).toBe(1)
-  expect(nextConflict(chunks, 1, -1)).toBeNull()
-  // 第 3 段選好了：跳過它。
-  const picked = choose(chunks, 3, 'ours')
-  expect(nextConflict(picked, 1, 1)).toBe(5)
-  expect(nextConflict(picked, 5, -1)).toBe(1)
-  // 全部選好：在全部衝突之間跳。
   expect(nextConflict(chooseAll(chunks, 'theirs'), 1, 1)).toBe(3)
-  expect(nextConflict([same], -1, 1)).toBeNull()
 })

@@ -240,7 +240,7 @@ export function savedConnections(raw: unknown): SavedConnection[] {
 }
 
 /** The connection without where its password is: what the panel draws. */
-export const listed = ({ secret: _secret, ...c }: SavedConnection): DbConnection => c
+export const withoutSecret = ({ secret: _secret, ...c }: SavedConnection): DbConnection => c
 
 /** A new connection's id: letters and digits only (it is a Keychain account name, read by security -i). */
 export const connectionId = (now: number, random: number) => `c${now.toString(36)}${Math.floor(random * 36 ** 6).toString(36)}`

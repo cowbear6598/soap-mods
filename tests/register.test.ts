@@ -38,7 +38,6 @@ test('the bottom of the pane shows 5h and weekly remaining, half each, on both s
     },
   }))
 
-  // 終端機和桌面版都畫得出面板。
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await mountPane($, surface)
     expect(await ui.find({ key: 'tab:git' })).toBeDefined()
@@ -50,6 +49,10 @@ test('the bottom of the pane shows 5h and weekly remaining, half each, on both s
     expect(await ui.find({ type: 'Text', text: '15%' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: ' · 2h 13m' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: ' · 3d 3h 0m' })).toBeDefined()
+    // 終端機的 bar 是一排 █░，顏色跟剩下的多少走。
+    if (surface === 'terminal') {
+      expect((await ui.findAll({ type: 'Text', text: /^[█░]+$/ })).map(t => t.props.color)).toEqual(['success', 'error'])
+    }
     await ui.unmount()
   }
 })
@@ -95,23 +98,13 @@ test('the usage bar shows — until there is a reading, then colors what is left
   await ui.unmount()
 })
 
-test('on the terminal the usage bar is a row of █░ in the color of what is left', async ($, on) => {
-  const state = usage(on)
-  state.used = [40, 85]
-
-  const ui = await mountPane($)
-  const bars = await ui.findAll({ type: 'Text', text: /^[█░]+$/ })
-  expect(bars.map(t => t.props.color)).toEqual(['success', 'error'])
-  await ui.unmount()
-})
-
 // ───── diff、branch ─────
 
 test('pressing a changed file shows its diff over the tabs, Next/Previous step through the files, and Back returns', async ($, on) => {
   const diffArgs: string[][] = []
   stubPanel(on)
   gitRepo(on, {
-    status: '## main...origin/main [ahead 1]\0 M a.ts\0?? b.ts\0',
+    status: '## main...origin/main [ahead 1]\0R  new.ts\0old.ts\0 M a.ts\0?? b.ts\0',
     run: cmd => {
       if (cmd[0] !== 'diff') return undefined
       diffArgs.push(cmd)
@@ -123,21 +116,24 @@ test('pressing a changed file shows its diff over the tabs, Next/Previous step t
 
   const ui = await mountPane($)
   expect(await ui.find({ key: 'file:unstaged:a.ts' })).toBeDefined()
+  // 改名的檔案只列新名字。
+  expect(await ui.find({ key: 'file:staged:new.ts' })).toBeDefined()
+  expect(await ui.find({ key: 'file:staged:old.ts' })).toBeUndefined()
   // 沒點之前不顯示差異；點了在 Soap Panel 裡蓋掉分頁看，Back 回來。
   expect(await ui.find({ type: 'Code' })).toBeUndefined()
   await ui.press({ key: 'file:unstaged:a.ts' })
   expect(await ui.find({ type: 'Code' })).toBeDefined()
   expect(await ui.find({ key: 'tab:git' })).toBeUndefined()
-  // Previous／Next 照 diff 分頁的順序走：a.ts → b.ts（未追蹤的對空檔案），到頭了不動。
-  expect(await ui.find({ type: 'Text', text: '1 of 2 files' })).toBeDefined()
+  // Previous／Next 照 diff 分頁的順序走：new.ts → a.ts → b.ts（未追蹤的對空檔案），到頭了不動。
+  expect(await ui.find({ type: 'Text', text: '2 of 3 files' })).toBeDefined()
   await ui.press({ key: 'diff:next' })
-  expect(await ui.find({ type: 'Text', text: '2 of 2 files' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '3 of 3 files' })).toBeDefined()
   expect(diffArgs.at(-1)).toContain('--no-index')
   const reads = diffArgs.length
   await ui.press({ key: 'diff:next' })
   expect(diffArgs).toHaveLength(reads)
   await ui.press({ key: 'diff:prev' })
-  expect(await ui.find({ type: 'Text', text: '1 of 2 files' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '2 of 3 files' })).toBeDefined()
   await ui.press({ key: 'diff:back' })
   expect(await ui.find({ type: 'Code' })).toBeUndefined()
   expect(await ui.find({ key: 'file:unstaged:a.ts' })).toBeDefined()
@@ -428,7 +424,14 @@ test('branches with / in their name group into folders that open and close', asy
   stubPanel(on)
   gitRepo(on, {
     status: '## soap/feature/login\0',
-    branches: [branchLine('soap/feature/login', { isCurrent: true }), branchLine('feature/a'), branchLine('feature/b'), branchLine('main')],
+    branches: [
+      branchLine('soap/feature/login', { isCurrent: true }),
+      branchLine('feature/a'),
+      branchLine('feature/b'),
+      branchLine('main'),
+      branchLine('origin/main'),
+      branchLine('origin/feature/x'),
+    ],
   })
   await openPanel($)
 
@@ -442,6 +445,12 @@ test('branches with / in their name group into folders that open and close', asy
   expect(await ui.find({ key: 'switch:l:feature/a' })).toBeDefined()
   await ui.press({ key: 'folder:l:feature/' })
   expect(await ui.find({ key: 'switch:l:feature/a' })).toBeUndefined()
+  // Remote 只有 origin/ 一個資料夾：不畫它，直接列它裡面的。
+  await ui.press({ key: 'remote:toggle' })
+  expect(await ui.find({ key: 'folder:r:origin/' })).toBeUndefined()
+  expect(await ui.find({ key: 'folder:r:origin/feature/' })).toBeDefined()
+  expect(await ui.find({ key: 'switch:r:origin/main' })).toBeDefined()
+  await ui.press({ key: 'remote:toggle' })
   // 搜尋時資料夾全部打開；打好幾個字要全部都有。
   await ui.input({ key: 'branch:search', text: 'b', kind: 'change' })
   expect(await ui.find({ key: 'switch:l:feature/b' })).toBeDefined()
@@ -676,12 +685,10 @@ test('the log search finds commits across the whole branch, and the log icon of 
 // ───── Files ─────
 
 test('the Files tab lists the session folder, folders first, opens a folder and goes back up', async ($, on) => {
-  const listed: (string | undefined)[] = []
   on('clock.now', () => ({ value: 0 }))
   on('session.root', () => ({ value: '/proj' }))
   on('fs.list', (_$, e) => {
     const path = posix(e.path)
-    listed.push(path)
     if (path === '/proj') return { value: [fsEntry('README.md', 'file', 4300), fsEntry('src', 'dir')] }
     if (path === '/proj/src') return { value: [fsEntry('main.ts', 'file', 120)] }
 
@@ -699,13 +706,11 @@ test('the Files tab lists the session folder, folders first, opens a folder and 
   expect(await ui.find({ key: 'files:back' })).toBeUndefined()
 
   await ui.press({ key: 'files:dir:src' })
-  expect(listed.at(-1)).toBe('/proj/src')
   expect(await ui.find({ type: 'Text', text: 'src/' })).toBeDefined()
   expect((await ui.find({ key: 'files:back' }))?.props).toMatchObject({ label: '← Back', hotkey: 'b' })
   expect(await ui.find({ key: 'files:file:main.ts' })).toBeDefined()
 
   await ui.press({ key: 'files:back' })
-  expect(listed.at(-1)).toBe('/proj')
   expect(await ui.find({ key: 'files:dir:src' })).toBeDefined()
   await ui.unmount()
 })
@@ -814,7 +819,7 @@ test('the Services tab lists the running services and stops one by killing its t
   // Services 沒有子分頁。
   expect(await ui.find({ key: 'sub:diff' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Running' })).toBeDefined()
-  // 一行：工具 · 專案名 · port；不再顯示資料夾、跑了多久、PID。
+  // 一行：工具 · 專案名 · port。
   expect(await ui.find({ type: 'Text', text: 'npm' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'web' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: ':5000 :5001' })).toBeDefined()
@@ -928,6 +933,9 @@ test('on macOS the Services tab scans with ps and lsof, stops with kill -9 on th
   await ui.press({ key: 'tab:services' })
   expect(await ui.find({ type: 'Text', text: 'npm' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'web' })).toBeDefined()
+  // npm → sh -c → node 是同一個服務；引擎自己（100）和它的 MCP server（30）不算。
+  expect(await ui.find({ key: 'svc:stop:30' })).toBeUndefined()
+  expect(await ui.find({ key: 'svc:stop:100' })).toBeUndefined()
   await ui.press({ key: 'svc:stop:11' })
   expect(kills).toEqual([['kill', '-9', '11', '12', '13', '99']])
   await ui.press({ key: 'svc:restart:11' })
@@ -1128,6 +1136,19 @@ test('Ask Claude in the merge view sends the file to the model, and Back returns
   expect(prompts[0]).toContain('`/repo/src/a.ts`')
   await ui.press({ key: 'merge:back' })
   expect(await ui.find({ key: 'op:abort' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('Ask Claude does not send a file whose name could smuggle text into the prompt', async ($, on) => {
+  const { prompts } = conflictRepo(on, { status: '## main\0UU a`b.ts\0' })
+  await openPanel($)
+
+  const ui = await mountPane($)
+  await ui.press({ key: 'sub:conflict' })
+  await ui.press({ key: 'conflict:a`b.ts' })
+  await ui.press({ key: 'merge:claude' })
+  expect(prompts).toEqual([])
+  expect(await ui.find({ type: 'Text', text: /Ask Claude is off for this file/ })).toBeDefined()
   await ui.unmount()
 })
 

@@ -3,7 +3,6 @@
 
 import type { Press, Ui } from './actions'
 
-// ← Back（b）。key 一律是「prefix:back」，焦點圈靠這個找到它（keys.ts 的 ringAnchor）。
 export function backButton(ui: Pick<Ui, 'Button'>, press: Press, prefix: string, onBack: () => unknown) {
   return <ui.Button key={`${prefix}:back`} label="← Back" hotkey="b" onPress={press(onBack)} />
 }

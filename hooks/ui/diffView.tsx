@@ -1,6 +1,5 @@
-// 選中檔案的差異，畫在 Soap Panel 裡蓋掉分頁（不另開面板，鍵盤一直在 Soap Panel 上，n／m／b 才按得到）：
+// 選中檔案的差異，畫在 Soap Panel 裡蓋掉分頁：
 // diff 分頁的未提交變更，或 log 分頁某個 commit 裡的檔案（路徑後面加 @ sha）。
-// 最上面一排是 ← Back（b）；檔案有好幾個時接著「3 of 15 files」和 Previous／Next（n／m）。
 
 import type { DiffPaneView } from '../../types'
 import { KIND_STYLE } from '../config'

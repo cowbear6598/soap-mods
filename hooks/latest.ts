@@ -1,4 +1,4 @@
-// 非同步讀取的「只寫最新的」：讀完時已經有更新的讀取開始了（或被 drop 掉），這次讀到的就不寫，免得蓋掉新的。
+// 非同步工作的排隊：只寫最新的那次（latestOnly）、同一時間只跑一次（coalesce）。
 
 /** A ticket counter: `start()` returns `isStale`, true once a later `start()` or a `drop()` came. */
 export function latestOnly() {
@@ -13,5 +13,37 @@ export function latestOnly() {
     drop() {
       latest += 1
     },
+  }
+}
+
+/**
+ * Runs one `fn` at a time: a `run()` while one is going asks for one more pass once it ends, and gets the same
+ * promise, settled after that pass. `isWanted()` is true while a pass is queued, so the running one can skip writing.
+ */
+export function coalesce() {
+  let running: Promise<void> | undefined
+  let isQueued = false
+
+  return {
+    run(fn: () => Promise<void>): Promise<void> {
+      if (running !== undefined) {
+        isQueued = true
+
+        return running
+      }
+      running = (async () => {
+        try {
+          do {
+            isQueued = false
+            await fn()
+          } while (isQueued)
+        } finally {
+          running = undefined
+        }
+      })()
+
+      return running
+    },
+    isWanted: () => isQueued,
   }
 }

@@ -4,17 +4,17 @@ import { commitsLabel, formatAgo, hasQuery, letterKind, logBranch } from '../../
 import { backButton } from '../stepBar'
 import type { TabBody, TabContext } from './context'
 
-// log 分頁：點開了 commit 就畫它們改了哪些檔案，否則畫 commit 列表。
 export const logTab: TabBody = ctx => {
   const lg = ctx.d.log
 
-  return lg.opened.length === 0 ? commitList(ctx, lg) : commitFiles(ctx, lg, lg.opened)
+  return lg.opened.length === 0 ? commitList(ctx, lg) : commitFiles(ctx, lg)
 }
 
 // 點開的 commit：最上面 ← Back（b），下面是它們改了哪些檔案，點了在 diff 面板看差異。
 // 選範圍打開的是合起來的結果（最舊那筆之前 → 最新那筆）：標題只寫筆數和頭尾的 sha；
 // 搜尋中選的範圍，夾在中間沒列出來的 commit 也算進去，會提示。
-function commitFiles({ w, d, a }: TabContext, lg: LogView, opened: GitCommit[]) {
+function commitFiles({ w, d, a }: TabContext, lg: LogView) {
+  const { opened } = lg
   const { Box, Text } = w
   const { now } = d
   const commitFileRow = (f: CommitFile, _: number, files: CommitFile[]) =>

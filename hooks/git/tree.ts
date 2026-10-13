@@ -2,7 +2,7 @@ import type { GitBranch } from '../../types'
 
 // 分支名稱照「/」拆成資料夾樹，像 feature/login、soap/feature/login。
 
-export type BranchFolder = {
+type BranchFolder = {
   /** 從樹根到這裡的路徑（含結尾的 /），例如 `soap/feature/`；同一組（Local／Remote）裡不重複。 */
   path: string
   /** 畫在列上的名稱：只有一個子資料夾、沒有分支的那層會併進來，例如 `soap/feature/`。 */

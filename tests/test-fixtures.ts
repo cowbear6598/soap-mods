@@ -1,4 +1,4 @@
-// 測試共用的資料和 helper：純邏輯的測試和面板的測試都用。
+// 測試共用的資料和 helper。
 
 import type { test } from 'claude-code/testing'
 
@@ -204,7 +204,7 @@ export const CONFLICTED = ['import a', '<<<<<<< HEAD', 'const x = 1', '=======',
 // npm run dev（npm → sh -c vite → node vite）；引擎自己開的 MCP server（node 30）不算。
 // 第二行是同一刻的本地時間和 epoch（這裡時區是 +8）。
 export const MAC_ROOT = '/Users/me/proj'
-export const MAC_EPOCH = Date.UTC(2026, 9, 12, 2, 0, 0) / 1000
+const MAC_EPOCH = Date.UTC(2026, 9, 12, 2, 0, 0) / 1000
 export const MAC_SCAN_OUT = `900
 2026 10 12 10 00 00 ${MAC_EPOCH}
 #comm

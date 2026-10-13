@@ -8,6 +8,7 @@ import { splitPath } from '../git/parse'
 import type { IconName, Tint } from '../config'
 import {
   ACTIVE_BG,
+  ARMED_TINT,
   DIVIDER_PX,
   DIVIDER_TEXT,
   ICON_BUTTON_LABEL,
@@ -65,6 +66,10 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
       </Box>
     )
   }
+
+  // 刪除要按兩次：垃圾桶按了換成紅底打勾，再按才刪。
+  const deleteButton = (key: string, isArmed: boolean, action: () => unknown, armedLabel = 'Confirm') =>
+    iconButton(key, isArmed ? 'check' : 'trash', isArmed ? armedLabel : 'Delete', false, action, isArmed ? ARMED_TINT : undefined)
 
   // 整行都能點的列表項目；indent 是名稱前面空幾格（預設 2 給列表項目，標題列給 0）。
   // 桌面版：內容照常排，上面疊一顆透明按鈕。按鈕本身是 fit-content，靠一長串不換行空白撐開；
@@ -228,7 +233,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
       stretched(DIVIDER_SVG, 'Divider', 1)
     )
 
-  return { Box, Button, Markdown, Text, hasSvg: Svg !== undefined, press, iconButton, pressRow, pathRow, searchField, field, iconBar, stretched, divider }
+  return { Box, Button, Markdown, Text, hasSvg: Svg !== undefined, press, iconButton, deleteButton, pressRow, pathRow, searchField, field, iconBar, stretched, divider }
 }
 
 export type Widgets = ReturnType<typeof makeWidgets>

@@ -129,7 +129,7 @@ export function powershellArgv(script: string) {
   return ['powershell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encodePowerShell(script)]
 }
 
-// 掃描每 5 秒跑一次，編碼好的指令先備好。
+// 掃描定時跑，編碼好的指令先備好。
 export const SCAN_ARGV = powershellArgv(SCAN_SCRIPT)
 export const LAUNCH_ARGV = powershellArgv(LAUNCH_SCRIPT)
 export const KILL_ARGV = powershellArgv(KILL_SCRIPT)
@@ -231,7 +231,7 @@ function isCmdWrapper(p: ScanProc) {
 }
 
 // 照 Windows 的規則粗切 command line：空白分隔，雙引號裡的空白不算。
-export function splitArgs(cmd: string) {
+function splitArgs(cmd: string) {
   const out: string[] = []
   let cur = ''
   let isQuoted = false
@@ -273,7 +273,7 @@ const NODE_CLIS: Record<string, string> = {
 }
 
 // 工具名稱：指令的第一段，去掉路徑和 .exe；node npm-cli.js 算 npm。
-export function toolName(cmd: string) {
+function toolName(cmd: string) {
   const [first = '', second = ''] = splitArgs(cmd)
   const head = baseName(first).replace(/\.exe$/i, '')
   const cli = NODE_CLIS[baseName(second).toLowerCase()]

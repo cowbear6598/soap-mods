@@ -25,6 +25,7 @@ export function showCover<K extends Kind>(c: Cover, kind: K, data: DataOf<K>): C
 /** `c` with the `kind` it shows patched by `change`; `c` itself when it shows another kind or nothing changed. */
 export function patchCover<K extends Kind>(c: Cover, kind: K, change: Partial<DataOf<K>>): Cover {
   const cur = coverData(c, kind)
+  const next = cur === undefined ? cur : patch(cur, change)
 
-  return cur === undefined ? c : showCover(c, kind, patch(cur, change))
+  return next === cur ? c : ({ kind, data: next } as Cover)
 }

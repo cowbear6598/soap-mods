@@ -1,5 +1,5 @@
 // 解衝突的三欄畫面，像 JetBrains 的合併視窗：左邊 Ours、右邊 Theirs、中間是結果。
-// 畫在 Soap Panel 裡蓋掉分頁（不另開面板，鍵盤一直在 Soap Panel 上），最上面 ← Back（b）回分頁。
+// 畫在 Soap Panel 裡蓋掉分頁，最上面 ← Back（b）回分頁。
 // 每段衝突左邊按「Accept ≫」、右邊按「≪ Accept」把那一邊放進中間，中間也可以兩邊都要或重選；
 // 全部選好才能 Apply（寫回檔案並 git add）。
 // 只畫當下用得到的按鈕。按了之後按鈕被換掉（Ours + Theirs 變成 Reset）焦點會掉，所以把焦點圈移到換上來的那顆。
@@ -258,7 +258,6 @@ export function mergeView(ui: Ui, m: MergeView, op: MergeOp, isBusy: boolean, a:
       {/* 第二行：進度和上一段／下一段；第三行：整個檔案的動作。 */}
       <Box gap={1} flexWrap="wrap" alignItems="center">
         <Text color={isAllResolved ? 'success' : 'warning'}>{`${done} of ${conflicts.length} conflicts resolved`}</Text>
-        {/* 按 n／m 也行，跟 , . 一樣左邊往前、右邊往後；桌面版會在按鈕旁標出快捷鍵。 */}
         {conflicts.length > 0 && [
           <Button key="merge:prev" label="↑ Previous" hotkey="n" onPress={press(() => a.jumpConflict(-1))} />,
           <Button key="merge:next" label="↓ Next" hotkey="m" onPress={press(() => a.jumpConflict(1))} />,
