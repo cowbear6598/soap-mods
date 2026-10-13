@@ -1281,6 +1281,21 @@ async function closeSpec($: EngineInterface) {
   await loadSpecs($)
 }
 
+// Do：叫 Claude 照打開的那份 plan.yaml 做（像使用者自己打的一樣送出）。
+// 格式不對的先不送，免得照著缺東缺西的計劃做；資料夾名稱有反引號、控制字元的也不送（會弄壞提示裡的路徑）。
+async function doSpec($: EngineInterface) {
+  const s = await read($, spec)
+  if (s.open === '') return
+  const path = `${SPEC_DIR}/${s.open}/${PLAN_FILE}`
+  if (s.problems.length > 0) return void $.ui.toast(`Fix ${path} first: ${s.problems[0]}`)
+  if (!isPromptSafePath(path)) return void $.ui.toast('Do is off for this plan: its folder name has a backtick or a control character.')
+  await $.prompt.submit({
+    text: `Implement the plan in \`${path}\`. Read it first, then reach every item under goals, keep to the constraints, start from the related files, and finish by running every verify command until each one passes.`,
+    asUser: true,
+  })
+  $.ui.toast('Sent to Claude')
+}
+
 // 回合結束：Claude 可能寫了新的計劃、改了打開的那份。Spec 分頁開著就重列，開著計劃就重讀。
 async function reloadSpecsWhenShown($: EngineInterface) {
   const [t, s] = await Promise.all([read($, tab), read($, spec)])
@@ -1408,6 +1423,7 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     stepFile: step => stepFile($, step),
     openSpec: name => openSpec($, name),
     closeSpec: () => closeSpec($),
+    doSpec: () => doSpec($),
     editChunks: edit => editChunks($, edit),
     jumpConflict: step => jumpConflict($, step),
     takeSide: side => takeSide($, side),

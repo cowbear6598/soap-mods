@@ -72,6 +72,8 @@ export type Actions = {
   // spec：name 是 .soap/tasks 底下的 feature 資料夾。
   openSpec: (name: string) => unknown
   closeSpec: () => unknown
+  // 叫 Claude 照打開的那份 plan.yaml 做。
+  doSpec: () => unknown
   // services
   runServiceAction: (s: Service, action: ServiceAction) => unknown
   // 合併（畫在 Soap Panel 裡）

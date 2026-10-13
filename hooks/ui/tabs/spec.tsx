@@ -6,7 +6,7 @@ import type { Widgets } from '../widgets'
 import type { TabBody, TabContext } from './context'
 
 // Spec 分頁：plan skill 在 .soap/tasks/<feature>/plan.yaml 寫的計劃，一個 feature 一列，最新改的在上面。
-// 點了在分頁裡看它的 Description／Goals／Verify，最上面 ← Back（b）回清單。
+// 點了在分頁裡看它的 Description／Goals／Related／Verify，最上面 ← Back（b）回清單，最底下正中間 Do（d）叫 Claude 照它做。
 // plan.yaml 格式不對時先列出哪裡不對（紅字），讀得到的部分照樣畫。
 export const specTab: TabBody = ctx => (ctx.d.spec.open === '' ? specList(ctx) : planView(ctx))
 
@@ -56,7 +56,7 @@ function bulletList(items: readonly string[], isCode = false) {
 }
 
 function planView({ w, d, a }: TabContext) {
-  const { Box, Markdown, Text } = w
+  const { Box, Button, Markdown, Text } = w
   const s = d.spec
   const p = s.plan
   const meta = [p.issueNumber, p.branch].filter(m => m !== '').join(' · ')
@@ -78,7 +78,11 @@ function planView({ w, d, a }: TabContext) {
       )}
       {section(w, 'Description', <Markdown text={p.description} />, p.description === '')}
       {section(w, 'Goals', <Markdown text={bulletList(p.goals)} />, p.goals.length === 0)}
+      {section(w, 'Related', <Markdown text={bulletList(p.related, true)} />, p.related.length === 0)}
       {section(w, 'Verify', <Markdown text={bulletList(p.verify, true)} />, p.verify.length === 0)}
+      <Box justifyContent="center">
+        <Button key="spec:do" label="Do" hotkey="d" variant="primary" onPress={w.press(() => a.doSpec())} />
+      </Box>
     </Box>
   )
 }

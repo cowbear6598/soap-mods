@@ -9,7 +9,8 @@ const LOGIN = `description: >
 goals:
   - SSO signs the user in
 constraints: []
-related: []
+related:
+  - src/login.ts
 verify:
   - npm test -- login.spec.ts
 `
@@ -43,6 +44,18 @@ test('the Spec tab lists the plans newest first, opens one to its Description, G
     } as Record<string, { text: string; mtimeMs: number }>,
   }
   tasks(on, state)
+  const prompts: { text: string; asUser?: boolean }[] = []
+  const toasts: string[] = []
+  on('prompt.submit', (_$, e) => {
+    prompts.push({ text: e.text, asUser: e.origin.kind === 'plugin' ? e.origin.asUser : undefined })
+
+    return { text: e.text }
+  })
+  on('ui.toast', (_$, e) => {
+    toasts.push(e.text)
+
+    return { value: undefined }
+  })
 
   const ui = await mountPane($)
   // Services 右邊多一個 Spec。
@@ -55,10 +68,18 @@ test('the Spec tab lists the plans newest first, opens one to its Description, G
   await ui.press({ key: 'spec:item:login' })
   expect((await ui.find({ key: 'spec:back' }))?.props).toMatchObject({ label: '← Back', hotkey: 'b' })
   // 標題和內容都是 Markdown（字比面板大）：清單一項一行，Verify 的指令包成 inline code。
-  for (const text of ['### Description', 'Users need SSO.', '### Goals', '- SSO signs the user in', '### Verify', '- `npm test -- login.spec.ts`']) {
+  for (const text of ['### Description', 'Users need SSO.', '### Goals', '- SSO signs the user in', '### Related', '- `src/login.ts`', '### Verify', '- `npm test -- login.spec.ts`']) {
     expect(await ui.find({ type: 'Markdown', text })).toBeDefined()
   }
   expect(await ui.find({ type: 'Text', text: /has problems/ })).toBeUndefined()
+
+  // Do（d）：叫 Claude 照這份計劃做，像使用者自己打的一樣送出。
+  expect((await ui.find({ key: 'spec:do' }))?.props).toMatchObject({ label: 'Do', hotkey: 'd' })
+  await ui.press({ key: 'spec:do' })
+  expect(prompts).toHaveLength(1)
+  expect(prompts[0]).toMatchObject({ asUser: true })
+  expect(prompts[0]?.text).toMatch(/^Implement the plan in `\.soap\/tasks\/login\/plan\.yaml`\./)
+  expect(toasts.at(-1)).toBe('Sent to Claude')
 
   // 格式不對的：紅字列出哪裡不對，讀得到的照樣畫。
   await ui.press({ key: 'spec:back' })
@@ -66,6 +87,10 @@ test('the Spec tab lists the plans newest first, opens one to its Description, G
   expect(await ui.find({ type: 'Text', text: '.soap/tasks/search/plan.yaml has problems:' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '! use "goals", not "goal"' })).toBeDefined()
   expect(await ui.find({ type: 'Markdown', text: 'x' })).toBeDefined()
+  // 格式不對的不送，先叫人修。
+  await ui.press({ key: 'spec:do' })
+  expect(prompts).toHaveLength(1)
+  expect(toasts.at(-1)).toBe('Fix .soap/tasks/search/plan.yaml first: missing "goals"')
 
   // 沒有 plan.yaml 的資料夾：說讀不到。
   await ui.press({ key: 'spec:back' })
