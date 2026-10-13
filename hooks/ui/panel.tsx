@@ -13,6 +13,7 @@ import { mergeView } from './mergeView'
 import { branchTab } from './tabs/branch'
 import { conflictTab } from './tabs/conflict'
 import type { TabBody, TabContext } from './tabs/context'
+import { dbTab } from './tabs/db'
 import { diffTab } from './tabs/diff'
 import { filesTab } from './tabs/files'
 import { logTab } from './tabs/log'
@@ -42,6 +43,7 @@ const TAB_BODIES: Record<TabId, TabBody> = {
   files: filesTab,
   services: servicesTab,
   spec: specTab,
+  db: dbTab,
 }
 
 // Git Tab 的上半部：那排 repo、子分頁圖示（有衝突時 conflict 變紅）。

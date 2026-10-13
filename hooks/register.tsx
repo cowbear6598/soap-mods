@@ -12,6 +12,7 @@
 //   services/      找服務（scan）
 //   files/         Files 分頁的排序、路徑（list）
 //   spec/          Spec 分頁：讀 plan.yaml、挑格式錯誤（parse）
+//   db/            DB 分頁：連線字串、只准 SELECT、sqlcmd 的參數和輸出（sql），密碼存哪裡（secret）
 //   ui/            畫面：拿到資料和 Actions 畫出樹（panel、tabs/、diffView、mergeView）
 
 import { atom, read, update } from 'claude-code'
@@ -30,6 +31,8 @@ import type {
 import type {
   CommitFile,
   Cover,
+  DbTable,
+  DbView,
   DiffPaneView,
   FileView,
   FilesView,
@@ -55,6 +58,8 @@ import type {
 } from '../types'
 import {
   COPIED_MS,
+  DB_PROCESS_TIMEOUT_MS,
+  DB_STORE_KEY,
   DELETE_ARM_MS,
   FILE_PAGE,
   FILES_ROW_LIMIT,
@@ -72,7 +77,7 @@ import {
   USAGE_TICK_MS,
 } from './config'
 import { NO_COVER, coverData, patchCover, showCover } from './cover'
-import { EMPTY, EMPTY_DIFF, EMPTY_FILE_VIEW, EMPTY_FILES, EMPTY_LOG, EMPTY_MERGE, EMPTY_PLAN, EMPTY_SERVICES, EMPTY_SPEC, NO_COMMIT, NO_MESSAGES } from './defaults'
+import { EMPTY, EMPTY_DB, EMPTY_DIFF, EMPTY_FILE_VIEW, EMPTY_FILES, EMPTY_LOG, EMPTY_MERGE, EMPTY_PLAN, EMPTY_SERVICES, EMPTY_SPEC, NO_COMMIT, NO_DB_CONNECTION, NO_MESSAGES } from './defaults'
 import { fileSteps, formatSize, sortEntries, viewText } from './files/list'
 import { errorText, failure, isMissingCommand } from './errors'
 import {
@@ -113,8 +118,27 @@ import {
   withFiles,
 } from './services/mac'
 import { KILL_ARGV, LAUNCH_ARGV, SCAN_ARGV, findServices, powershellArgv } from './services/scan'
+import {
+  KEYCHAIN,
+  type SavedConnection,
+  TABLES_QUERY,
+  columnsQuery,
+  connectionId,
+  connectionName,
+  listed,
+  parseColumns,
+  parseConnectionString,
+  parseTable,
+  parseTables,
+  previewQuery,
+  savedConnections,
+  selectOnlyError,
+  sqlcmdArgv,
+  tableKey,
+} from './db/sql'
+import { MAC_SAVE_ARGV, WIN_PROTECT_ARGV, WIN_UNPROTECT_ARGV, fromHex, macCheckArgv, macDeleteArgv, macReadArgv, macSaveInput, toHex } from './db/secret'
 import { isPlanPath, planFixNote, planPath, readPlan, sortSpecs } from './spec/parse'
-import type { Actions } from './ui/actions'
+import type { Actions, DbBusy } from './ui/actions'
 import { buttonKeys, ringAnchor, tabIconKey } from './ui/keys'
 import { renderPanel } from './ui/panel'
 import { latestOnly } from './latest'
@@ -145,6 +169,8 @@ const files = atom({ plugin: 'soap-mods', key: 'files' } as const, EMPTY_FILES)
 // Spec 分頁：.soap/tasks 底下的 feature 清單，和點開的那份 plan.yaml。
 const spec = atom({ plugin: 'soap-mods', key: 'spec' } as const, EMPTY_SPEC)
 const log = atom({ plugin: 'soap-mods', key: 'log' } as const, EMPTY_LOG)
+// DB 分頁：存著的連線（不含密碼）、打開的那個的資料表、查詢和結果。
+const db = atom({ plugin: 'soap-mods', key: 'db' } as const, EMPTY_DB)
 // 蓋住分頁的畫面：差異、三欄合併或檔案內容，一次一個（cover.ts）。
 const cover = atom({ plugin: 'soap-mods', key: 'cover' } as const, NO_COVER)
 
@@ -186,6 +212,10 @@ async function setFiles($: EngineInterface, change: Partial<FilesView>) {
 
 async function setSpec($: EngineInterface, change: Partial<SpecView>) {
   await update($, spec, s => patch(s, change))
+}
+
+async function setDb($: EngineInterface, change: Partial<DbView>) {
+  await update($, db, v => patch(v, change))
 }
 
 // ───── 跑 git ─────
@@ -1397,6 +1427,206 @@ async function checkPlan<R extends ToolCallResult>($: EngineInterface, path: str
   return note === undefined ? ran : { ...ran, context: [...(ran.context ?? []), note] }
 }
 
+// ───── DB 分頁（SQL Server） ─────
+
+// 正在存連線、跑查詢。跟 syncing 一樣放模組變數不放 atom，免得被熱重載中斷後一直停在「Running…」。
+let dbBusy: DbBusy = ''
+
+function setDbBusy($: EngineInterface, busy: DbBusy) {
+  if (dbBusy === busy) return
+  dbBusy = busy
+  $.ui.invalidate('ui.render')
+}
+
+const SQLCMD_MISSING = 'DB needs sqlcmd. Install it: brew install sqlcmd on macOS, winget install sqlcmd on Windows.'
+
+async function readSaved($: EngineInterface) {
+  return savedConnections(await $.store.get(DB_STORE_KEY))
+}
+
+// 存進 $.store，畫面上的清單直接用存進去的那份，不用再讀一次。
+async function writeSaved($: EngineInterface, saved: SavedConnection[], change: Partial<DbView> = {}) {
+  await $.store.set(DB_STORE_KEY, saved)
+  await setDb($, { ...change, isLoaded: true, connections: saved.map(listed) })
+}
+
+async function loadDbConnections($: EngineInterface) {
+  try {
+    await setDb($, { isLoaded: true, connections: (await readSaved($)).map(listed) })
+  } catch (err) {
+    await setDb($, { isLoaded: true, error: `Couldn't read the saved connections: ${errorText(err)}` })
+  }
+}
+
+// 把密碼存起來，回傳跟連線一起存進 $.store 的 secret（見 db/sql.ts 的 SavedConnection）。
+// macOS：security -i 從 stdin 存進 Keychain，它的指令失敗也回 0，所以存完再查一次在不在。
+// Windows：DPAPI 加密，密文存進 $.store。
+async function saveSecret($: EngineInterface, id: string, password: string) {
+  if (password === '') return ''
+  if (await isWindows($)) return (await runOk($, WIN_PROTECT_ARGV, 'DPAPI', { env: { SOAP_SECRET: toHex(password) } })).stdout.trim()
+  await runOk($, MAC_SAVE_ARGV, 'security', { stdin: macSaveInput(id, password) })
+  await runOk($, macCheckArgv(id), 'Keychain')
+
+  return KEYCHAIN
+}
+
+async function readSecret($: EngineInterface, c: SavedConnection) {
+  if (c.secret === '') return ''
+  try {
+    const r = c.secret === KEYCHAIN ? await runOk($, macReadArgv(c.id), 'security') : await runOk($, WIN_UNPROTECT_ARGV, 'DPAPI', { env: { SOAP_BLOB: c.secret } })
+
+    return fromHex(r.stdout)
+  } catch (err) {
+    throw new Error(`Couldn't read the saved password (delete the connection and add it again): ${errorText(err)}`)
+  }
+}
+
+// Windows 的密文跟著那筆一起刪掉了；Keychain 裡的要另外刪。
+async function deleteSecret($: EngineInterface, c: SavedConnection) {
+  if (c.secret === KEYCHAIN) await $.process.run(macDeleteArgv(c.id)).catch(() => undefined)
+}
+
+// 打開著的連線，和它的密碼（讀一次就留著：每次查詢都開 security／PowerShell 太慢）。換連線、回清單、刪掉就丟掉。
+let opened: { c: SavedConnection; password: Promise<string> } | undefined
+
+// 在打開著的連線上跑一段 SQL，回傳它印的表格。密碼只放在 sqlcmd 的環境變數 SQLCMDPASSWORD，不在命令列上。
+// sqlcmd 跑不起來（沒裝）才說要裝它；連不上之類的錯誤（訊息裡也會有 not found）照 sqlcmd 說的給。
+async function runSql($: EngineInterface, query: string) {
+  if (opened === undefined) throw new Error('No connection is open.')
+  const { c } = opened
+  const password = await opened.password
+  // 不用 runOk：只有跑不起來（rejected）才算沒裝，sqlcmd 自己回的錯誤不能拿去比對 not found。
+  const r = await $.process
+    .run(sqlcmdArgv(c, query), { env: password === '' ? {} : { SQLCMDPASSWORD: password }, timeoutMs: DB_PROCESS_TIMEOUT_MS })
+    .catch((err: unknown) => {
+      throw isMissingCommand(err) ? new Error(SQLCMD_MISSING) : err
+    })
+  if (r.exitCode !== 0) throw failure(r, 'sqlcmd')
+
+  return parseTable(r.stdout, r.isStdoutTruncated)
+}
+
+// 貼上連線字串：拆開、密碼存進 Keychain／DPAPI，其餘存進 $.store。錯誤訊息裡不放連線字串（有密碼）。
+async function addDbConnection($: EngineInterface, text: string) {
+  if (dbBusy !== '' || text.trim() === '') return
+  const p = parseConnectionString(text)
+  if ('error' in p) return setDb($, { error: p.error })
+  const { password, ...parts } = p.parsed
+  setDbBusy($, 'adding')
+  try {
+    const id = connectionId(await $.clock.now(), Math.random())
+    const saved: SavedConnection = { id, ...parts, secret: await saveSecret($, id, password) }
+    await writeSaved($, [...(await readSaved($)), saved], { error: '' })
+    $.ui.toast(`Saved ${connectionName(saved)}`)
+  } catch (err) {
+    await setDb($, { error: `Couldn't save the connection: ${errorText(err)}` })
+  } finally {
+    setDbBusy($, '')
+  }
+}
+
+// 連線的打勾 DELETE_ARM_MS 後收回去的計時。
+let dbDisarmTimer: Timer | undefined
+
+// 刪連線要按兩次，跟 Spec 一樣；刪的時候密碼一起刪。
+async function deleteDbConnection($: EngineInterface, id: string) {
+  dbDisarmTimer?.cancel()
+  if ((await read($, db)).deleteArmed !== id) {
+    await setDb($, { deleteArmed: id, error: '' })
+    dbDisarmTimer = $.clock.after(DELETE_ARM_MS, () => void setDb($, { deleteArmed: '' }))
+
+    return
+  }
+  try {
+    const saved = await readSaved($)
+    const gone = saved.find(c => c.id === id)
+    await writeSaved($, saved.filter(c => c.id !== id), { deleteArmed: '' })
+    if (gone === undefined) return
+    if (opened?.c.id === id) opened = undefined
+    await deleteSecret($, gone)
+    $.ui.toast(`Deleted ${connectionName(gone)}`)
+  } catch (err) {
+    await setDb($, { deleteArmed: '', error: `Couldn't delete the connection: ${errorText(err)}` })
+  }
+}
+
+// 打開、展開的讀取和查詢：連點、讀到一半按了 Back，晚到的舊結果不寫。
+const tableLoads = latestOnly()
+const columnLoads = latestOnly()
+const queryRuns = latestOnly()
+
+// 點連線：讀它的資料表和 view。
+async function openDbConnection($: EngineInterface, id: string) {
+  const isStale = tableLoads.start()
+  queryRuns.drop()
+  setDbBusy($, '')
+  const [saved] = await Promise.all([readSaved($), setDb($, { ...NO_DB_CONNECTION, open: id, deleteArmed: '' }), scrollTop($)])
+  const c = saved.find(x => x.id === id)
+  if (c === undefined) {
+    opened = undefined
+
+    return setDb($, { ...NO_DB_CONNECTION, error: 'That connection was deleted.' })
+  }
+  opened = { c, password: readSecret($, c) }
+  // 沒人等的時候讀不到也不要變成未處理的錯誤；要用時 runSql 會再丟出來。
+  opened.password.catch(() => undefined)
+  try {
+    const tables = parseTables(await runSql($, TABLES_QUERY))
+    if (!isStale()) await setDb($, { tables })
+  } catch (err) {
+    if (!isStale()) await setDb($, { tables: [], error: errorText(err) })
+  }
+}
+
+async function closeDbConnection($: EngineInterface) {
+  tableLoads.drop()
+  columnLoads.drop()
+  queryRuns.drop()
+  opened = undefined
+  setDbBusy($, '')
+  await setDb($, NO_DB_CONNECTION)
+}
+
+// 跑一段 SQL（按 Enter 時框裡的字，或點資料表的預覽）：只放行一段 SELECT（selectOnlyError），其他的不跑、說為什麼。
+async function runDbQuery($: EngineInterface, query: string) {
+  const refused = selectOnlyError(query)
+  if (refused !== '') return setDb($, { query, queryError: refused })
+  const isStale = queryRuns.start()
+  setDbBusy($, 'query')
+  await setDb($, { query, queryError: '' })
+  try {
+    const result = await runSql($, query)
+    if (!isStale()) await setDb($, { result })
+  } catch (err) {
+    if (!isStale()) await setDb($, { result: null, queryError: errorText(err) })
+  } finally {
+    if (!isStale()) setDbBusy($, '')
+  }
+}
+
+// 讀資料表的欄位；讀到時已經換了資料表就不寫。
+async function loadColumns($: EngineInterface, t: DbTable) {
+  const isStale = columnLoads.start()
+  try {
+    const columns = parseColumns(await runSql($, columnsQuery(t)))
+    if (!isStale()) await setDb($, { columns })
+  } catch (err) {
+    if (!isStale()) await setDb($, { error: errorText(err) })
+  }
+}
+
+// 點資料表：展開它的欄位、預覽前幾列；再點一次收起來。
+async function toggleDbTable($: EngineInterface, t: DbTable) {
+  const key = tableKey(t)
+  if ((await read($, db)).table === key) {
+    columnLoads.drop()
+
+    return setDb($, { table: '', columns: [] })
+  }
+  await setDb($, { table: key, columns: [] })
+  await Promise.all([loadColumns($, t), runDbQuery($, previewQuery(t))])
+}
+
 // ───── 蓋住分頁的畫面 ─────
 
 // 關掉差異、合併、檔案內容，回到分頁：合併選到一半的結果放掉（檔案沒動過，下次打開從頭選），
@@ -1428,6 +1658,7 @@ async function selectTab($: EngineInterface, id: TabId) {
   if (id === 'services') void refreshServices($).catch(() => undefined)
   if (id === 'files') void reloadFiles($).catch(() => undefined)
   if (id === 'spec') void reloadSpec($).catch(() => undefined)
+  if (id === 'db') void loadDbConnections($).catch(() => undefined)
   if (showsGit(id)) refreshIfStale($)
 }
 
@@ -1496,6 +1727,13 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     closeSpec: () => closeSpec($),
     doSpec: () => doSpec($),
     deleteSpec: name => deleteSpec($, name),
+    addDbConnection: text => addDbConnection($, text),
+    deleteDbConnection: id => deleteDbConnection($, id),
+    openDbConnection: id => openDbConnection($, id),
+    closeDbConnection: () => closeDbConnection($),
+    toggleDbTable: t => toggleDbTable($, t),
+    setDbQuery: text => setDb($, { query: text, queryError: '' }),
+    runDbQuery: text => runDbQuery($, text),
     editChunks: edit => editChunks($, edit),
     jumpConflict: step => jumpConflict($, step),
     takeSide: side => takeSide($, side),
@@ -1555,7 +1793,7 @@ export const register: Register = on => {
 
   // 畫面：這裡讀狀態，交給 ui/ 的純函式畫。
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const [activeTab, activeSub, v, isRemoteOpen, bf, bq, fl, sv, fileList, specs, lg, lq, shown, usage, now] = await Promise.all([
+    const [activeTab, activeSub, v, isRemoteOpen, bf, bq, fl, sv, fileList, specs, dbView, lg, lq, shown, usage, now] = await Promise.all([
       read($, tab),
       read($, subTab),
       read($, view),
@@ -1566,6 +1804,7 @@ export const register: Register = on => {
       read($, services),
       read($, files),
       read($, spec),
+      read($, db),
       read($, log),
       read($, logQuery),
       read($, cover),
@@ -1590,6 +1829,8 @@ export const register: Register = on => {
         services: sv,
         files: fileList,
         spec: specs,
+        db: dbView,
+        dbBusy,
         servicePending,
         log: lg,
         logQuery: lq,

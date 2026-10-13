@@ -6,6 +6,8 @@ import type { Elements, RenderSurface, SessionUsage, UiPressArgument } from 'cla
 import type {
   CommitFile,
   Cover,
+  DbTable,
+  DbView,
   FilesView,
   GitBranch,
   GitCommit,
@@ -27,6 +29,9 @@ export type Ui = Elements[RenderSurface]
 
 // 包住按鈕的動作：做完後丟了焦點會補回來。ringKey：按的按鈕會被換掉時，做完把焦點圈移到換上來的那顆。
 export type Press = (fn: () => unknown, ringKey?: string) => (e: UiPressArgument) => Promise<void>
+
+// DB 分頁正在做的事：存連線、跑查詢；'' 是沒有。
+export type DbBusy = '' | 'adding' | 'query'
 
 export type UsageReading = SessionUsage['rateLimits'][number]
 
@@ -78,6 +83,17 @@ export type Actions = {
   deleteSpec: (name: string) => unknown
   // services
   runServiceAction: (s: Service, action: ServiceAction) => unknown
+  // db：text 是貼上的連線字串、輸入的查詢；id 是存著的連線。
+  addDbConnection: (text: string) => unknown
+  // 刪連線：按第一次只是待確認（打勾），再按才刪（連 Keychain 裡的密碼）。
+  deleteDbConnection: (id: string) => unknown
+  openDbConnection: (id: string) => unknown
+  closeDbConnection: () => unknown
+  // 點資料表：展開它的欄位、查詢框換成看它前幾列並執行；再點一次收起來。
+  toggleDbTable: (t: DbTable) => unknown
+  setDbQuery: (text: string) => unknown
+  // text：按 Enter 時框裡的字。
+  runDbQuery: (text: string) => unknown
   // 合併（畫在 Soap Panel 裡）
   editChunks: (edit: (chunks: MergeChunk[]) => MergeChunk[]) => unknown
   jumpConflict: (step: 1 | -1) => unknown
@@ -102,6 +118,8 @@ export type PanelData = {
   services: ServicesView
   files: FilesView
   spec: SpecView
+  db: DbView
+  dbBusy: DbBusy
   // 正在停掉／重跑的服務。
   servicePending: readonly ServicePending[]
   log: LogView

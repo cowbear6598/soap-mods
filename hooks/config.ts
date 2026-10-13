@@ -53,6 +53,7 @@ export const ICONS = {
   trash:
     '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>',
   check: '<path d="M20 6 9 17l-5-5"/>',
+  db: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/>',
   copy: '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
 }
 export type IconName = keyof typeof ICONS
@@ -102,6 +103,7 @@ export const TABS: { id: TabId; label: string; icon: IconName }[] = [
   { id: 'git', label: 'Git', icon: 'git' },
   { id: 'services', label: 'Services', icon: 'services' },
   { id: 'spec', label: 'Spec', icon: 'spec' },
+  { id: 'db', label: 'DB', icon: 'db' },
 ]
 
 // Git Tab 的子分頁；內容在 ui/panel.tsx 的 SUB_TAB_BODIES。
@@ -131,6 +133,19 @@ export const FILE_VIEW_MAX_BYTES = 1_000_000
 // Spec 分頁：plan skill 把每個 feature 的計劃寫在這個資料夾（相對 session 資料夾）底下的 <feature>/plan.yaml。
 export const SPEC_DIR = '.soap/tasks'
 export const PLAN_FILE = 'plan.yaml'
+
+// DB 分頁（SQL Server，經過 sqlcmd）：存連線的 $.store key、macOS Keychain 項目的 service 名稱。
+export const DB_STORE_KEY = 'db.connections'
+export const DB_KEYCHAIN_SERVICE = 'soap-mods-db'
+// 結果最多留幾列、每格最多畫幾個字（多的截成「…」）；資料表最多列幾個；點資料表預覽幾列。
+export const DB_ROW_LIMIT = 200
+export const DB_CELL_WIDTH = 40
+export const DB_TABLE_LIMIT = 300
+export const DB_PREVIEW_ROWS = 100
+// sqlcmd 連線（-l）、查詢（-t）各等幾秒；整個程序再多給一點時間才砍。
+export const DB_LOGIN_TIMEOUT_S = 15
+export const DB_QUERY_TIMEOUT_S = 60
+export const DB_PROCESS_TIMEOUT_MS = (DB_LOGIN_TIMEOUT_S + DB_QUERY_TIMEOUT_S + 10) * 1000
 
 // 差異、檔案內容最多畫前面這麼多字（引擎一次最多畫 100000 字），切在行尾。
 export const CODE_MAX_CHARS = 60_000

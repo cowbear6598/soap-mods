@@ -145,6 +145,25 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
     })
   }
 
+  // 一個輸入框（搜尋、DB 分頁的連線字串和查詢）；手機版沒有 Input，是 null。onInput 沒給就只在 Enter 時拿到字。
+  const field = (
+    key: string,
+    props: { placeholder: string; value: string; submitLabel: string; onInput?: (text: string) => unknown; onSubmit: (text: string) => unknown },
+  ) => {
+    const { onInput } = props
+
+    return 'Input' in ui ? (
+      <ui.Input
+        key={key}
+        placeholder={props.placeholder}
+        value={props.value}
+        submitLabel={props.submitLabel}
+        onInput={onInput && (text => void onInput(text))}
+        onSubmit={text => void props.onSubmit(text)}
+      />
+    ) : null
+  }
+
   // branch、log 分頁最上面的搜尋框。手機版沒有 Input，就不畫。邊打邊過濾；桌面版拔不掉框旁邊的 submit 按鈕，
   // 就讓它（和 Enter）清空搜尋（onInput('')）。框不能設寬度、撐不滿，所以整組水平置中。
   // trailing：同一行最右邊的按鈕（branch 的 Fetch／Pull），搜尋框靠左、中間一條直線隔開 Clear；沒有搜尋框時只剩它，靠右。
@@ -154,17 +173,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
     onInput: (text: string) => unknown,
     trailing?: RenderChildren,
   ) => {
-    const input =
-      'Input' in ui ? (
-        <ui.Input
-          key={key}
-          placeholder="Search"
-          value={value}
-          submitLabel="Clear"
-          onInput={text => void onInput(text)}
-          onSubmit={() => void onInput('')}
-        />
-      ) : null
+    const input = field(key, { placeholder: 'Search', value, submitLabel: 'Clear', onInput, onSubmit: () => onInput('') })
     if (input === null && trailing === undefined) return null
     const justify = trailing === undefined ? 'center' : input === null ? 'flex-end' : 'space-between'
 
@@ -219,7 +228,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
       stretched(DIVIDER_SVG, 'Divider', 1)
     )
 
-  return { Box, Button, Markdown, Text, hasSvg: Svg !== undefined, press, iconButton, pressRow, pathRow, searchField, iconBar, stretched, divider }
+  return { Box, Button, Markdown, Text, hasSvg: Svg !== undefined, press, iconButton, pressRow, pathRow, searchField, field, iconBar, stretched, divider }
 }
 
 export type Widgets = ReturnType<typeof makeWidgets>

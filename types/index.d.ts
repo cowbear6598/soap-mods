@@ -1,4 +1,4 @@
-export type TabId = 'git' | 'files' | 'services' | 'spec'
+export type TabId = 'git' | 'files' | 'services' | 'spec' | 'db'
 export type GitSubTab = 'diff' | 'branch' | 'log' | 'conflict'
 /** The branch tab's Fetch / Pull buttons. */
 export type GitSync = 'fetch' | 'pull'
@@ -322,6 +322,58 @@ export type SpecView = {
   stamp: string
 }
 
+/** A saved SQL Server connection, as the DB tab lists it; the password is not here (Keychain or DPAPI). */
+export type DbConnection = {
+  id: string
+  /** As the connection string gave it: `tcp:host,1433`, `host\instance`. */
+  server: string
+  /** '' for the login's default database. */
+  database: string
+  /** '' with Windows integrated security. */
+  user: string
+  isIntegrated: boolean
+  /** TrustServerCertificate=True: sqlcmd -C. */
+  trustCert: boolean
+}
+
+/** A table or view of the open connection. */
+export type DbTable = { schema: string; name: string; isView: boolean }
+
+export type DbColumn = { name: string; type: string; isNullable: boolean }
+
+/** What a SELECT returned: only the first DB_ROW_LIMIT rows are kept. */
+export type DbResult = {
+  columns: string[]
+  rows: string[][]
+  /** Rows sqlcmd printed, kept or not. */
+  total: number
+  /** sqlcmd's output hit the size cap: there may be more rows than total. */
+  isTruncated: boolean
+}
+
+export type DbView = {
+  /** False before the saved connections are read. */
+  isLoaded: boolean
+  connections: DbConnection[]
+  /** Id of the connection opened, '' for the list. */
+  open: string
+  /** The open connection's tables and views, null while they are read. */
+  tables: DbTable[] | null
+  /** The table expanded to its columns, as `schema.name`; '' when none. */
+  table: string
+  columns: DbColumn[]
+  /** Text in the query field. */
+  query: string
+  /** The last query's rows, null before one ran. */
+  result: DbResult | null
+  /** Why reading, adding or deleting connections or tables failed, '' when none. */
+  error: string
+  /** Why the last query was refused or failed, '' when none. */
+  queryError: string
+  /** Connection whose trash button was pressed once and now asks to confirm, '' when none. */
+  deleteArmed: string
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'soap-mods': {
@@ -341,6 +393,7 @@ declare module 'claude-code' {
       services: ServicesView
       files: FilesView
       spec: SpecView
+      db: DbView
       log: LogView
       cover: Cover
     }

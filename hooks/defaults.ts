@@ -1,6 +1,6 @@
 // 各個狀態的初始值，和換分頁時要清掉的訊息。狀態本身（atom）在 register.tsx：引擎只認得那裡宣告的。
 
-import type { DiffPaneView, FileView, FilesView, GitView, LogView, MergeView, Plan, ServicesView, SpecView } from '../types'
+import type { DbView, DiffPaneView, FileView, FilesView, GitView, LogView, MergeView, Plan, ServicesView, SpecView } from '../types'
 import { LOG_PAGE } from './config'
 
 export const EMPTY: GitView = {
@@ -29,6 +29,11 @@ export const EMPTY_FILE_VIEW: FileView = { path: '', text: '', isTruncated: fals
 export const EMPTY_PLAN: Plan = { branch: '', issueNumber: '', description: '', goals: [], constraints: [], related: [], verify: [] }
 
 export const EMPTY_SPEC: SpecView = { isLoaded: false, specs: [], error: '', open: '', deleteArmed: '', deleteError: '', plan: EMPTY_PLAN, problems: [], stamp: '' }
+
+// 離開打開的連線（回清單、換連線）時清掉的東西。
+export const NO_DB_CONNECTION = { open: '', tables: null, table: '', columns: [], query: '', result: null, error: '', queryError: '' } satisfies Partial<DbView>
+
+export const EMPTY_DB: DbView = { isLoaded: false, connections: [], deleteArmed: '', ...NO_DB_CONNECTION }
 
 export const EMPTY_MERGE: MergeView = {
   path: '',
