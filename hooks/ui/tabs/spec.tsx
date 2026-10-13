@@ -1,10 +1,11 @@
-import { PLAN_FILE } from '../../config'
+import { ARMED_TINT, PLAN_FILE } from '../../config'
 import { planPath } from '../../spec/parse'
 import { backButton } from '../stepBar'
 import type { Widgets } from '../widgets'
 import type { TabBody, TabContext } from './context'
 
 // Spec 分頁：plan skill 在 .soap/tasks/<feature>/plan.yaml 寫的計劃，一個 feature 一列，最新改的在上面。
+// 每列最右邊一個垃圾桶：按了換成紅底打勾，幾秒內再按才刪掉整個 feature 資料夾；刪不掉的原因寫在清單上面。
 // 點了在分頁裡看它的 Description／Goals／Related／Verify，最上面 ← Back（b）回清單，最底下正中間 Do（d）叫 Claude 照它做。
 // plan.yaml 格式不對時先列出哪裡不對（紅字），讀得到的部分照樣畫。
 export const specTab: TabBody = ctx => (ctx.d.spec.open === '' ? specList(ctx) : planView(ctx))
@@ -17,17 +18,30 @@ function specList({ w, d, a }: TabContext) {
   if (s.specs.length === 0) return <Text dimColor>No specs yet. Run /soap-mods:plan to write one.</Text>
 
   return (
-    <Box flexDirection="column">
-      {s.specs.map(spec =>
-        w.pressRow({
-          key: `spec:item:${spec.name}`,
-          label: spec.name,
-          isDim: !spec.hasPlan,
-          isTruncated: true,
-          rest: !spec.hasPlan && <Text dimColor>{`no ${PLAN_FILE}`}</Text>,
-          onPress: () => a.openSpec(spec.name),
-        }),
-      )}
+    <Box flexDirection="column" gap={1}>
+      {s.deleteError !== '' && <Text color="error">{s.deleteError}</Text>}
+      <Box flexDirection="column">
+        {s.specs.map(spec => {
+          const isArmed = s.deleteArmed === spec.name
+
+          return w.pressRow({
+            key: `spec:item:${spec.name}`,
+            label: spec.name,
+            isDim: !spec.hasPlan,
+            isTruncated: true,
+            rest: !spec.hasPlan && <Text dimColor>{`no ${PLAN_FILE}`}</Text>,
+            onPress: () => a.openSpec(spec.name),
+            trailing: w.iconButton(
+              `spec:delete:${spec.name}`,
+              isArmed ? 'check' : 'trash',
+              isArmed ? 'Confirm' : 'Delete',
+              false,
+              () => a.deleteSpec(spec.name),
+              isArmed ? ARMED_TINT : undefined,
+            ),
+          })
+        })}
+      </Box>
     </Box>
   )
 }

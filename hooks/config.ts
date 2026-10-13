@@ -152,8 +152,10 @@ export const SERVICES_SCAN_MS = 5_000
 // 服務要一點時間才會 LISTEN）。這段時間內掛掉就算重跑失敗，在面板上提示。
 export const RESTART_GAP_MS = 500
 export const RESTART_CHECK_MS = [2_000, 5_000, 15_000, 30_000]
-// 分支的垃圾桶換成打勾後，多久沒再按就收回去。
+// 分支、Spec 的垃圾桶換成打勾後，或分支那列標成再按一次切換後，多久沒再按就收回去。
 export const DELETE_ARM_MS = 3_000
+// 分支按了一次、等著再按一次切換時，那列後面寫的提示。
+export const SWITCH_ARMED_HINT = 'press again to switch'
 // 複製分支名稱後，綠底打勾留多久。
 export const COPIED_MS = 2_000
 // branch 分頁的 Fetch／Pull 最多等多久（git 預設只等 30 秒，大 repo 抓不完）。
@@ -162,3 +164,8 @@ export const SYNC_TIMEOUT_MS = 300_000
 // 多久看一次面板是不是剛被切到前面（要補焦點）；按完按鈕後多久內丟了焦點也補回來。見 register.tsx 的 focusWhenShown。
 export const FOCUS_WATCH_MS = 200
 export const REFOCUS_AFTER_PRESS_MS = 600
+// 輸入框收到一個字時，Soap Panel 在這段時間內還拿著鍵盤，就當作是在面板上按了沒綁的快捷鍵（見 register.tsx 的 isStrayKey）。
+// 要比 FOCUS_WATCH_MS 長一點：最後一次看到它拿著鍵盤，最多是一輪之前。
+export const STRAY_HELD_MS = 300
+// 輸入框在這段時間內才剛收到別的字（正在打字），就不當作按錯的快捷鍵。
+export const STRAY_QUIET_MS = 400

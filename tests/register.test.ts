@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { DANGER, GOOD, WARN } from '../hooks/config'
+import { DANGER, GOOD, SWITCH_ARMED_HINT, WARN } from '../hooks/config'
 import {
   CONFLICTED,
   MAC_ARGS_OUT,
@@ -168,6 +168,7 @@ test('the branch tab lists the branches, opens Remote, shows why a switch failed
   expect(await ui.find({ key: 'switch:r:origin/main' })).toBeDefined()
   // 切換失敗的訊息顯示在 branch 頁，換分頁就清掉。
   await ui.press({ key: 'switch:r:origin/main' })
+  await ui.press({ key: 'switch:r:origin/main' })
   expect(await ui.find({ type: 'Text', text: SWITCH_FAILED })).toBeDefined()
   await ui.press({ key: 'sub:diff' })
   await ui.press({ key: 'sub:branch' })
@@ -224,8 +225,13 @@ test('switching to another branch moves the current marker there, and the log ta
 
   await ui.press({ key: 'sub:branch' })
   expect(await marked('main')).toBe(true)
+  // 按一次只把那列標成再按一次，還不切；按別列就改標那列；再按同一列才切。
+  await ui.press({ key: 'switch:l:dev' })
+  expect(switches).toEqual([])
+  expect((await ui.find({ key: 'switch:l:dev:row' }))?.text.includes(SWITCH_ARMED_HINT)).toBe(true)
   await ui.press({ key: 'switch:l:dev' })
   expect(switches).toEqual(['switch dev'])
+  expect(await ui.find({ type: 'Text', text: SWITCH_ARMED_HINT })).toBeUndefined()
   // ● 移到 dev；main 變成一般的分支，多了垃圾桶，dev 的垃圾桶不見了。
   expect(await marked('dev')).toBe(true)
   expect(await marked('main')).toBe(false)
@@ -275,6 +281,48 @@ test('deleting a local branch asks with a check first, and forces the delete whe
   expect(deletes).toEqual(['branch -d dev', 'branch -D dev'])
   expect(toasts).toEqual(['Deleted dev'])
   expect(await ui.find({ key: 'switch:l:dev' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('an armed branch switch moves to the row pressed next and wears off after 3s', async ($, on) => {
+  const clock = mock.clock(on)
+  const switches: string[] = []
+  stubPanel(on, { now: null })
+  gitRepo(on, {
+    status: '## main\0',
+    branches: [branchLine('main', { isCurrent: true }), branchLine('dev'), branchLine('origin/main')],
+    run: cmd => {
+      if (cmd[0] !== 'switch') return undefined
+      switches.push(cmd.join(' '))
+
+      return ok('')
+    },
+  })
+  await openPanel($)
+  const hinted = async (key: string) => (await ui.find({ key: `${key}:row` }))?.text.includes(SWITCH_ARMED_HINT)
+
+  const ui = await mountPane($)
+  await ui.press({ key: 'sub:branch' })
+  await ui.press({ key: 'remote:toggle' })
+  // 目前分支按了不做事，也不標。
+  await ui.press({ key: 'switch:l:main' })
+  expect(await hinted('switch:l:main')).toBe(false)
+  // 按 dev 再按 origin/main：標記移到 origin/main，dev 回復原樣；這時按 dev 只會重新標 dev。
+  await ui.press({ key: 'switch:l:dev' })
+  await ui.press({ key: 'switch:r:origin/main' })
+  expect(await hinted('switch:l:dev')).toBe(false)
+  expect(await hinted('switch:r:origin/main')).toBe(true)
+  await ui.press({ key: 'switch:l:dev' })
+  expect(switches).toEqual([])
+  // 3 秒沒再按就收回去，再按又只是標記。
+  await clock.advance(3_000)
+  expect(await hinted('switch:l:dev')).toBe(false)
+  await ui.press({ key: 'switch:l:dev' })
+  expect(switches).toEqual([])
+  // 遠端分支一樣按兩次，用 --track 切。
+  await ui.press({ key: 'switch:r:origin/main' })
+  await ui.press({ key: 'switch:r:origin/main' })
+  expect(switches).toEqual(['switch --track origin/main'])
   await ui.unmount()
 })
 

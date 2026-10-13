@@ -1,11 +1,11 @@
 import type { GitBranch } from '../../../types'
-import { ARMED_TINT, BRANCH_ROW_LIMIT, BRANCH_TREE_LIMIT, COPIED_TINT, FOLDER_COLOR } from '../../config'
+import { ARMED_TINT, BRANCH_ROW_LIMIT, BRANCH_TREE_LIMIT, COPIED_TINT, FOLDER_COLOR, SWITCH_ARMED_HINT } from '../../config'
 import { filterBranches, hasQuery } from '../../git/parse'
 import { branchTree, treeRows } from '../../git/tree'
 import type { TabBody } from './context'
 
-// branch 分頁。parseBranches 已經排好：目前分支第一個，其餘照名稱。切換後被點的那列會搬位置、面板丟掉焦點，
-// 由 focusWhenShown 補回來。
+// branch 分頁。parseBranches 已經排好：目前分支第一個，其餘照名稱。點分支要按兩次才切：第一次那列變黃、
+// 後面寫「press again to switch」，再按同一列才切。切換後被點的那列會搬位置、面板丟掉焦點，由 focusWhenShown 補回來。
 // 搜尋時只留名稱符合的分支，Remote 直接展開（不用再按 ▸），沒有符合的那組整組不畫。
 // 分支名稱照「/」分成資料夾（feature/、soap/feature/），點資料夾開合，預設收起；目前分支固定在最上面、寫全名。
 // 搜尋時資料夾全部打開、點不動。每個資料夾直屬的分支最多畫 BRANCH_ROW_LIMIT 個，整組最多 BRANCH_TREE_LIMIT 列，
@@ -48,14 +48,17 @@ export const branchTab: TabBody = ({ w, d, a }) => {
         armed === null ? undefined : ARMED_TINT,
       )
 
+    const isSwitchArmed = !b.isCurrent && v.switchArmed === id
+
     return w.pressRow({
       key: `switch:${id}`,
       label,
-      isDim: b.isRemote,
-      isBold: b.isCurrent,
-      color: b.isCurrent ? 'success' : undefined,
+      isDim: b.isRemote && !isSwitchArmed,
+      isBold: b.isCurrent || isSwitchArmed,
+      color: b.isCurrent ? 'success' : isSwitchArmed ? 'warning' : undefined,
       indent: b.isCurrent ? 0 : indentAt(depth),
       lead: b.isCurrent ? <Text color="success">●</Text> : undefined,
+      rest: isSwitchArmed ? <Text color="warning">{SWITCH_ARMED_HINT}</Text> : undefined,
       onPress: b.isCurrent ? () => undefined : () => a.switchBranch(b.name, b.isRemote),
       trailing: (
         <Box key={`trailing:${id}`} gap={1} alignItems="center">

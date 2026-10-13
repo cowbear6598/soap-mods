@@ -36,6 +36,8 @@ export type GitView = {
    * isForce: the plain delete failed for unmerged commits and the next press forces it.
    */
   deleteArmed: { name: string; isForce: boolean } | null
+  /** Branch row pressed once and now asks to press again to switch, as `l:<name>` / `r:<name>`; '' when none. */
+  switchArmed: string
   /** Branch whose copy button was just pressed and shows a check for COPIED_MS, '' when none. */
   copied: string
   /** The operation stopped for conflicts, '' when none. */
@@ -309,6 +311,10 @@ export type SpecView = {
   error: string
   /** The feature opened, '' for the list. */
   open: string
+  /** Feature whose trash button was pressed once and now asks to confirm, '' when none. */
+  deleteArmed: string
+  /** Why the last delete failed, '' when none. */
+  deleteError: string
   plan: Plan
   /** What is wrong with the opened plan.yaml (format, missing keys, reading it); empty when it is fine. */
   problems: string[]

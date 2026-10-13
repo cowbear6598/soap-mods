@@ -11,6 +11,7 @@ export const EMPTY: GitView = {
   error: '',
   branchError: '',
   deleteArmed: null,
+  switchArmed: '',
   copied: '',
   op: '',
   opError: '',
@@ -27,7 +28,7 @@ export const EMPTY_FILE_VIEW: FileView = { path: '', text: '', isTruncated: fals
 
 export const EMPTY_PLAN: Plan = { branch: '', issueNumber: '', description: '', goals: [], constraints: [], related: [], verify: [] }
 
-export const EMPTY_SPEC: SpecView = { isLoaded: false, specs: [], error: '', open: '', plan: EMPTY_PLAN, problems: [], stamp: '' }
+export const EMPTY_SPEC: SpecView = { isLoaded: false, specs: [], error: '', open: '', deleteArmed: '', deleteError: '', plan: EMPTY_PLAN, problems: [], stamp: '' }
 
 export const EMPTY_MERGE: MergeView = {
   path: '',
@@ -69,5 +70,5 @@ export const EMPTY_DIFF: DiffPaneView = {
 // 關掉 log 分頁打開的 commit；選範圍也一起結束。
 export const NO_COMMIT: Partial<LogView> = { opened: [], files: null, commitError: '', isPicking: false, rangeStart: '' }
 
-// 切換／刪除分支、abort／continue 失敗的訊息和待確認的刪除、abort：換分頁、換 repo 時清掉。
-export const NO_MESSAGES = { branchError: '', deleteArmed: null, opError: '', isAbortArmed: false } as const
+// 切換／刪除分支、abort／continue 失敗的訊息和待確認的切換、刪除、abort：換分頁、換 repo 時清掉。
+export const NO_MESSAGES = { branchError: '', deleteArmed: null, switchArmed: '', opError: '', isAbortArmed: false } as const

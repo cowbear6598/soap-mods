@@ -125,7 +125,7 @@ function encodePowerShell(script: string) {
   return btoa(bin)
 }
 
-function powershellArgv(script: string) {
+export function powershellArgv(script: string) {
   return ['powershell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encodePowerShell(script)]
 }
 

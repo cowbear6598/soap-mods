@@ -1,6 +1,7 @@
-import { expect, test } from 'claude-code/testing'
+import { expect, mock, test } from 'claude-code/testing'
 
-import { type TestOn, endTurn, fsEntry, mountPane, ok, posix, stubPanel } from '../test-fixtures'
+import { ARMED_TINT } from '../../hooks/config'
+import { type TestOn, endTurn, fail, fsEntry, mountPane, ok, posix, stubPanel } from '../test-fixtures'
 
 const TASKS = '/proj/.soap/tasks'
 
@@ -18,16 +19,19 @@ verify:
 // .soap/tasks 底下的計劃：路徑（相對 /proj/.soap/tasks）→ 內容和修改時間。
 type Plans = Record<string, { text: string; mtimeMs: number }>
 
+type Run = ReturnType<typeof ok>
+
 // folders 是 feature 資料夾；一個都沒有就當 .soap/tasks 不存在（列不出來）。
-function tasks(on: TestOn, state: { folders: string[]; plans: Plans }) {
+// now：給 null 時測試自己用 mock.clock；run：跑的指令（argv）給了結果就用它的，沒給都成功。
+function tasks(on: TestOn, state: { folders: string[]; plans: Plans }, { now = 0, run }: { now?: number | null; run?: (argv: readonly string[]) => Run | undefined } = {}) {
   const planAt = (path: string | undefined) => {
     const plan = state.plans[posix(path)?.slice(TASKS.length + 1) ?? '']
     if (plan === undefined) throw new Error('ENOENT')
 
     return plan
   }
-  stubPanel(on, { root: '/proj' })
-  on('process.run', () => ok(''))
+  stubPanel(on, { root: '/proj', now })
+  on('process.run', (_$, e) => run?.(e.argv) ?? ok(''))
   on('fs.exists', (_$, e) => ({ value: posix(e.path) === TASKS && state.folders.length > 0 }))
   on('fs.list', (_$, e) => {
     if (posix(e.path) === TASKS && state.folders.length === 0) throw new Error('ENOENT')
@@ -106,6 +110,78 @@ test('the Spec tab lists the plans newest first, opens one to its Description, G
   await ui.press({ key: 'spec:back' })
   expect(await ui.find({ key: 'spec:item:login' })).toBeDefined()
   await ui.unmount()
+})
+
+test('the trash button of a spec asks with a check first, then deletes its whole folder; a failed delete keeps the row and says why', async ($, on) => {
+  const clock = mock.clock(on)
+  const state = {
+    folders: ['login', 'search'],
+    plans: { 'login/plan.yaml': { text: LOGIN, mtimeMs: 1 }, 'search/plan.yaml': { text: LOGIN, mtimeMs: 2 } } as Plans,
+  }
+  const removed: string[][] = []
+  const toasts: string[] = []
+  let isFailing = false
+  tasks(on, state, {
+    now: null,
+    run: argv => {
+      if (argv[0] !== 'rm') return undefined
+      removed.push(argv.map(a => posix(a) ?? a))
+      if (isFailing) return fail('rm: Permission denied', 1)
+      const name = (posix(argv.at(-1)) ?? '').slice(TASKS.length + 1)
+      state.folders = state.folders.filter(f => f !== name)
+
+      return ok('')
+    },
+  })
+  on('env.get', () => ({ value: undefined }))
+  on('ui.toast', (_$, e) => {
+    toasts.push(e.text)
+
+    return { value: undefined }
+  })
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    state.folders = ['login', 'search']
+    removed.length = 0
+    toasts.length = 0
+    isFailing = false
+    const ui = await mountPane($, surface)
+    await ui.press({ key: 'tab:spec' })
+    // 每列一個垃圾桶；按一下只換成打勾（桌面版是紅底），不刪。
+    expect(await ui.find({ key: 'spec:delete:login' })).toBeDefined()
+    expect(await ui.find({ key: 'spec:delete:search' })).toBeDefined()
+    await ui.press({ key: 'spec:delete:login' })
+    expect(removed).toEqual([])
+    if (surface === 'desktop') expect((await ui.find({ key: 'spec:delete:login:box' }))?.props.backgroundColor).toBe(ARMED_TINT.background)
+    else expect((await ui.find({ key: 'spec:delete:login' }))?.props.label).toBe('Confirm')
+    // 按別列的垃圾桶：原本那列收回去，打勾移過去。3 秒沒再按也收回去。
+    await ui.press({ key: 'spec:delete:search' })
+    if (surface === 'terminal') {
+      expect((await ui.find({ key: 'spec:delete:login' }))?.props.label).toBe('Delete')
+      expect((await ui.find({ key: 'spec:delete:search' }))?.props.label).toBe('Confirm')
+    }
+    await clock.advance(3_000)
+    if (surface === 'terminal') expect((await ui.find({ key: 'spec:delete:search' }))?.props.label).toBe('Delete')
+
+    // 刪不掉：紅字寫原因，那列還在。
+    isFailing = true
+    await ui.press({ key: 'spec:delete:login' })
+    await ui.press({ key: 'spec:delete:login' })
+    expect(removed).toEqual([['rm', '-rf', '--', `${TASKS}/login`]])
+    expect(await ui.find({ type: 'Text', text: /^Couldn't delete login: .*Permission denied/ })).toBeDefined()
+    expect(await ui.find({ key: 'spec:item:login' })).toBeDefined()
+
+    // 再按兩次：刪掉整個資料夾，那列不見了，錯誤也清掉。
+    isFailing = false
+    await ui.press({ key: 'spec:delete:login' })
+    await ui.press({ key: 'spec:delete:login' })
+    expect(removed).toHaveLength(2)
+    expect(toasts).toEqual(['Deleted login'])
+    expect(await ui.find({ key: 'spec:item:login' })).toBeUndefined()
+    expect(await ui.find({ key: 'spec:item:search' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /^Couldn't delete/ })).toBeUndefined()
+    await ui.unmount()
+  }
 })
 
 test('with no .soap/tasks the Spec tab says to run /soap-mods:plan, and at turn end it picks up a new plan and rereads the open one', async ($, on) => {
