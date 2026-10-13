@@ -31,6 +31,7 @@ test('ringAnchor takes the swapped-in button, then an open Back, then the tab ic
   expect(ringAnchor(new Set(['diff:back', 'sub:diff']), 'git', 'diff')).toBe('diff:back')
   expect(ringAnchor(new Set(['merge:prev', 'sub:log', 'tab:git']), 'git', 'log')).toBe('sub:log')
   expect(ringAnchor(new Set(['log:back', 'sub:log']), 'git', 'log')).toBe('log:back')
+  expect(ringAnchor(new Set(['files:dir:src', 'files:back', 'tab:files']), 'files', 'diff')).toBe('files:back')
   expect(ringAnchor(new Set(['tab:services']), 'services', 'diff')).toBe('tab:services')
   expect(ringAnchor(new Set(['tab:services', 'sub:diff']), 'services', 'diff')).toBe('tab:services')
   // 按的按鈕換成指定的那顆：先移到它，不移到遠處的 Back。

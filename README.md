@@ -4,7 +4,7 @@ CptSoap 的 Claude Code Panel mod。
 
 ## 目前的功能
 
-面板上方是 Tab：**Git** 和 **Services**。
+面板上方是 Tab：**Files**、**Git** 和 **Services**。
 
 選到 Git 後最上面是一排 repo 按鈕，例如 `a*`　`b`　`c* !`：`*` 是有未提交的變更，`!` 是有衝突。session 資料夾本身是 repo 時只有它一個；不是的話（例如在 `company/` 開，底下 `a`、`b`、`c` 各是一個 repo）列出下一層的 repo，點哪個，下面的 diff／branch／log／conflict 就看哪個。面板不會自己換（一個回合可能動到好幾個 repo），每個回合結束後所有 repo 的數字一起更新。只看下一層，名稱開頭是 `.` 的資料夾不算。
 
@@ -28,6 +28,8 @@ CptSoap 的 Claude Code Panel mod。
 沒有衝突標記可以一段一段選的檔案（一邊刪掉了、二進位檔、標記已經被你手動清掉）改成整個檔案選：**Use ours**、**Use theirs**（那一邊把檔案刪了就 `git rm`）、**Mark resolved as is**（照目前的樣子 `git add`）。
 
 中間那欄不能直接打字修改（引擎沒有多行編輯器）。結果是從 git 的三個版本算出來的，**你在編輯器裡手動改過的內容不會顯示，按 Apply 會蓋掉**；要手動解的話，自己改完把衝突標記都清掉，面板就會改成整個檔案選，按 **Mark resolved as is**。面板會在回合結束或輸入 `/soap-panel` 時重讀，沒變的段落保留已經做的選擇。
+
+**Files** 列出 session 資料夾裡的檔案：資料夾在前（點了進去），檔案顯示大小；子資料夾裡最上面是 **← Back**（`b`）回上一層，旁邊是路徑（不會走出 session 資料夾）。回合結束時重新列一次。
 
 **Services**（Windows 和 macOS）列出 session 資料夾底下正在跑的服務。不管是你自己開的，還是 AI 在背景開的都算，例如 `npm run dev`、`dotnet run`、`bun run dev`。每筆服務顯示指令、所在資料夾、LISTEN 的 port、跑了多久和 PID，右邊有兩顆按鈕：
 

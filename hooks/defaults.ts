@@ -1,6 +1,6 @@
 // 各個狀態的初始值，和換分頁時要清掉的訊息。狀態本身（atom）在 register.tsx：引擎只認得那裡宣告的。
 
-import type { DiffPaneView, GitView, LogView, MergeView, ServicesView } from '../types'
+import type { DiffPaneView, FilesView, GitView, LogView, MergeView, ServicesView } from '../types'
 import { LOG_PAGE } from './config'
 
 export const EMPTY: GitView = {
@@ -20,6 +20,8 @@ export const EMPTY: GitView = {
 }
 
 export const EMPTY_SERVICES: ServicesView = { isLoaded: false, items: [], error: '', actionError: '' }
+
+export const EMPTY_FILES: FilesView = { dir: '', isLoaded: false, entries: [], total: 0, error: '' }
 
 export const EMPTY_MERGE: MergeView = {
   path: '',

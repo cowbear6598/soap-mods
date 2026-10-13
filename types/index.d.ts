@@ -1,4 +1,4 @@
-export type TabId = 'git' | 'services'
+export type TabId = 'git' | 'files' | 'services'
 export type GitSubTab = 'diff' | 'branch' | 'log' | 'conflict'
 /** The branch tab's Fetch / Pull buttons. */
 export type GitSync = 'fetch' | 'pull'
@@ -239,6 +239,28 @@ export type ServicesView = {
   actionError: string
 }
 
+/** One entry of the folder the Files tab shows. */
+export type FolderEntry = {
+  name: string
+  /** A symbolic link is `other`. */
+  kind: 'file' | 'dir' | 'other'
+  /** Bytes, for a file. */
+  size: number
+}
+
+export type FilesView = {
+  /** The folder shown, relative to the session folder with `/`; '' is the session folder itself. */
+  dir: string
+  /** False before the first listing finishes. */
+  isLoaded: boolean
+  /** Folders first, then files, each by name; only the first FILES_ROW_LIMIT. */
+  entries: FolderEntry[]
+  /** How many entries the folder holds, drawn or not. */
+  total: number
+  /** Why listing the folder failed, '' when none. */
+  error: string
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'soap-mods': {
@@ -256,6 +278,7 @@ declare module 'claude-code' {
       /** How many files each diff tab group draws; Show more raises it. */
       fileLimit: number
       services: ServicesView
+      files: FilesView
       merge: MergeView
       log: LogView
       diffPane: DiffPaneView

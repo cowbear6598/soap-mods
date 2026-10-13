@@ -12,6 +12,7 @@ import { branchTab } from './tabs/branch'
 import { conflictTab } from './tabs/conflict'
 import type { TabBody, TabContext } from './tabs/context'
 import { diffTab } from './tabs/diff'
+import { filesTab } from './tabs/files'
 import { logTab } from './tabs/log'
 import { servicesTab } from './tabs/services'
 import { usageBar } from './usage'
@@ -35,6 +36,7 @@ const gitTab: TabBody = ctx => {
 
 const TAB_BODIES: Record<TabId, TabBody> = {
   git: gitTab,
+  files: filesTab,
   services: servicesTab,
 }
 

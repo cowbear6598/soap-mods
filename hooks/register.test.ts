@@ -630,6 +630,47 @@ test('the log tab lists the branch commits, marks unpushed ones, loads more, and
   await ui.unmount()
 })
 
+// ───── Files ─────
+
+test('the Files tab lists the session folder, folders first, opens a folder and goes back up', async ($, on) => {
+  const entry = (name: string, kind: 'file' | 'dir', size = 0) => ({ name, kind, size, mtimeMs: 0, isLink: false })
+  const listed: (string | undefined)[] = []
+  on('clock.now', () => ({ value: 0 }))
+  on('session.root', () => ({ value: '/proj' }))
+  on('fs.list', (_$, e) => {
+    const path = posix(e.path)
+    listed.push(path)
+    if (path === '/proj') return { value: [entry('README.md', 'file', 4300), entry('src', 'dir')] }
+    if (path === '/proj/src') return { value: [entry('main.ts', 'file', 120)] }
+
+    return { value: [] }
+  })
+  on('process.run', () => ok(''))
+
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ plugin: 'soap-mods', surface, component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+    await ui.press({ key: 'tab:files' })
+    expect(await ui.find({ key: 'sub:diff' })).toBeUndefined()
+    expect(await ui.find({ key: 'files:dir:src' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: 'README.md' })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: '4.2 KB' })).toBeDefined()
+    // session 資料夾本身：沒有路徑、沒有 Back。
+    expect(await ui.find({ key: 'files:back' })).toBeUndefined()
+
+    await ui.press({ key: 'files:dir:src' })
+    expect(listed.at(-1)).toBe('/proj/src')
+    expect(await ui.find({ type: 'Text', text: 'src/' })).toBeDefined()
+    expect((await ui.find({ key: 'files:back' }))?.props).toMatchObject({ label: '← Back', hotkey: 'b' })
+    expect(await ui.find({ type: 'Text', text: 'main.ts' })).toBeDefined()
+
+    await ui.press({ key: 'files:back' })
+    expect(listed.at(-1)).toBe('/proj')
+    expect(await ui.find({ key: 'files:dir:src' })).toBeDefined()
+    await ui.press({ key: 'tab:git' })
+    await ui.unmount()
+  }
+})
+
 // ───── Services ─────
 
 test('the Services tab lists the running services and stops one by killing its tree', async ($, on) => {

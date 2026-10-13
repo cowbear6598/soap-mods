@@ -6,6 +6,7 @@ import type { Elements, RenderSurface, SessionUsage, UiPressArgument } from 'cla
 import type {
   CommitFile,
   DiffPaneView,
+  FilesView,
   GitBranch,
   GitCommit,
   GitSubTab,
@@ -61,6 +62,9 @@ export type Actions = {
   abortOp: () => unknown
   cancelAbort: () => unknown
   continueOp: () => unknown
+  // files
+  // dir：相對 session 資料夾，'' 是它本身。
+  openDir: (dir: string) => unknown
   // services
   runServiceAction: (s: Service, action: ServiceAction) => unknown
   // 合併（畫在 Soap Panel 裡）
@@ -86,6 +90,7 @@ export type PanelData = {
   // 正在跑的 Fetch／Pull，'' 是沒有。
   syncing: GitSync | ''
   services: ServicesView
+  files: FilesView
   // 正在停掉／重跑的服務。
   servicePending: readonly ServicePending[]
   log: LogView

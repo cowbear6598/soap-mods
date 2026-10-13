@@ -43,6 +43,8 @@ export const ICONS = {
   log: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
   conflict:
     '<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+  files:
+    '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
   services:
     '<rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/>',
   restart: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
@@ -95,6 +97,7 @@ export const COPIED_TINT: Tint = { theme: GOOD.theme, hex: ACTIVE_ICON, backgrou
 
 // 上層 Tab。之後要加新的 Tab，在這裡加一筆，再到 ui/panel.tsx 的 TAB_BODIES 補上它的內容。
 export const TABS: { id: TabId; label: string; icon: IconName }[] = [
+  { id: 'files', label: 'Files', icon: 'files' },
   { id: 'git', label: 'Git', icon: 'git' },
   { id: 'services', label: 'Services', icon: 'services' },
 ]
@@ -118,6 +121,9 @@ export const BRANCH_TREE_LIMIT = 50
 export const FOLDER_COLOR = '#38bdf8'
 // diff 分頁每組一開始畫幾個檔案；Show more 再多畫這麼多個。沒 ignore 的資料夾會冒出上千個 untracked 檔案。
 export const FILE_PAGE = 50
+
+// Files 分頁一個資料夾最多畫幾列（node_modules 這種上千個的，全畫會卡）。
+export const FILES_ROW_LIMIT = 200
 
 // 面板最底下的用量：左邊 5h、右邊 weekly，各占一半。kind 是引擎回報的視窗名稱。
 export const USAGE_WINDOWS = [
