@@ -4,14 +4,15 @@
 import type { Cover } from '../types'
 import { patch } from './patch'
 
-type Kind = Exclude<Cover['kind'], 'none'>
-type DataOf<K extends Kind> = Extract<Cover, { kind: K }>['data']
+type Shown = Exclude<Cover, { kind: 'none' }>
+type Kind = Shown['kind']
+type DataOf<K extends Kind> = { [C in Shown as C['kind']]: C['data'] }[K]
 
 export const NO_COVER: Cover = { kind: 'none' }
 
 /** What `c` shows when it is a `kind`, else undefined. */
 export function coverData<K extends Kind>(c: Cover, kind: K): DataOf<K> | undefined {
-  return c.kind === kind ? (c as Extract<Cover, { kind: K }>).data : undefined
+  return c.kind === kind ? ((c as Shown).data as DataOf<K>) : undefined
 }
 
 /** `c` showing `data` as a `kind`; `c` itself when it already shows the same, so nothing redraws. */

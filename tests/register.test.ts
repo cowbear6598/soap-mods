@@ -972,7 +972,12 @@ test('services group under the repo they run in, in repo order, with the ones ou
   // 每一組：標題，和它底下的服務（PID）。
   const groups = (await ui.findAll({ type: 'Box' }))
     .filter(b => b.key?.startsWith('svc-group:'))
-    .map(b => [b.text.split('●')[0], ...b.children.flatMap(c => (c.props?.key?.startsWith('svc:') ? [c.props.key] : []))])
+    .map(b => [b.text.split('●')[0], ...b.children.flatMap(c => {
+      // 字串子節點沒有 props。
+      const key = (c as { props?: { key?: string } }).props?.key
+
+      return key?.startsWith('svc:') ? [key] : []
+    })])
   expect(groups).toEqual([
     ['api', 'svc:21'],
     ['web', 'svc:11'],

@@ -40,7 +40,7 @@ export function stubPanel(on: TestOn, { root = '/repo', now = 0 }: { root?: stri
 
 // Claude 的一個回合結束：面板在背景重讀看得到的東西，重畫一次等它讀完、畫好。要先 stubPanel。
 export async function endTurn($: TestEngine, ui: Awaited<ReturnType<typeof mountPane>>) {
-  await $.turn.complete({ answer: '' })
+  await $.turn.complete({ answer: '', reason: 'answer', durationMs: 0, isAborted: false, turnId: 'turn' })
   await ui.redraw()
 }
 

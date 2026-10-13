@@ -506,7 +506,7 @@ async function readGit($: EngineInterface) {
       ? undefined
       : update($, cover, c => {
           const cur = coverData(c, 'diff')
-          if (cur?.path !== shown?.path || cur.commits.length > 0) return c
+          if (cur === undefined || cur.path !== shown?.path || cur.commits.length > 0) return c
 
           return reread.path === '' ? NO_COVER : showCover(c, 'diff', reread)
         }),
