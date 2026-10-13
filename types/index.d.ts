@@ -261,6 +261,19 @@ export type FilesView = {
   error: string
 }
 
+/** A file of the Files tab opened to read, drawn over the tabs. */
+export type FileView = {
+  /** Relative to the session folder with `/`, '' when no file is open. */
+  path: string
+  /** The text drawn, cut at FILE_VIEW_MAX_CHARS; '' when there is none to draw. */
+  text: string
+  isTruncated: boolean
+  /** Why there is no text (a binary file, too large), '' otherwise. */
+  note: string
+  /** Why reading the file failed, '' when none. */
+  error: string
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'soap-mods': {
@@ -279,6 +292,7 @@ declare module 'claude-code' {
       fileLimit: number
       services: ServicesView
       files: FilesView
+      fileView: FileView
       merge: MergeView
       log: LogView
       diffPane: DiffPaneView

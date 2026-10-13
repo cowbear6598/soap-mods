@@ -6,22 +6,16 @@ import type { DiffPaneView } from '../../types'
 import { KIND_STYLE } from '../config'
 import { commitsLabel } from '../git/parse'
 import type { Actions, Press, Ui } from './actions'
+import { stepBar } from './stepBar'
 
 export function diffView(ui: Ui, shown: DiffPaneView, a: Actions, press: Press) {
-  const { Box, Button, Code, Text } = ui
+  const { Box, Code, Text } = ui
   const kind = KIND_STYLE[shown.kind]
-  const hasSteps = shown.files.length > 1
+  const index = shown.files.findIndex(f => f.path === shown.path)
 
   return (
     <Box flexDirection="column" gap={1}>
-      <Box gap={1} flexWrap="wrap" alignItems="center">
-        <Button key="diff:back" label="← Back" hotkey="b" onPress={press(() => a.closeDiff())} />
-        {hasSteps && [
-          <Text key="diff:count" dimColor>{`${shown.files.findIndex(f => f.path === shown.path) + 1} of ${shown.files.length} files`}</Text>,
-          <Button key="diff:prev" label="↑ Previous" hotkey="n" onPress={press(() => a.stepDiffFile(-1))} />,
-          <Button key="diff:next" label="↓ Next" hotkey="m" onPress={press(() => a.stepDiffFile(1))} />,
-        ]}
-      </Box>
+      {stepBar(ui, press, 'diff', index, shown.files.length, () => a.closeDiff(), step => a.stepDiffFile(step))}
       <Box gap={1} flexWrap="wrap">
         <Text bold color={kind.theme}>
           {kind.label}

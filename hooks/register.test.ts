@@ -652,7 +652,7 @@ test('the Files tab lists the session folder, folders first, opens a folder and 
     await ui.press({ key: 'tab:files' })
     expect(await ui.find({ key: 'sub:diff' })).toBeUndefined()
     expect(await ui.find({ key: 'files:dir:src' })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: 'README.md' })).toBeDefined()
+    expect(await ui.find({ key: 'files:file:README.md' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: '4.2 KB' })).toBeDefined()
     // session 資料夾本身：沒有路徑、沒有 Back。
     expect(await ui.find({ key: 'files:back' })).toBeUndefined()
@@ -661,7 +661,7 @@ test('the Files tab lists the session folder, folders first, opens a folder and 
     expect(listed.at(-1)).toBe('/proj/src')
     expect(await ui.find({ type: 'Text', text: 'src/' })).toBeDefined()
     expect((await ui.find({ key: 'files:back' }))?.props).toMatchObject({ label: '← Back', hotkey: 'b' })
-    expect(await ui.find({ type: 'Text', text: 'main.ts' })).toBeDefined()
+    expect(await ui.find({ key: 'files:file:main.ts' })).toBeDefined()
 
     await ui.press({ key: 'files:back' })
     expect(listed.at(-1)).toBe('/proj')
@@ -669,6 +669,38 @@ test('the Files tab lists the session folder, folders first, opens a folder and 
     await ui.press({ key: 'tab:git' })
     await ui.unmount()
   }
+})
+
+test('pressing a file in the Files tab shows its text over the tabs, steps with Next, and Back returns', async ($, on) => {
+  const entry = (name: string, size: number) => ({ name, kind: 'file', size, mtimeMs: 0, isLink: false }) as const
+  const texts: Record<string, string> = { '/proj/a.ts': 'const a = 1\r\n', '/proj/b.png': 'PNG\0\0' }
+  on('clock.now', () => ({ value: 0 }))
+  on('session.root', () => ({ value: '/proj' }))
+  on('fs.list', () => ({ value: [entry('b.png', 6), entry('a.ts', 12), entry('big.log', 5_000_000)] }))
+  on('fs.stat', (_$, e) => ({ value: { kind: 'file', size: posix(e.path) === '/proj/big.log' ? 5_000_000 : 12, mtimeMs: 0, isLink: false } }))
+  on('fs.read', (_$, e) => ({ value: texts[posix(e.path) ?? ''] ?? '' }))
+  on('process.run', () => ok(''))
+
+  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'desktop', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  await ui.press({ key: 'tab:files' })
+  await ui.press({ key: 'files:file:a.ts' })
+  // 蓋掉分頁：沒有分頁圖示，換成 Back 和內容（CRLF 換成 LF、有行號）。
+  expect(await ui.find({ key: 'tab:files' })).toBeUndefined()
+  expect((await ui.find({ key: 'fileview:back' }))?.props).toMatchObject({ hotkey: 'b' })
+  expect((await ui.find({ type: 'Code' }))?.props).toMatchObject({ source: 'const a = 1\n', path: 'a.ts', startLine: 1 })
+  expect(await ui.find({ type: 'Text', text: '1 of 3 files' })).toBeDefined()
+
+  await ui.press({ key: 'fileview:next' })
+  expect(await ui.find({ type: 'Text', text: 'Binary file; nothing to show.' })).toBeDefined()
+  expect(await ui.find({ type: 'Code' })).toBeUndefined()
+  await ui.press({ key: 'fileview:next' })
+  expect(await ui.find({ type: 'Text', text: 'Too large to show (4.8 MB).' })).toBeDefined()
+
+  await ui.press({ key: 'fileview:back' })
+  expect(await ui.find({ key: 'fileview:back' })).toBeUndefined()
+  expect(await ui.find({ key: 'files:file:a.ts' })).toBeDefined()
+  await ui.press({ key: 'tab:git' })
+  await ui.unmount()
 })
 
 // ───── Services ─────

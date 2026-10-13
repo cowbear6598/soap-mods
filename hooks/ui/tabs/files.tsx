@@ -6,29 +6,24 @@ import type { TabBody } from './context'
 
 // Files 分頁：session 資料夾（或點進去的子資料夾）裡有什麼。資料夾在前、點了進去。
 // 子資料夾裡最上面是 ← Back（b）回上一層、旁邊是路徑；session 資料夾本身兩個都不畫，也就走不出去。
-// 檔案只列名稱和大小；register 只存前 FILES_ROW_LIMIT 筆，其餘寫「… N more」。
+// 檔案列名稱和大小，點了在 Soap Panel 裡看內容（fileView）；register 只存前 FILES_ROW_LIMIT 筆，其餘寫「… N more」。
 export const filesTab: TabBody = ({ w, d, a }) => {
   const { Box, Button, Text } = w
   const f = d.files
   const hidden = f.total - f.entries.length
 
+  // 資料夾點了進去；檔案（連結也是）點了看內容，大小貼在最右邊。
   const entryRow = (e: FolderEntry) =>
-    e.kind === 'dir' ? (
-      w.pressRow({ key: `files:dir:${e.name}`, label: `${e.name}/`, color: FOLDER_COLOR, onPress: () => a.openDir(childPath(f.dir, e.name)) })
-    ) : (
-      <Box key={`files:file:${e.name}`} gap={1} paddingLeft={2}>
-        <Box flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
-          <Text dimColor={e.kind === 'other'} wrap="truncate-end">
-            {e.name}
-          </Text>
-        </Box>
-        {e.kind === 'file' && (
-          <Box flexShrink={0}>
-            <Text dimColor>{formatSize(e.size)}</Text>
-          </Box>
-        )}
-      </Box>
-    )
+    e.kind === 'dir'
+      ? w.pressRow({ key: `files:dir:${e.name}`, label: `${e.name}/`, color: FOLDER_COLOR, onPress: () => a.openDir(childPath(f.dir, e.name)) })
+      : w.pressRow({
+          key: `files:file:${e.name}`,
+          label: e.name,
+          isDim: e.kind === 'other',
+          isTruncated: true,
+          rest: e.kind === 'file' && <Text dimColor>{formatSize(e.size)}</Text>,
+          onPress: () => a.openFile(childPath(f.dir, e.name)),
+        })
 
   const body = !f.isLoaded ? (
     <Text dimColor>Loading…</Text>

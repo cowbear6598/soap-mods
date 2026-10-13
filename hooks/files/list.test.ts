@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { childPath, formatSize, sortEntries } from './list'
+import { childPath, fileSteps, formatSize, sortEntries, viewText } from './list'
 
 const entry = (name: string, kind: 'file' | 'dir' | 'other', size = 0) => ({ name, kind, size, mtimeMs: 0, isLink: kind === 'other' })
 
@@ -20,4 +20,17 @@ test('formatSize writes bytes with one decimal below 10', () => {
   expect(formatSize(812)).toBe('812 B')
   expect(formatSize(4300)).toBe('4.2 KB')
   expect(formatSize(13 * 1024 * 1024)).toBe('13 MB')
+})
+
+test('fileSteps lists the files of the folder as paths, folders left out', () => {
+  const files = { dir: 'src', isLoaded: true, total: 3, error: '', entries: [{ name: 'ui', kind: 'dir', size: 0 }, { name: 'a.ts', kind: 'file', size: 1 }, { name: 'b.ts', kind: 'file', size: 1 }] } as const
+  expect(fileSteps({ ...files, entries: [...files.entries] })).toEqual(['src/a.ts', 'src/b.ts'])
+})
+
+test('viewText turns CRLF into LF, drops control characters, refuses binary and cuts long text at a line end', () => {
+  expect(viewText('a\r\nb\x1b[0m\tc\n')).toEqual({ text: 'a\nb[0m\tc\n', isTruncated: false })
+  expect(viewText('PNG\0\0data')).toBeNull()
+  expect(viewText('bad \uFFFD byte')).toBeNull()
+  const long = viewText(`${'x'.repeat(40_000)}\n${'y'.repeat(40_000)}\n`)
+  expect(long).toEqual({ text: 'x'.repeat(40_000), isTruncated: true })
 })

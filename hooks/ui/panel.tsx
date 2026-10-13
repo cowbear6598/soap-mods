@@ -1,5 +1,5 @@
 // Soap Panel 本體：最上面的 Tab、repo 列、子分頁，中間是分頁內容，最底下是用量。
-// 打開了衝突檔案或檔案的差異時，上面整塊換成合併（mergeView）或差異（diffView），Back 回來。
+// 打開了衝突檔案、檔案的差異或 Files 分頁的檔案時，上面整塊換成合併（mergeView）、差異（diffView）或內容（fileView），Back 回來。
 // 加分頁：config.ts 的 TABS／SUB_TABS 加一筆，這裡的 TAB_BODIES／SUB_TAB_BODIES 加它的內容。
 
 import type { GitSubTab, TabId } from '../../types'
@@ -7,6 +7,7 @@ import { DANGER, SUB_TABS, TABS } from '../config'
 import { isConflict } from '../git/parse'
 import type { Actions, PanelData, Press, Ui } from './actions'
 import { diffView } from './diffView'
+import { fileView } from './fileView'
 import { mergeView } from './mergeView'
 import { branchTab } from './tabs/branch'
 import { conflictTab } from './tabs/conflict'
@@ -70,13 +71,21 @@ function gitHeader({ w, d, a }: TabContext) {
   )
 }
 
+// 打開了衝突檔案、檔案的差異或檔案內容：蓋掉分頁畫它；都沒有是 null。
+function coverOf(ui: Ui, d: PanelData, a: Actions, press: Press) {
+  if (d.merge.path !== '') return mergeView(ui, d.merge, d.isMergeBusy, a, press)
+  if (d.diff.path !== '') return diffView(ui, d.diff, a, press)
+  if (d.fileView.path !== '') return fileView(ui, d.fileView, d.files, a, press)
+
+  return null
+}
+
 export function renderPanel(ui: Ui, d: PanelData, a: Actions, press: Press) {
   const w = makeWidgets(ui, d.surface === 'terminal', press)
   const { Box, Text } = w
   const ctx: TabContext = { w, d, a }
   const isGit = d.tab === 'git'
-  // 打開了衝突檔案或檔案的差異：蓋掉分頁。
-  const cover = d.merge.path !== '' ? mergeView(ui, d.merge, d.isMergeBusy, a, press) : d.diff.path !== '' ? diffView(ui, d.diff, a, press) : null
+  const cover = coverOf(ui, d, a, press)
 
   // 整棵樹至少跟面板一樣高、內容區撐滿剩下的高度，用量就會被推到面板最底下；
   // 內容比面板還長時用量跟在後面。面板的高度只有引擎知道（bodyRows），百分比高度量不到。

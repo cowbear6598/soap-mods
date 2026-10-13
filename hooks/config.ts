@@ -124,6 +124,10 @@ export const FILE_PAGE = 50
 
 // Files 分頁一個資料夾最多畫幾列（node_modules 這種上千個的，全畫會卡）。
 export const FILES_ROW_LIMIT = 200
+// 點檔案看內容：比這大的不讀（bytes）。
+export const FILE_VIEW_MAX_BYTES = 1_000_000
+// 差異、檔案內容最多畫前面這麼多字（引擎一次最多畫 100000 字），切在行尾。
+export const CODE_MAX_CHARS = 60_000
 
 // 面板最底下的用量：左邊 5h、右邊 weekly，各占一半。kind 是引擎回報的視窗名稱。
 export const USAGE_WINDOWS = [

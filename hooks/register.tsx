@@ -16,6 +16,7 @@ import type { EngineInterface, PaneOpenArgs, ProcessRunInit, Register, RenderChi
 import type {
   CommitFile,
   DiffPaneView,
+  FileView,
   FilesView,
   GitCommit,
   GitBranch,
@@ -40,6 +41,7 @@ import {
   DELETE_ARM_MS,
   FILE_PAGE,
   FILES_ROW_LIMIT,
+  FILE_VIEW_MAX_BYTES,
   FOCUS_WATCH_MS,
   LOG_PAGE,
   OP_LABEL,
@@ -51,8 +53,8 @@ import {
   SYNC_TIMEOUT_MS,
   USAGE_TICK_MS,
 } from './config'
-import { EMPTY, EMPTY_DIFF, EMPTY_FILES, EMPTY_LOG, EMPTY_MERGE, EMPTY_SERVICES, NO_MESSAGES } from './defaults'
-import { sortEntries } from './files/list'
+import { EMPTY, EMPTY_DIFF, EMPTY_FILE_VIEW, EMPTY_FILES, EMPTY_LOG, EMPTY_MERGE, EMPTY_SERVICES, NO_MESSAGES } from './defaults'
+import { fileSteps, formatSize, sortEntries, viewText } from './files/list'
 import { errorText, failure, isMissingCommand } from './errors'
 import {
   BRANCH_FORMAT,
@@ -116,6 +118,7 @@ const logQuery = atom({ plugin: 'soap-mods', key: 'logQuery' } as const, '')
 const fileLimit = atom({ plugin: 'soap-mods', key: 'fileLimit' } as const, FILE_PAGE)
 const services = atom({ plugin: 'soap-mods', key: 'services' } as const, EMPTY_SERVICES)
 const files = atom({ plugin: 'soap-mods', key: 'files' } as const, EMPTY_FILES)
+const fileView = atom({ plugin: 'soap-mods', key: 'fileView' } as const, EMPTY_FILE_VIEW)
 const merge = atom({ plugin: 'soap-mods', key: 'merge' } as const, EMPTY_MERGE)
 const log = atom({ plugin: 'soap-mods', key: 'log' } as const, EMPTY_LOG)
 const diffPane = atom({ plugin: 'soap-mods', key: 'diffPane' } as const, EMPTY_DIFF)
@@ -1098,6 +1101,55 @@ async function reloadFiles($: EngineInterface) {
   await loadFiles($, (await read($, files)).dir)
 }
 
+// 每次讀檔案內容拿一個號碼；連按 Next、或讀到一半按了 Back，晚到的舊內容不寫。
+let latestFileRead = 0
+
+// 讀一個檔案（path 相對 session 資料夾）要畫的內容。太大的、二進位檔、資料夾的連結不畫內容，只說為什麼。
+async function readFileView($: EngineInterface, path: string): Promise<FileView> {
+  const shown = { ...EMPTY_FILE_VIEW, path }
+  try {
+    const full = `${await $.session.root()}/${path}`
+    const stat = await $.fs.stat(full)
+    if (stat.kind !== 'file') return { ...shown, note: 'Not a file; nothing to show.' }
+    if (stat.size > FILE_VIEW_MAX_BYTES) return { ...shown, note: `Too large to show (${formatSize(stat.size)}).` }
+    const text = viewText(await $.fs.read(full))
+    if (text === null) return { ...shown, note: 'Binary file; nothing to show.' }
+
+    return text.text === '' ? { ...shown, note: 'Empty file.' } : { ...shown, ...text }
+  } catch (err) {
+    return { ...shown, error: `Couldn't read ${path}: ${errorText(err)}` }
+  }
+}
+
+// 在 Soap Panel 裡看檔案內容（蓋掉分頁）。換了檔案才捲回最上面，回合結束重讀同一個檔案不捲；內容沒變不寫，不重畫。
+async function showFile($: EngineInterface, path: string) {
+  const ticket = (latestFileRead += 1)
+  const [shown, prev] = await Promise.all([readFileView($, path), read($, fileView)])
+  if (ticket !== latestFileRead) return
+  await update($, fileView, v => patch(v, shown))
+  if (prev.path !== path) await scrollTop($)
+}
+
+// 檔案內容的 Previous／Next：照 Files 分頁的檔案順序換成上一個／下一個。
+async function stepFile($: EngineInterface, step: 1 | -1) {
+  const [shown, list] = await Promise.all([read($, fileView), read($, files)])
+  const steps = fileSteps(list)
+  const next = steps[steps.indexOf(shown.path) + step]
+  if (next !== undefined) await showFile($, next)
+}
+
+async function closeFile($: EngineInterface) {
+  latestFileRead += 1
+  await update($, fileView, v => (v.path === '' ? v : EMPTY_FILE_VIEW))
+}
+
+// 回合結束：Claude 可能改了檔案。Files 分頁開著就重列，開著檔案內容就重讀。
+async function reloadFilesWhenShown($: EngineInterface) {
+  const [t, shown] = await Promise.all([read($, tab), read($, fileView)])
+  if (t !== 'files') return
+  await Promise.all([reloadFiles($), shown.path === '' ? undefined : showFile($, shown.path)])
+}
+
 // ───── 換分頁 ─────
 
 // 換分頁（上層 Tab 或子分頁）時清掉的東西：錯誤訊息、待確認的 abort、branch 和 log 的搜尋。
@@ -1171,6 +1223,9 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     // 不等它做完：停掉、重跑要好幾秒，按鈕先換成「Stopping…」。
     runServiceAction: (s, action) => void runServiceAction($, s, action),
     openDir: dir => loadFiles($, dir),
+    openFile: path => showFile($, path),
+    stepFile: step => stepFile($, step),
+    closeFile: () => closeFile($),
     editChunks: edit => editChunks($, edit),
     jumpConflict: step => jumpConflict($, step),
     takeSide: side => takeSide($, side),
@@ -1219,17 +1274,14 @@ export const register: Register = on => {
   // 每個回合結束後，檔案可能已經變了，順手更新。不等它讀完，免得擋住回合結束；讀不到就維持舊畫面。
   on('turn.complete', ($, e, next) => {
     void refresh($).catch(() => undefined)
-    // Claude 可能新增、刪了檔案：Files 分頁開著才重列。
-    void read($, tab)
-      .then(t => (t === 'files' ? reloadFiles($) : undefined))
-      .catch(() => undefined)
+    void reloadFilesWhenShown($).catch(() => undefined)
 
     return next(e)
   })
 
   // 畫面：這裡讀狀態，交給 ui/ 的純函式畫。
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const [activeTab, activeSub, v, isRemoteOpen, bf, bq, fl, sv, fv, lg, lq, df, mg, usage, now] = await Promise.all([
+    const [activeTab, activeSub, v, isRemoteOpen, bf, bq, fl, sv, fileList, openFile, lg, lq, df, mg, usage, now] = await Promise.all([
       read($, tab),
       read($, subTab),
       read($, view),
@@ -1239,6 +1291,7 @@ export const register: Register = on => {
       read($, fileLimit),
       read($, services),
       read($, files),
+      read($, fileView),
       read($, log),
       read($, logQuery),
       read($, diffPane),
@@ -1262,7 +1315,8 @@ export const register: Register = on => {
         fileLimit: fl,
         syncing,
         services: sv,
-        files: fv,
+        files: fileList,
+        fileView: openFile,
         servicePending,
         log: lg,
         logQuery: lq,
