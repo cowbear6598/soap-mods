@@ -1,41 +1,30 @@
-// 畫出來的樹裡有哪些按鈕：按的按鈕重畫後不見了（整塊換掉、那列消失），焦點要移到還在的按鈕上。
-// 見 register.tsx 的 checkPressed。
+// 畫出來的樹裡有哪些按鈕：按的按鈕重畫後不見了（整塊換掉、那列消失），焦點要移到還在的按鈕上
+// （見 register.tsx 的 checkPressed）；哪些快捷鍵沒人綁（見 panel.tsx 的 strayKeys）。
 
 import type { RenderChildren } from 'claude-code'
 
-type Node = { type?: unknown; props?: { key?: unknown; hotkey?: unknown }; children?: RenderChildren }
+type Node = { type?: unknown; props?: { key?: unknown }; children?: RenderChildren }
 
-// 走過樹裡每顆 Button，收集 pick 給的字串（沒有就略過）。
-function collectButtons(tree: RenderChildren, pick: (props: Node['props']) => unknown): Set<string> {
-  const found = new Set<string>()
+/** Every Button key drawn in `tree`. */
+export function buttonKeys(tree: RenderChildren): Set<string> {
+  const keys = new Set<string>()
   const walk = (node: RenderChildren) => {
     if (Array.isArray(node)) return node.forEach(walk)
     if (typeof node !== 'object' || node === null) return
     const { type, props, children } = node as Node
-    const value = type === 'Button' ? pick(props) : undefined
-    if (typeof value === 'string') found.add(value)
+    if (type === 'Button' && typeof props?.key === 'string') keys.add(props.key)
     walk(children)
   }
   walk(tree)
 
-  return found
+  return keys
 }
 
-/** Every Button key drawn in `tree`. */
-export function buttonKeys(tree: RenderChildren): Set<string> {
-  return collectButtons(tree, props => props?.key)
-}
+/** Every key a Button can take as its hotkey: one lowercase letter or digit. */
+export const HOTKEYS = [...'abcdefghijklmnopqrstuvwxyz0123456789']
 
-// Button 的 hotkey 只能是一個小寫字母或數字。
-const HOTKEYS = [...'abcdefghijklmnopqrstuvwxyz0123456789']
-
-/**
- * The hotkeys no Button in `tree` binds. Soap Panel binds these to hidden buttons that do nothing:
- * an unbound key pressed in the pane would otherwise go to the prompt box and take the focus with it.
- */
-export function unboundHotkeys(tree: RenderChildren): string[] {
-  const bound = collectButtons(tree, props => props?.hotkey)
-
+/** The hotkeys not in `bound` (panel.tsx's strayKeys holds them). */
+export function unboundHotkeys(bound: ReadonlySet<string>): string[] {
   return HOTKEYS.filter(k => !bound.has(k))
 }
 

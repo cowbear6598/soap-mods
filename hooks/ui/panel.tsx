@@ -2,15 +2,13 @@
 // 打開了衝突檔案、檔案的差異或 Files 分頁的檔案時，上面整塊換成合併（mergeView）、差異（diffView）或內容（fileView），Back 回來。
 // 加分頁：config.ts 的 TABS／SUB_TABS 加一筆，這裡的 TAB_BODIES／SUB_TAB_BODIES 加它的內容。
 
-import type { RenderChildren } from 'claude-code'
-
 import type { GitSubTab, TabId } from '../../types'
 import { DANGER, SUB_TABS, TABS } from '../config'
 import { isConflict } from '../git/parse'
 import type { Actions, PanelData, Press, Ui } from './actions'
 import { diffView } from './diffView'
-import { unboundHotkeys } from './keys'
 import { fileView } from './fileView'
+import { unboundHotkeys } from './keys'
 import { mergeView } from './mergeView'
 import { branchTab } from './tabs/branch'
 import { conflictTab } from './tabs/conflict'
@@ -91,8 +89,11 @@ function coverView(ui: Ui, d: PanelData, a: Actions, press: Press) {
   }
 }
 
-export function renderPanel(ui: Ui, d: PanelData, a: Actions, press: Press) {
-  const w = makeWidgets(ui, d.surface === 'terminal', press)
+export function renderPanel(drawUi: Ui, d: PanelData, a: Actions, press: Press) {
+  const isTerminal = d.surface === 'terminal'
+  const bound = new Set<string>()
+  const ui = recordHotkeys(drawUi, bound)
+  const w = makeWidgets(ui, isTerminal, press)
   const { Box, Text } = w
   const ctx: TabContext = { w, d, a }
   const isGit = d.tab === 'git'
@@ -124,20 +125,33 @@ export function renderPanel(ui: Ui, d: PanelData, a: Actions, press: Press) {
         {w.divider}
         {usageBar(w, d.usage, d.now)}
       </Box>
-      {strayKeys(w, content)}
+      {!isTerminal && strayKeys(w, bound)}
     </Box>
   )
 }
 
-// 這個畫面沒綁的字母、數字，各綁一顆藏起來、按了不做事的按鈕：沒人接的鍵桌面版會交給輸入框，焦點跟著跑過去
-// （log 分頁按 m）。畫在最後面：同一個 hotkey 後畫的贏，就算撞到也是看得到的那顆。
-function strayKeys(w: Widgets, content: RenderChildren) {
+// 包住 ui.Button：畫的時候順手把綁的快捷鍵記進 bound，不用畫完再走一遍整棵樹找。
+function recordHotkeys(ui: Ui, bound: Set<string>): Ui {
+  const Button: Ui['Button'] = props => {
+    if (typeof props.hotkey === 'string') bound.add(props.hotkey)
+
+    return ui.Button(props)
+  }
+
+  return { ...ui, Button }
+}
+
+const NOOP = () => undefined
+
+// 這個畫面沒綁（bound 以外）的字母、數字，各綁一顆藏起來、按了不做事的按鈕：沒人接的鍵桌面版會交給輸入框，
+// 焦點跟著跑過去（log 分頁按 m）。只有桌面版會這樣，終端機不畫。要在整個畫面都畫完後才呼叫，bound 才是齊的。
+function strayKeys(w: Widgets, bound: ReadonlySet<string>) {
   const { Box, Button } = w
 
   return (
     <Box key="stray" display="none">
-      {unboundHotkeys(content).map(k => (
-        <Button key={`stray:${k}`} label={k} hotkey={k} onPress={() => undefined} />
+      {unboundHotkeys(bound).map(k => (
+        <Button key={`stray:${k}`} label={k} hotkey={k} onPress={NOOP} />
       ))}
     </Box>
   )

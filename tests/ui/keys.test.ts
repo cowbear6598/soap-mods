@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { ringAnchor, unboundHotkeys } from '../../hooks/ui/keys'
+import { HOTKEYS, ringAnchor, unboundHotkeys } from '../../hooks/ui/keys'
 
 test('ringAnchor takes the swapped-in button, then an open Back, then the tab icon', () => {
   expect(ringAnchor(new Set(['diff:back', 'sub:diff']), 'git', 'diff')).toBe('diff:back')
@@ -10,16 +10,7 @@ test('ringAnchor takes the swapped-in button, then an open Back, then the tab ic
   expect(ringAnchor(new Set(['merge:back', 'merge:reset:1']), 'git', 'conflict', 'merge:reset:1')).toBe('merge:reset:1')
 })
 
-test('unboundHotkeys lists the letters and digits no drawn Button binds', () => {
-  const tree = [
-    { type: 'Box', props: {}, children: [{ type: 'Button', props: { key: 'x:back', hotkey: 'b' } }] },
-    { type: 'Button', props: { key: 'x:next', hotkey: 'm' } },
-    { type: 'Button', props: { key: 'plain' } },
-  ]
-  const left = unboundHotkeys(tree)
-  expect(left).toHaveLength(34)
-  expect(left).not.toContain('b')
-  expect(left).not.toContain('m')
-  expect(left).toContain('a')
-  expect(left).toContain('0')
+test('unboundHotkeys lists every letter and digit not bound', () => {
+  expect(unboundHotkeys(new Set())).toEqual(HOTKEYS)
+  expect(unboundHotkeys(new Set(['b', 'm']))).toEqual(HOTKEYS.filter(k => k !== 'b' && k !== 'm'))
 })

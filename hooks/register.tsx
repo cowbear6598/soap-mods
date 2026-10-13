@@ -229,7 +229,7 @@ const inRepo = (path: string) => (repos.current === undefined ? path : `${repos.
 
 // ───── 面板與焦點 ─────
 
-// 焦點有兩種會丟：
+// 焦點有三種會丟：
 // 1. 引擎知道的：點分頁標籤切到 Soap Panel 時引擎不會通知、也不給焦點；按完按鈕有時也會丟（引擎回報沒焦點）。
 //    定時看一下（focusWhenShown）：它「剛被切到前面」或「剛按完按鈕」又沒焦點，就把焦點給它。
 //    只在那兩種時候給，平常在輸入框打字不會被搶。
@@ -237,7 +237,7 @@ const inRepo = (path: string) => (repos.current === undefined ? path : `${repos.
 //    引擎卻還以為 Soap Panel 拿著鍵盤，給焦點也補不回來，快捷鍵就跑去輸入框。
 //    要把焦點圈移到看得到的按鈕上才行：每次畫完檢查剛按的那顆還在不在（checkPressed）。
 // 3. 按了這個畫面沒綁的字母（log 分頁按 m）：桌面版把那個鍵交給輸入框，焦點跟著跑過去。
-//    面板把沒綁的字母、數字都綁在藏起來、不做事的按鈕上，鍵就不會漏出去（ui/panel.tsx 的 strayKeys）。
+//    這種在畫面那層擋掉（ui/panel.tsx 的 strayKeys）。
 // 上一輪看的時候在不在前面；沒記錄當作在（剛啟動不搶焦點）。
 let wasShown: boolean | undefined
 let isWatching = false
