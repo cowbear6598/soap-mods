@@ -10,7 +10,7 @@
 //   ui/            畫面：拿到資料和 Actions 畫出樹（panel、tabs/、diffView、mergeView）
 
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, PaneOpenArgs, ProcessRunInit, Register, RenderSurface, Timer } from 'claude-code'
+import type { EngineInterface, PaneOpenArgs, ProcessRunInit, Register, RenderChildren, RenderSurface, Timer, UiPressArgument } from 'claude-code'
 
 import type {
   CommitFile,
@@ -87,6 +87,7 @@ import {
 } from './services/mac'
 import { KILL_ARGV, LAUNCH_ARGV, SCAN_ARGV, findServices } from './services/scan'
 import type { Actions } from './ui/actions'
+import { buttonKeys, ringAnchor, tabIconKey } from './ui/keys'
 import { renderPanel } from './ui/panel'
 import { patch } from './patch'
 
@@ -173,33 +174,29 @@ const inRepo = (path: string) => (repos.current === undefined ? path : `${repos.
 
 // ───── 面板與焦點 ─────
 
-// 桌面版的面板沒有焦點時，按下滑鼠會先拿焦點、整個面板重畫，按到的按鈕被換掉，那一下就不算。
-// 點分頁標籤切到 Soap Panel 時引擎不會通知、也不給焦點，所以定時看一下：
-// 它「剛被切到前面」又沒焦點，就先把焦點給它，第一下點擊才點得到。
-// 只在從看不見變成看得見的那一刻給，平常在輸入框打字不會被搶。
-// 按完按鈕也可能丟焦點（切分支時被點的那列搬位置、abort 後整區消失），
-// 所以每個按鈕的動作做完後的一小段時間內也補（act）。
+// 焦點有兩種會丟：
+// 1. 引擎知道的：點分頁標籤切到 Soap Panel 時引擎不會通知、也不給焦點；按完按鈕有時也會丟（引擎回報沒焦點）。
+//    定時看一下（focusWhenShown）：它「剛被切到前面」或「剛按完按鈕」又沒焦點，就把焦點給它。
+//    只在那兩種時候給，平常在輸入框打字不會被搶。
+// 2. 引擎不知道的：按的按鈕重畫後不見了（整塊換成差異、合併，那列消失），桌面版的焦點會掉到輸入框，
+//    引擎卻還以為 Soap Panel 拿著鍵盤，給焦點也補不回來，快捷鍵就跑去輸入框。
+//    要把焦點圈移到看得到的按鈕上才行：每次畫完檢查剛按的那顆還在不在（checkPressed）。
 // 上一輪看的時候在不在前面；沒記錄當作在（剛啟動不搶焦點）。
 let wasShown: boolean | undefined
 let isWatching = false
-// 按完按鈕後，到這個時間點之前丟了焦點就補回來；undefined 是沒有要補。
+// 按完按鈕後，到這個時間點之前丟了焦點（引擎知道的）就補回來；undefined 是沒有要補。
 let refocusUntil: number | undefined
+// 剛按的按鈕（key，處理完是 undefined）、它換掉後焦點圈的首選（to），看到什麼時候（until：
+// 動作還在跑是 Infinity，做完再給 REFOCUS_AFTER_PRESS_MS）。這段時間內畫面上沒了這顆，就把焦點圈移走。
+let pressed: { key?: string; to?: string; until: number } | undefined
 
 async function focusPanel($: EngineInterface) {
   await $.ui.open({ ...PANE_ARGS, focus: true })
 }
 
 // 把 Soap Panel 的焦點圈移到 key 那個按鈕上；Soap Panel 沒拿著鍵盤就算了。
-// 按的按鈕被換掉（整塊換成差異、合併，或換回分頁）時，桌面版的焦點會掉到輸入框，
-// 引擎卻還以為 Soap Panel 拿著鍵盤（focusPanel 補不回來），快捷鍵就跑去輸入框；要移到看得到的按鈕上才行。
 async function ringOn($: EngineInterface, key: string) {
   await $.ui.focus({ requestId: PANE, key }).catch(() => undefined)
-}
-
-// 回到分頁時焦點圈放的地方：目前子分頁（Git）或分頁的圖示。
-async function ringOnTab($: EngineInterface) {
-  const [t, sub] = await Promise.all([read($, tab), read($, subTab)])
-  await ringOn($, t === 'git' ? `sub:${sub}` : `tab:${t}`)
 }
 
 // 蓋上或換掉差異、合併時，捲回 Soap Panel 最上面從頭看。
@@ -207,17 +204,38 @@ async function scrollTop($: EngineInterface) {
   await $.ui.scroll({ in: PANE, to: 'start' }).catch(() => undefined)
 }
 
-// 包住面板上按鈕的動作：動作做完（可能要跑 git 很久）才開始算補焦點的那段時間。
-// ringKey：按的按鈕會被換掉時，做完把焦點圈移到換上來的那顆。
+// 包住面板上按鈕的動作：記下按的是哪顆，動作做完（可能要跑 git 很久）才開始算那段時間。
+// ringKey：按的按鈕會換成這顆（兩邊都要 → Reset），焦點圈優先移到它，不移到遠處的 Back。
 function act($: EngineInterface, fn: () => unknown, ringKey?: string) {
-  return async () => {
+  return async (e: UiPressArgument) => {
+    const mine = { key: e.element, to: ringKey, until: Infinity }
+    pressed = mine
     try {
       await fn()
-      if (ringKey !== undefined) await ringOn($, ringKey)
     } finally {
-      refocusUntil = (await $.clock.now()) + REFOCUS_AFTER_PRESS_MS
+      const end = (await $.clock.now()) + REFOCUS_AFTER_PRESS_MS
+      refocusUntil = end
+      mine.until = end
     }
   }
+}
+
+// 每次畫完：剛按的那顆不在畫面上了，就把焦點圈移到 ringAnchor（換上來的那顆、Back、分頁圖示）。
+// 還沒有落點可移（套用中，Back 藏起來了）就等下一次畫。畫的 hook 裡不能等自己畫出來的東西，所以等畫完再移。
+function checkPressed($: EngineInterface, tree: RenderChildren, now: number, t: string, sub: string) {
+  const p = pressed
+  if (p?.key === undefined || now >= p.until) return
+  const keys = buttonKeys(tree)
+  if (keys.has(p.key)) {
+    // 動作做完還在，就不會再不見了。
+    if (p.until !== Infinity) p.key = undefined
+
+    return
+  }
+  const anchor = ringAnchor(keys, t, sub, p.to)
+  if (anchor === undefined) return
+  p.key = undefined
+  $.clock.after(0, () => void ringOn($, anchor))
 }
 
 async function focusWhenShown($: EngineInterface) {
@@ -419,19 +437,10 @@ async function readDiff($: EngineInterface, files: GitFile[], path: string): Pro
 
 // 在 Soap Panel 裡看這個檔案的差異（蓋掉分頁），捲回最上面從頭看。
 // 不另開面板：鍵盤一直在 Soap Panel 上，Back／Previous／Next 的快捷鍵才按得到。
+// 按的那列不見了，焦點圈由 checkPressed 移到 Back。
 async function showDiff($: EngineInterface, pane: DiffPaneView) {
-  const wasOpen = (await read($, diffPane)).path !== ''
   await update($, diffPane, () => pane)
   await scrollTop($)
-  // 按的那列換成差異就不見了，桌面版的焦點會跟著掉到輸入框（引擎還以為 Soap Panel 拿著鍵盤），
-  // 快捷鍵就跑去輸入框；把焦點圈移到 Back 上，按鍵才留在 Soap Panel。Previous／Next 按的按鈕還在，不用移。
-  if (!wasOpen) await ringOn($, 'diff:back')
-}
-
-// Back：回到分頁。Back 按鈕跟著不見，焦點圈移到分頁的圖示上。
-async function closeDiff($: EngineInterface) {
-  await clearDiff($)
-  await ringOnTab($)
 }
 
 // 沒開著差異就不寫，免得白白重畫。
@@ -755,11 +764,10 @@ async function jumpConflict($: EngineInterface, step: 1 | -1) {
   await ringOn($, `merge:ours:${at}`)
 }
 
-// 點衝突的檔案：在 Soap Panel 裡蓋掉分頁，畫三欄合併，從最上面開始看。按的那列不見了，焦點圈放到 Back 上。
+// 點衝突的檔案：在 Soap Panel 裡蓋掉分頁，畫三欄合併，從最上面開始看。
 async function openMerge($: EngineInterface, path: string) {
   await Promise.all([loadMerge($, path), clearDiff($)])
   await scrollTop($)
-  await ringOn($, 'merge:back')
 }
 
 // 放掉選到一半的結果（檔案沒動過，下次打開從頭選）。
@@ -769,12 +777,6 @@ async function clearMerge($: EngineInterface) {
   await update($, merge, () => EMPTY_MERGE)
 }
 
-// 回到分頁（Back、解掉了、不再是衝突）：合併畫面整塊不見，焦點圈移到分頁的圖示上。
-async function closeMerge($: EngineInterface) {
-  await clearMerge($)
-  await ringOnTab($)
-}
-
 // refresh 之後：合併的檔案已經不是衝突了（解掉了、abort 了）就回到分頁，否則重讀一次（檔案可能被改過）。
 async function syncMerge($: EngineInterface, files: GitFile[]) {
   if (isMergeBusy) return
@@ -782,7 +784,10 @@ async function syncMerge($: EngineInterface, files: GitFile[]) {
   if (m.path === '') return
   const file = files.find(f => f.path === m.path)
   if (file === undefined || !isConflict(file)) {
-    await closeMerge($)
+    // 回合結束發現解掉了也會走到這：沒按按鈕，checkPressed 管不到，合併畫面整塊不見，焦點圈自己移到分頁圖示。
+    await clearMerge($)
+    const [t, sub] = await Promise.all([read($, tab), read($, subTab)])
+    await ringOn($, tabIconKey(t, sub))
 
     return
   }
@@ -815,7 +820,7 @@ async function resolveFile($: EngineInterface, what: string, work: (path: string
 
     return
   }
-  await closeMerge($)
+  await clearMerge($)
   await refresh($)
   $.ui.toast(`Resolved ${m.path}`)
 }
@@ -1111,7 +1116,7 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     closeCommit: () => setLog($, NO_COMMIT),
     openCommitDiff: (commits, f, files) => openCommitDiff($, commits, f, files),
     stepDiffFile: step => stepDiffFile($, step),
-    closeDiff: () => closeDiff($),
+    closeDiff: () => clearDiff($),
     abortOp: () => abortOp($),
     cancelAbort: () => setView($, { isAbortArmed: false }),
     continueOp: () => continueOp($),
@@ -1122,7 +1127,7 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     takeSide: side => takeSide($, side),
     applyMerge: () => applyMerge($),
     askClaude: () => askClaude($),
-    closeMerge: () => closeMerge($),
+    closeMerge: () => clearMerge($),
   }
 }
 
@@ -1189,7 +1194,7 @@ export const register: Register = on => {
       $.clock.now(),
     ])
 
-    return renderPanel(
+    const tree = renderPanel(
       $.ui.resolve(e),
       {
         surface: e.surface,
@@ -1215,5 +1220,8 @@ export const register: Register = on => {
       actionsFor($, e.surface),
       (fn, ringKey) => act($, fn, ringKey),
     )
+    checkPressed($, tree, now, activeTab, activeSub)
+
+    return tree
   })
 }

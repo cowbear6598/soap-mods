@@ -1,7 +1,7 @@
 // 畫面和動作之間的約定。畫面（ui/）是純函式：拿到資料和這些動作，畫出樹；
 // 動作的實作在 register.tsx（引擎只讓那裡碰 $），畫面不知道背後怎麼做。
 
-import type { Elements, RenderSurface, SessionUsage } from 'claude-code'
+import type { Elements, RenderSurface, SessionUsage, UiPressArgument } from 'claude-code'
 
 import type {
   CommitFile,
@@ -25,7 +25,7 @@ import type {
 export type Ui = Elements[RenderSurface]
 
 // 包住按鈕的動作：做完後丟了焦點會補回來。ringKey：按的按鈕會被換掉時，做完把焦點圈移到換上來的那顆。
-export type Press = (fn: () => unknown, ringKey?: string) => () => Promise<void>
+export type Press = (fn: () => unknown, ringKey?: string) => (e: UiPressArgument) => Promise<void>
 
 export type UsageReading = SessionUsage['rateLimits'][number]
 
