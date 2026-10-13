@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { childPath, fileSteps, formatSize, sortEntries, viewText } from './list'
+import { childPath, fileSteps, formatSize, sortEntries, viewText } from '../../hooks/files/list'
 
 const entry = (name: string, kind: 'file' | 'dir' | 'other', size = 0) => ({ name, kind, size, mtimeMs: 0, isLink: kind === 'other' })
 

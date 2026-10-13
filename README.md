@@ -54,8 +54,9 @@ macOS 用 `ps` 和 `lsof` 掃描。重跑的指令是 `ps` 讀到的那行，原
 
 - `hooks/register.tsx`：狀態（atom）、所有碰到 `$` 的動作（跑 git、開關面板）、事件接線。引擎只讓這個檔案碰 `$` 和 atom，所以這些不能拆出去。
 - `hooks/config.ts`：常數（標題、分頁、顏色、時間）。
-- `hooks/git/`、`hooks/merge/algo.ts`、`hooks/services/scan.ts`：純邏輯（解析 git 輸出、三方合併、找服務），旁邊的 `*.test.ts` 是單元測試。
+- `hooks/git/`、`hooks/merge/algo.ts`、`hooks/services/scan.ts`：純邏輯（解析 git 輸出、三方合併、找服務）。
 - `hooks/ui/`：畫面，都是純函式，拿到資料和 `Actions`（`ui/actions.ts`）畫出樹；`ui/tabs/` 一個分頁一個檔案。
+- `tests/`：單元測試，目錄結構對應 `hooks/`（例如 `tests/git/tree.test.ts` 測 `hooks/git/tree.ts`），共用假資料在 `tests/test-fixtures.ts`。跑法：`claude plugin test .`
 
 常改的地方：
 

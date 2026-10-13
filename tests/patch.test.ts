@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { patch } from './patch'
+import { patch } from '../hooks/patch'
 
 test('patch keeps the same object when nothing changes, so nothing redraws', () => {
   const v = { a: 1, list: [{ x: 1 }], armed: null as { name: string } | null }

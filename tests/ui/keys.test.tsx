@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { buttonKeys, ringAnchor } from './keys'
+import { buttonKeys, ringAnchor } from '../../hooks/ui/keys'
 
 test('buttonKeys finds every Button key in a drawn tree, nested or in arrays', async ($, on) => {
   // 跟 register.tsx 一樣，在畫的 hook 裡拿剛建好的樹來找。

@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import type { ScanResult } from '../../types'
 import { ROOT, SCAN, proc } from '../test-fixtures'
-import { findServices, serviceName, splitArgs, toolName } from './scan'
+import { findServices, serviceName, splitArgs, toolName } from '../../hooks/services/scan'
 
 test('findServices groups each project process tree, skips the engine and other folders, and adds ports', () => {
   const services = findServices(SCAN, 'C:\\Proj\\')

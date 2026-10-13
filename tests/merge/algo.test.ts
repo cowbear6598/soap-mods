@@ -2,7 +2,7 @@ import { expect, test } from 'claude-code/testing'
 
 import type { MergeChunk } from '../../types'
 import { CONFLICTED } from '../test-fixtures'
-import type { DiffHunk } from './algo'
+import type { DiffHunk } from '../../hooks/merge/algo'
 import {
   buildResult,
   choose,
@@ -16,7 +16,7 @@ import {
   nextConflict,
   parseConflicts,
   toggleApplied,
-} from './algo'
+} from '../../hooks/merge/algo'
 
 test('parseConflicts splits agreed lines from conflicts, with labels, base, CRLF and the final newline', () => {
   const parsed = parseConflicts(CONFLICTED)

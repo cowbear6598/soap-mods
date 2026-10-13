@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { GOOD } from './config'
+import { GOOD } from '../hooks/config'
 import { CONFLICTED, MAC_FILES_OUT, MAC_PPIDS_OUT, MAC_ROOT, MAC_SCAN_OUT, ROOT, SCAN } from './test-fixtures'
 
 // 面板的 props：引擎畫面板時一定會給，測試照實給一份。

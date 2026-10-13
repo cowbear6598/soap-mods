@@ -1,7 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { GitBranch } from '../../types'
-import { branchTree, treeRows } from './tree'
+import { branchTree, treeRows } from '../../hooks/git/tree'
 
 const branch = (name: string): GitBranch => ({ name, isCurrent: false, isRemote: false, upstream: '', track: '' })
 const labels = (names: string[], open: (path: string, fallback: boolean) => boolean) =>

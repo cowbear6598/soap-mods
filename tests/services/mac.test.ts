@@ -1,8 +1,8 @@
 import { expect, test } from 'claude-code/testing'
 
 import { MAC_EPOCH, MAC_FILES_OUT, MAC_PPIDS_OUT, MAC_ROOT, MAC_SCAN_OUT } from '../test-fixtures'
-import { descendants, isShellSafe, parseMacFiles, parseMacScan, wantedPids, withFiles } from './mac'
-import { findServices } from './scan'
+import { descendants, isShellSafe, parseMacFiles, parseMacScan, wantedPids, withFiles } from '../../hooks/services/mac'
+import { findServices } from '../../hooks/services/scan'
 
 test('parseMacScan reads processes, ports and the scanner chain from ps and lsof', () => {
   const scan = parseMacScan(MAC_SCAN_OUT)
