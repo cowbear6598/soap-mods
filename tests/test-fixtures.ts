@@ -27,14 +27,21 @@ export const mountPane = ($: TestEngine, surface: 'terminal' | 'desktop' = 'term
 export const openPanel = ($: TestEngine) =>
   $.command.run({ command: 'soap-panel', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 120 } })
 
-// 面板開起來要的引擎回應：開／列／關 pane、session 資料夾、時間。now 給 null：測試自己用 mock.clock
+// 面板開起來要的引擎回應：開／列／關 pane（打開了就在前面）、session 資料夾、時間、回合結束。now 給 null：測試自己用 mock.clock
 // （clock.now 先登記的算數，兩個都登記的話 mock.clock 推不動時間）。
 export function stubPanel(on: TestOn, { root = '/repo', now = 0 }: { root?: string; now?: number | null } = {}) {
   on('ui.open', () => ({ value: { isPlaced: true } }))
-  on('ui.panes', () => ({ value: [] }))
+  on('ui.panes', () => ({ value: [{ id: 'soap-panel', title: 'Soap Panel', isShown: true, isFocused: true, isPlaced: true }] }))
   on('ui.close', () => ({ value: undefined }))
   on('session.root', () => ({ value: root }))
+  on('turn.complete', () => ({ text: '' }))
   if (now !== null) on('clock.now', () => ({ value: now }))
+}
+
+// Claude 的一個回合結束：面板在背景重讀看得到的東西，重畫一次等它讀完、畫好。要先 stubPanel。
+export async function endTurn($: TestEngine, ui: Awaited<ReturnType<typeof mountPane>>) {
+  await $.turn.complete({ answer: '' })
+  await ui.redraw()
 }
 
 // 引擎會把 fs、process 的路徑轉成這台電腦的絕對路徑（Windows 加磁碟代號、換反斜線），比對前轉回 /repo 這種寫法。
@@ -55,18 +62,18 @@ export const fail = (stderr: string, exitCode = 128) => ({ value: { ...ok('').va
 type RunResult = ReturnType<typeof ok>
 type RunEvent = { argv: readonly string[]; init?: { cwd?: string; env?: Record<string, string> } }
 
-// session 資料夾 /repo 就是一個 git repo：status 是 git status 印出的、branches 是 for-each-ref 的每一行（branchLine）。
+// session 資料夾 /repo 就是一個 git repo：status 是 git status 印出的（會變的話給函式）、branches 是 for-each-ref 的每一行（branchLine）。
 // run 先看每個 git 指令（cmd 從子指令開始），給了結果就用它的，沒給就照上面的回。
 export function gitRepo(
   on: TestOn,
-  repo: { status: string; branches?: string[] | (() => string[]); run?: (cmd: string[], e: RunEvent) => RunResult | undefined },
+  repo: { status: string | (() => string); branches?: string[] | (() => string[]); run?: (cmd: string[], e: RunEvent) => RunResult | undefined },
 ) {
   on('process.run', (_$, e) => {
     const cmd = e.argv.slice(3)
     const own = repo.run?.(cmd, e)
     if (own !== undefined) return own
     if (cmd[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
-    if (cmd[0] === 'status') return ok(repo.status)
+    if (cmd[0] === 'status') return ok(typeof repo.status === 'function' ? repo.status() : repo.status)
     if (cmd[0] === 'for-each-ref') {
       const branches = typeof repo.branches === 'function' ? repo.branches() : (repo.branches ?? [])
 

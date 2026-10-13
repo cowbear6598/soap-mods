@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { GOOD } from '../hooks/config'
+import { DANGER, GOOD, WARN } from '../hooks/config'
 import {
   CONFLICTED,
   MAC_ARGS_OUT,
@@ -12,6 +12,7 @@ import {
   SCAN,
   type TestOn,
   branchLine,
+  endTurn,
   fail,
   fsEntry,
   gitRepo,
@@ -51,6 +52,58 @@ test('the bottom of the pane shows 5h and weekly remaining, half each, on both s
     expect(await ui.find({ type: 'Text', text: ' · 3d 3h 0m' })).toBeDefined()
     await ui.unmount()
   }
+})
+
+// 5h、weekly 的用量讀數，用了幾 %；給 [] 是還沒有讀數。
+function usage(on: TestOn) {
+  const state = { used: [] as number[] }
+  on('clock.now', () => ({ value: 0 }))
+  on('session.usage', () => ({
+    value: {
+      startedAt: 0,
+      context: { window: 200000 },
+      rateLimits: state.used.map((percentUsed, i) => ({ kind: i === 0 ? 'five_hour' : 'seven_day', percentUsed })),
+    },
+  }))
+
+  return state
+}
+
+test('the usage bar shows — until there is a reading, then colors what is left: green above half, yellow above a fifth, red below', async ($, on) => {
+  const state = usage(on)
+  // 每一半的百分比，和下面那條 bar 剩餘那段的填色。
+  const colors = async () => ({
+    percents: (await ui.findAll({ type: 'Text', text: /%$/ })).map(t => [t.text, t.props.color]),
+    bars: (await ui.findAll({ type: 'Svg' }))
+      .filter(svg => String(svg.props.alt).endsWith(' left'))
+      .map(svg => [...String(svg.props.source).matchAll(/fill="([^"]+)"/g)].at(-1)?.[1]),
+  })
+
+  const ui = await mountPane($, 'desktop')
+  expect(await ui.findAll({ type: 'Text', text: '—' })).toHaveLength(2)
+  expect((await colors()).bars).toEqual([])
+
+  // 剩一半不算多於一半：黃。
+  state.used = [40, 50]
+  await ui.redraw()
+  expect(await ui.find({ type: 'Text', text: '—' })).toBeUndefined()
+  expect(await colors()).toEqual({ percents: [['60%', 'success'], ['50%', 'warning']], bars: [GOOD.hex, WARN.hex] })
+
+  state.used = [79, 80]
+  await ui.redraw()
+  expect(await colors()).toEqual({ percents: [['21%', 'warning'], ['20%', 'error']], bars: [WARN.hex, DANGER.hex] })
+  await ui.unmount()
+})
+
+// 這套 kit 沒有 test.skip：先不登記，修好後換回 test。
+test('on the terminal the usage bar is a row of █░ in the color of what is left', async ($, on) => {
+  const state = usage(on)
+  state.used = [40, 85]
+
+  const ui = await mountPane($)
+  const bars = await ui.findAll({ type: 'Text', text: /^[█░]+$/ })
+  expect(bars.map(t => t.props.color)).toEqual(['success', 'error'])
+  await ui.unmount()
 })
 
 // ───── diff、branch ─────
@@ -141,6 +194,52 @@ test('the branch tab lists the branches, opens Remote, shows why a switch failed
   await ui.unmount()
 })
 
+test('switching to another branch moves the current marker there, and the log tab then follows it', async ($, on) => {
+  const switches: string[] = []
+  const logRefs: string[] = []
+  let current = 'main'
+  stubPanel(on)
+  gitRepo(on, {
+    status: () => `## ${current}\0`,
+    branches: () => [branchLine('main', { isCurrent: current === 'main' }), branchLine('dev', { isCurrent: current === 'dev' })],
+    run: cmd => {
+      if (cmd[0] === 'switch') {
+        switches.push(cmd.join(' '))
+        current = cmd[1] ?? ''
+
+        return ok('')
+      }
+      if (cmd[0] !== 'log') return undefined
+      logRefs.push(cmd[1] ?? '')
+
+      return ok(`${'a'.repeat(40)}\taaaaaaa\t${'b'.repeat(40)}\tCptSoap\t0\tWip\n`)
+    },
+  })
+  await openPanel($)
+  // ● 畫在目前分支那列的最前面。
+  const marked = async (branch: string) => (await ui.find({ key: `switch:l:${branch}:row` }))?.text.startsWith('●')
+
+  const ui = await mountPane($)
+  await ui.press({ key: 'sub:log' })
+  expect(await ui.find({ type: 'Text', text: 'main · 1' })).toBeDefined()
+
+  await ui.press({ key: 'sub:branch' })
+  expect(await marked('main')).toBe(true)
+  await ui.press({ key: 'switch:l:dev' })
+  expect(switches).toEqual(['switch dev'])
+  // ● 移到 dev；main 變成一般的分支，多了垃圾桶，dev 的垃圾桶不見了。
+  expect(await marked('dev')).toBe(true)
+  expect(await marked('main')).toBe(false)
+  expect(await ui.find({ key: 'delete:l:main' })).toBeDefined()
+  expect(await ui.find({ key: 'delete:l:dev' })).toBeUndefined()
+
+  // log 一直跟著目前分支（HEAD），現在看的是 dev。
+  await ui.press({ key: 'sub:log' })
+  expect(await ui.find({ type: 'Text', text: 'dev · 1' })).toBeDefined()
+  expect(logRefs.at(-1)).toBe('HEAD')
+  await ui.unmount()
+})
+
 test('deleting a local branch asks with a check first, and forces the delete when it has unmerged commits', async ($, on) => {
   const deletes: string[] = []
   const toasts: string[] = []
@@ -192,7 +291,8 @@ test('copying a branch name turns its copy button into a check for 2s', async ($
   gitRepo(on, { status: '## main\0', branches: [branchLine('main', { isCurrent: true }), branchLine('dev')] })
   await openPanel($)
 
-  const ui = await mountPane($)
+  // 綠底是畫在圖示按鈕的外框上，只有桌面版有（終端機的按鈕吃不到顏色）。
+  const ui = await mountPane($, 'desktop')
   await ui.press({ key: 'sub:branch' })
   await ui.press({ key: 'copy:l:dev' })
   expect(copies).toEqual(['dev'])
@@ -593,6 +693,53 @@ test('pressing a file in the Files tab shows its text over the tabs, steps with 
   await ui.unmount()
 })
 
+test('in the Files tab Previous steps back through the files, and inside a folder Previous/Next stay on its files', async ($, on) => {
+  const reads: string[] = []
+  stubPanel(on, { root: '/proj' })
+  on('fs.list', (_$, e) => ({
+    value:
+      posix(e.path) === '/proj/src'
+        ? [fsEntry('lib', 'dir'), fsEntry('x.ts'), fsEntry('y.ts')]
+        : [fsEntry('src', 'dir'), fsEntry('a.ts'), fsEntry('b.ts')],
+  }))
+  on('fs.stat', () => ({ value: { kind: 'file', size: 10, mtimeMs: 0, isLink: false } }))
+  on('fs.read', (_$, e) => {
+    reads.push(posix(e.path) ?? '')
+
+    return { value: `// ${posix(e.path)}\n` }
+  })
+  on('process.run', () => ok(''))
+  const path = async () => (await ui.find({ type: 'Code' }))?.props.path
+
+  const ui = await mountPane($)
+  await ui.press({ key: 'tab:files' })
+  await ui.press({ key: 'files:file:b.ts' })
+  expect(await ui.find({ type: 'Text', text: '2 of 2 files' })).toBeDefined()
+  // Previous（n）：上一個檔案；到第一個了再按不動。
+  expect((await ui.find({ key: 'fileview:prev' }))?.props.hotkey).toBe('n')
+  await ui.press({ key: 'fileview:prev' })
+  expect(await path()).toBe('a.ts')
+  expect(await ui.find({ type: 'Text', text: '1 of 2 files' })).toBeDefined()
+  const count = reads.length
+  await ui.press({ key: 'fileview:prev' })
+  expect(reads).toHaveLength(count)
+  await ui.press({ key: 'fileview:back' })
+
+  // 子資料夾裡：只在它自己的檔案之間走（資料夾不算，外層的檔案也不算）。
+  await ui.press({ key: 'files:dir:src' })
+  await ui.press({ key: 'files:file:x.ts' })
+  expect(await ui.find({ type: 'Text', text: '1 of 2 files' })).toBeDefined()
+  expect((await ui.find({ key: 'fileview:next' }))?.props.hotkey).toBe('m')
+  await ui.press({ key: 'fileview:next' })
+  expect(await path()).toBe('src/y.ts')
+  expect(reads.at(-1)).toBe('/proj/src/y.ts')
+  await ui.press({ key: 'fileview:next' })
+  expect(await path()).toBe('src/y.ts')
+  await ui.press({ key: 'fileview:prev' })
+  expect(await path()).toBe('src/x.ts')
+  await ui.unmount()
+})
+
 // ───── Services ─────
 
 test('the Services tab lists the running services and stops one by killing its tree', async ($, on) => {
@@ -700,7 +847,8 @@ test('a restart that dies right away says so, and the next scan does not wipe th
   await ui.unmount()
 })
 
-test('on macOS the Services tab scans with ps and lsof, stops with kill -9 on the tree, and restarts with sh', async ($, on) => {
+// macOS 上的 Services：ps、lsof 照 MAC_* 回；argsOut 是 ps -o pid=,args= 讀到的指令。記下 kill 和重跑。
+function macServices(on: TestOn, argsOut = MAC_ARGS_OUT) {
   const kills: string[][] = []
   const launches: Record<string, string>[] = []
   on('clock.now', () => ({ value: 0 }))
@@ -711,7 +859,7 @@ test('on macOS the Services tab scans with ps and lsof, stops with kill -9 on th
   on('env.get', () => ({ value: undefined }))
   on('process.run', (_$, e) => {
     if (e.argv[0] === 'kill') kills.push([...e.argv])
-    if (e.argv[0] === 'ps') return ok(e.argv.includes('pid=,args=') ? MAC_ARGS_OUT : MAC_PPIDS_OUT)
+    if (e.argv[0] === 'ps') return ok(e.argv.includes('pid=,args=') ? argsOut : MAC_PPIDS_OUT)
     if (e.argv[0] === 'lsof') return ok(MAC_FILES_OUT)
     if (e.argv[0] === '/bin/sh' && e.init?.env?.SOAP_CMD !== undefined) {
       launches.push(e.init.env)
@@ -722,6 +870,12 @@ test('on macOS the Services tab scans with ps and lsof, stops with kill -9 on th
 
     return ok('')
   })
+
+  return { kills, launches }
+}
+
+test('on macOS the Services tab scans with ps and lsof, stops with kill -9 on the tree, and restarts with sh', async ($, on) => {
+  const { kills, launches } = macServices(on)
 
   const ui = await mountPane($, 'desktop')
   await ui.press({ key: 'tab:services' })
@@ -734,6 +888,52 @@ test('on macOS the Services tab scans with ps and lsof, stops with kill -9 on th
   await ui.unmount()
 })
 
+test('on macOS a service whose command has quotes or $ is not restarted, and the pane says why', async ($, on) => {
+  // ps 讀到的指令已經沒有原本的引號了，交給 sh 重跑會變成別的意思。
+  const { kills, launches } = macServices(on, MAC_ARGS_OUT.replace('npm run dev', 'npm run dev -- --host "$HOST"'))
+
+  const ui = await mountPane($)
+  await ui.press({ key: 'tab:services' })
+  await ui.press({ key: 'svc:restart:11' })
+  // 不砍、也不重跑，留著原本的服務。
+  expect(kills).toEqual([])
+  expect(launches).toEqual([])
+  expect(await ui.find({ type: 'Text', text: /^Restart failed: Cannot rerun npm · web: its command has quotes or shell characters/ })).toBeDefined()
+  expect(await ui.find({ key: 'svc:restart:11' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('services group under the repo they run in, in repo order, with the ones outside any repo under Other last', async ($, on) => {
+  // fs 的 C:\ 路徑在這台電腦上會被接在別的資料夾後面，比對前只留 C: 之後、換成 /。
+  const win = (p: string | undefined) => p?.replace(/^.*C:/, 'C:').replace(/\\/g, '/')
+  stubPanel(on, { root: ROOT })
+  on('env.get', (_$, e) => ({ value: e.name === 'OS' ? 'Windows_NT' : undefined }))
+  // C:\proj 本身不是 repo，底下的 web、api 是；rs、go-server 和 proj 本身跑的服務不在任何 repo 裡。
+  on('fs.list', (_$, e) => ({ value: win(e.path) === 'C:/proj' ? ['web', 'api', 'rs', 'go-server'].map(n => fsEntry(n, 'dir')) : [] }))
+  on('fs.exists', (_$, e) => ({ value: ['C:/proj/web/.git', 'C:/proj/api/.git'].includes(win(e.path) ?? '') }))
+  on('process.run', (_$, e) => {
+    if (e.argv[0] === 'powershell') return ok(JSON.stringify(SCAN))
+    const cwd = win(e.init?.cwd) ?? ''
+    if (e.argv[3] !== 'rev-parse') return ok('')
+
+    return cwd === 'C:/proj' ? fail('fatal: not a git repository (or any of the parent directories): .git') : ok(`${cwd}\n${cwd}/.git\n`)
+  })
+  await openPanel($)
+
+  const ui = await mountPane($)
+  await ui.press({ key: 'tab:services' })
+  // 每一組：標題，和它底下的服務（PID）。
+  const groups = (await ui.findAll({ type: 'Box' }))
+    .filter(b => b.key?.startsWith('svc-group:'))
+    .map(b => [b.text.split('●')[0], ...b.children.flatMap(c => (c.props?.key?.startsWith('svc:') ? [c.props.key] : []))])
+  expect(groups).toEqual([
+    ['api', 'svc:21'],
+    ['web', 'svc:11'],
+    ['Other', 'svc:70', 'svc:50', 'svc:15'],
+  ])
+  await ui.unmount()
+})
+
 // ───── 解衝突 ─────
 
 // git 留著的三個版本：1 共同祖先、2 ours、3 theirs（git show :n:path）。
@@ -742,22 +942,33 @@ const STAGES: Record<string, string> = {
   ':2:src/a.ts': 'import a\nconst x = 1\nend\n',
   ':3:src/a.ts': 'import a\nconst x = 2\nend\n',
 }
-const showStage = (args: readonly string[]) => {
-  const blob = STAGES[args[1] ?? '']
 
-  return blob === undefined ? fail('') : ok(blob)
+type ConflictRepo = {
+  // git status 印出的衝突檔案。
+  status?: string
+  // .git 裡的檔案（看得出停在 merge 還是 rebase）。
+  gitDir?: string[]
+  // 工作區檔案的內容。
+  text?: string
+  stages?: Record<string, string>
+  // 先看的 git 指令（args 從子指令開始），給了結果就用它的。
+  run?: (args: string[]) => ReturnType<typeof ok> | undefined
 }
 
-// 停在 merge、src/a.ts 有一段衝突的 repo；git add 之後就沒有衝突了。status：git status 印出的衝突檔案。
-function conflictRepo(on: TestOn, status = '## main\0UU src/a.ts\0') {
+// 停在 merge、src/a.ts 有一段衝突的 repo；git add／rm 之後那個檔案就不是衝突了。
+function conflictRepo(
+  on: TestOn,
+  { status = '## main\0UU src/a.ts\0', gitDir = ['MERGE_HEAD'], text = CONFLICTED, stages = STAGES, run }: ConflictRepo = {},
+) {
   const calls: { args: string[]; cwd?: string; env?: Record<string, string> }[] = []
   const writes: { path: string; text: string }[] = []
   const prompts: string[] = []
-  let isAdded = false
+  // 解掉的檔案 → 它在 status 的新樣子（加進暫存區、或刪掉了）。
+  const resolved = new Map<string, string>()
   stubPanel(on)
   on('ui.toast', () => ({ value: undefined }))
-  on('fs.list', () => ({ value: [fsEntry('MERGE_HEAD')] }))
-  on('fs.read', () => ({ value: CONFLICTED }))
+  on('fs.list', () => ({ value: gitDir.map(name => fsEntry(name)) }))
+  on('fs.read', () => ({ value: text }))
   on('fs.write', (_$, e) => {
     writes.push({ path: posix(e.path) ?? '', text: e.text })
 
@@ -771,16 +982,27 @@ function conflictRepo(on: TestOn, status = '## main\0UU src/a.ts\0') {
   on('process.run', (_$, e) => {
     const args = e.argv.slice(3)
     calls.push({ args, cwd: posix(e.init?.cwd), env: e.init?.env })
-    if (args[0] === 'status') return ok(isAdded ? '## main\0M  src/a.ts\0' : status)
+    const own = run?.(args)
+    if (own !== undefined) return own
+    if (args[0] === 'status') return ok(status.split('\0').map(line => resolved.get(line.slice(3)) ?? line).join('\0'))
     if (args[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
-    if (args[0] === 'show') return showStage(args)
-    if (args[0] === 'add') isAdded = true
+    if (args[0] === 'show') {
+      const blob = stages[args[1] ?? '']
+
+      return blob === undefined ? fail('') : ok(blob)
+    }
+    const path = args.at(-1) ?? ''
+    if (args[0] === 'add') resolved.set(path, `M  ${path}`)
+    if (args[0] === 'rm') resolved.set(path, `D  ${path}`)
 
     return ok('')
   })
 
   return { calls, writes, prompts }
 }
+
+// 跑過的 git 指令（從子指令開始，空白隔開）。
+const gitCommands = (calls: { args: string[] }[]) => calls.map(c => c.args.join(' '))
 
 test('the conflict tab lists conflicted files, and the merge view resolves one, git adds it, then continues', async ($, on) => {
   const { calls, writes } = conflictRepo(on)
@@ -858,7 +1080,7 @@ test('Ask Claude in the merge view sends the file to the model, and Back returns
 })
 
 test('Next past the last conflict of a file opens the next conflicted file, and stops at the last one', async ($, on) => {
-  conflictRepo(on, '## main\0UU src/a.ts\0UU src/b.ts\0')
+  conflictRepo(on, { status: '## main\0UU src/a.ts\0UU src/b.ts\0' })
   on('ui.scroll', () => ({}))
   on('ui.focus', () => ({}))
   await openPanel($)
@@ -878,6 +1100,212 @@ test('Next past the last conflict of a file opens the next conflicted file, and 
   expect(await ui.find({ type: 'Text', text: 'src/a.ts' })).toBeDefined()
   await ui.press({ key: 'merge:prev' })
   expect(await ui.find({ type: 'Text', text: 'src/a.ts' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('pressing a conflicted file in the diff tab opens the three-column merge view', async ($, on) => {
+  conflictRepo(on)
+  await openPanel($)
+
+  const ui = await mountPane($)
+  // 衝突的檔案標 !，點了不是看差異，是開三欄合併；Back 回 diff 分頁。
+  await ui.press({ key: 'file:unstaged:src/a.ts' })
+  expect(await ui.find({ type: 'Text', text: '0 of 1 conflicts resolved' })).toBeDefined()
+  expect(await ui.find({ key: 'merge:ours:1' })).toBeDefined()
+  await ui.press({ key: 'merge:back' })
+  expect(await ui.find({ key: 'file:unstaged:src/a.ts' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('during a rebase the merge view says ours and theirs are swapped, and Continue runs rebase --continue without an editor', async ($, on) => {
+  const { calls } = conflictRepo(on, { gitDir: ['rebase-merge'] })
+  await openPanel($)
+
+  const ui = await mountPane($)
+  await ui.press({ key: 'sub:conflict' })
+  expect(await ui.find({ type: 'Text', text: 'Rebase in progress' })).toBeDefined()
+  await ui.press({ key: 'conflict:src/a.ts' })
+  expect(await ui.find({ type: 'Text', text: /^Rebasing: ours is the branch you are rebasing onto, theirs is your commit/ })).toBeDefined()
+  await ui.press({ key: 'merge:theirs:1' })
+  await ui.press({ key: 'merge:apply' })
+
+  expect(await ui.find({ type: 'Text', text: 'All conflicts resolved.' })).toBeDefined()
+  await ui.press({ key: 'op:continue' })
+  const cont = calls.find(c => c.args.join(' ') === 'rebase --continue')
+  expect(cont?.env).toMatchObject({ GIT_EDITOR: 'true' })
+  await ui.unmount()
+})
+
+test('a conflicted file with no markers is resolved whole: ours checks it out, theirs-deleted removes it, as-is adds it', async ($, on) => {
+  // 三個衝突檔案都沒有衝突標記（像二進位檔）；b.ts 被 theirs 刪掉了，git 只留 1、2 兩個版本。
+  const stagesOf = (path: string) => (path === 'src/b.ts' ? [1, 2] : [1, 2, 3])
+  const { calls } = conflictRepo(on, {
+    status: '## main\0UU src/a.ts\0UD src/b.ts\0UU src/c.ts\0',
+    text: 'PNG\n',
+    run: args => {
+      if (args[0] !== 'ls-files') return undefined
+      const path = args.at(-1) ?? ''
+
+      return ok(stagesOf(path).map(n => `100644 ${String(n).repeat(40)} ${n}\t${path}\0`).join(''))
+    },
+  })
+  await openPanel($)
+
+  const ui = await mountPane($)
+  await ui.press({ key: 'sub:conflict' })
+  await ui.press({ key: 'conflict:src/a.ts' })
+  expect(await ui.find({ type: 'Text', text: /no conflict markers to pick from/ })).toBeDefined()
+  expect(await ui.find({ key: 'merge:apply' })).toBeUndefined()
+  // Use ours：整個檔案換成 ours 的，再 git add；解掉就回到 conflict 分頁。
+  await ui.press({ key: 'merge:take-ours' })
+  expect(await ui.find({ type: 'Text', text: 'Conflicts · 2' })).toBeDefined()
+  expect(await ui.find({ key: 'conflict:src/a.ts' })).toBeUndefined()
+
+  // Use theirs，但 theirs 把它刪了：git rm。
+  await ui.press({ key: 'conflict:src/b.ts' })
+  await ui.press({ key: 'merge:take-theirs' })
+  // Mark resolved as is：照工作區現在的樣子 git add。
+  await ui.press({ key: 'conflict:src/c.ts' })
+  await ui.press({ key: 'merge:take-as-is' })
+
+  expect(gitCommands(calls).filter(c => /^(checkout|add|rm) /.test(c))).toEqual([
+    'checkout --ours -- src/a.ts',
+    'add -- src/a.ts',
+    'rm -q -- src/b.ts',
+    'add -A -- src/c.ts',
+  ])
+  expect(await ui.find({ type: 'Text', text: 'All conflicts resolved.' })).toBeDefined()
+  await ui.unmount()
+})
+
+// x 兩邊都改了（衝突），y 只有 theirs 改（git 自己合進來）。
+const AUTO_STAGES: Record<string, string> = {
+  ':1:src/a.ts': 'import a\nconst x = 0\nkeep\nconst y = 0\nend\n',
+  ':2:src/a.ts': 'import a\nconst x = 1\nkeep\nconst y = 0\nend\n',
+  ':3:src/a.ts': 'import a\nconst x = 2\nkeep\nconst y = 9\nend\n',
+}
+
+test('in the merge view a side, all ours or all theirs fills the middle, and an auto-merged change can be undone and applied again', async ($, on) => {
+  const { writes } = conflictRepo(on, { stages: AUTO_STAGES })
+  await openPanel($)
+
+  const ui = await mountPane($)
+  await ui.press({ key: 'sub:conflict' })
+  await ui.press({ key: 'conflict:src/a.ts' })
+  // 畫出這段程式碼的格子有幾個：左右兩欄各一格，選進中間就多一格。
+  const shown = async (source: string) => (await ui.findAll({ type: 'Code' })).filter(c => c.props.source === source).length
+
+  // theirs 的「≪ Accept」：中間放 theirs 的。
+  expect(await shown('const x = 2')).toBe(1)
+  await ui.press({ key: 'merge:theirs:1' })
+  expect(await ui.find({ type: 'Text', text: '1 of 1 conflicts resolved' })).toBeDefined()
+  expect(await shown('const x = 2')).toBe(2)
+  // All ours／All theirs：每段衝突都換成那一邊。
+  await ui.press({ key: 'merge:all-ours' })
+  expect(await shown('const x = 1')).toBe(2)
+  expect(await shown('const x = 2')).toBe(1)
+  await ui.press({ key: 'merge:all-theirs' })
+  expect(await shown('const x = 2')).toBe(2)
+
+  // 自動合進來的 y：中間是 theirs 的；Undo 換回原本的樣子，Apply 再放回來。
+  expect(await ui.find({ type: 'Text', text: 'Auto-merged from theirs' })).toBeDefined()
+  expect(await shown('const y = 9')).toBe(2)
+  await ui.press({ key: 'merge:toggle:3' })
+  expect(await ui.find({ type: 'Text', text: 'Auto-merged from theirs · undone' })).toBeDefined()
+  expect((await ui.find({ key: 'merge:toggle:3' }))?.props.label).toBe('Apply')
+  expect(await shown('const y = 0')).toBe(2)
+  await ui.press({ key: 'merge:toggle:3' })
+  expect(await shown('const y = 9')).toBe(2)
+
+  // 再 Undo 一次就套用：寫回去的是 theirs 的 x、原本的 y。
+  await ui.press({ key: 'merge:toggle:3' })
+  await ui.press({ key: 'merge:apply' })
+  expect(writes).toEqual([{ path: '/repo/src/a.ts', text: 'import a\nconst x = 2\nkeep\nconst y = 0\nend\n' }])
+  await ui.unmount()
+})
+
+// ───── 回合結束 ─────
+
+const diffOf = (line: string) => `diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-a\n+${line}\n`
+
+test('at turn end the repo bar and an open diff reread, and the diff closes once its file has no changes', async ($, on) => {
+  let status = '## main\0 M a.ts\0'
+  let diff = diffOf('b')
+  stubPanel(on)
+  gitRepo(on, { status: () => status, run: cmd => (cmd[0] === 'diff' ? ok(diff) : undefined) })
+  await openPanel($)
+  const label = async () => (await ui.find({ key: 'repo:repo' }))?.props.label
+  const source = async () => (await ui.find({ type: 'Code' }))?.props.source
+
+  const ui = await mountPane($)
+  expect(await label()).toBe('repo*')
+  // 這個回合 Claude 弄出了一個衝突：repo 名稱後面多一個 !。
+  status = '## main\0 M a.ts\0UU c.ts\0'
+  await endTurn($, ui)
+  expect(await label()).toBe('repo* !')
+
+  // 開著的差異：Claude 又改了 a.ts，換成新的差異。
+  await ui.press({ key: 'file:unstaged:a.ts' })
+  expect(await source()).toContain('+b')
+  diff = diffOf('c')
+  await endTurn($, ui)
+  expect(await source()).toContain('+c')
+
+  // Claude 把變更都 commit 了：差異關掉、回到分頁，repo 名稱後面的記號也拿掉。
+  status = '## main\0'
+  await endTurn($, ui)
+  expect(await ui.find({ type: 'Code' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'No uncommitted changes.' })).toBeDefined()
+  expect(await label()).toBe('repo')
+  await ui.unmount()
+})
+
+test('at turn end an open merge view rereads the file and keeps the conflicts already chosen', async ($, on) => {
+  const { calls } = conflictRepo(on)
+  await openPanel($)
+  const stageReads = () => gitCommands(calls).filter(c => c.startsWith('ls-files')).length
+
+  const ui = await mountPane($)
+  await ui.press({ key: 'sub:conflict' })
+  await ui.press({ key: 'conflict:src/a.ts' })
+  await ui.press({ key: 'merge:ours:1' })
+  const reads = stageReads()
+  // 回合結束重讀了這個檔案（git 留著的版本），已經選好的那段還是選好的。
+  await endTurn($, ui)
+  expect(stageReads()).toBe(reads + 1)
+  expect(await ui.find({ type: 'Text', text: '1 of 1 conflicts resolved' })).toBeDefined()
+  expect(await ui.find({ key: 'merge:apply' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('at turn end the Files tab relists its folder, and an open file shows its new text once it changed', async ($, on) => {
+  let names = ['a.ts']
+  let stat = { mtimeMs: 1, size: 3 }
+  let text = 'v1\n'
+  stubPanel(on, { root: '/proj' })
+  on('fs.list', () => ({ value: names.map(n => fsEntry(n)) }))
+  on('fs.stat', () => ({ value: { kind: 'file', isLink: false, ...stat } }))
+  on('fs.read', () => ({ value: text }))
+  on('process.run', () => ok(''))
+  const source = async () => (await ui.find({ type: 'Code' }))?.props.source
+
+  const ui = await mountPane($)
+  await ui.press({ key: 'tab:files' })
+  // Claude 加了 b.ts：重列。
+  names = ['a.ts', 'b.ts']
+  await endTurn($, ui)
+  expect(await ui.find({ key: 'files:file:b.ts' })).toBeDefined()
+
+  await ui.press({ key: 'files:file:a.ts' })
+  expect(await source()).toBe('v1\n')
+  // 修改時間和大小都沒變，當作沒改，不重讀。
+  text = 'v2\n'
+  await endTurn($, ui)
+  expect(await source()).toBe('v1\n')
+  // 改了：換成新的內容。
+  stat = { mtimeMs: 2, size: 3 }
+  await endTurn($, ui)
+  expect(await source()).toBe('v2\n')
   await ui.unmount()
 })
 

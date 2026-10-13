@@ -11,10 +11,11 @@
 //   merge/algo.ts  三方合併
 //   services/      找服務（scan）
 //   files/         Files 分頁的排序、路徑（list）
+//   spec/          Spec 分頁：讀 plan.yaml、挑格式錯誤（parse）
 //   ui/            畫面：拿到資料和 Actions 畫出樹（panel、tabs/、diffView、mergeView）
 
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, PaneOpenArgs, ProcessRunInit, Register, RenderChildren, RenderSurface, Timer, UiPressArgument } from 'claude-code'
+import type { EngineInterface, PaneOpenArgs, ProcessRunInit, Register, RenderChildren, RenderSurface, Timer, ToolCallResult, UiPressArgument } from 'claude-code'
 
 import type {
   CommitFile,
@@ -38,6 +39,8 @@ import type {
   ServiceAction,
   ServicePending,
   ServicesView,
+  SpecEntry,
+  SpecView,
   TabId,
 } from '../types'
 import {
@@ -50,15 +53,17 @@ import {
   LOG_PAGE,
   OP_LABEL,
   PANEL_TITLE,
+  PLAN_FILE,
   REFOCUS_AFTER_PRESS_MS,
   RESTART_CHECK_MS,
   RESTART_GAP_MS,
   SERVICES_SCAN_MS,
+  SPEC_DIR,
   SYNC_TIMEOUT_MS,
   USAGE_TICK_MS,
 } from './config'
 import { NO_COVER, coverData, patchCover, showCover } from './cover'
-import { EMPTY, EMPTY_DIFF, EMPTY_FILE_VIEW, EMPTY_FILES, EMPTY_LOG, EMPTY_MERGE, EMPTY_SERVICES, NO_COMMIT, NO_MESSAGES } from './defaults'
+import { EMPTY, EMPTY_DIFF, EMPTY_FILE_VIEW, EMPTY_FILES, EMPTY_LOG, EMPTY_MERGE, EMPTY_PLAN, EMPTY_SERVICES, EMPTY_SPEC, NO_COMMIT, NO_MESSAGES } from './defaults'
 import { fileSteps, formatSize, sortEntries, viewText } from './files/list'
 import { errorText, failure, isMissingCommand } from './errors'
 import {
@@ -99,6 +104,7 @@ import {
   withFiles,
 } from './services/mac'
 import { KILL_ARGV, LAUNCH_ARGV, SCAN_ARGV, findServices } from './services/scan'
+import { isPlanPath, readPlan, sortSpecs } from './spec/parse'
 import type { Actions } from './ui/actions'
 import { buttonKeys, ringAnchor, tabIconKey } from './ui/keys'
 import { renderPanel } from './ui/panel'
@@ -127,6 +133,8 @@ const logQuery = atom({ plugin: 'soap-mods', key: 'logQuery' } as const, '')
 const fileLimit = atom({ plugin: 'soap-mods', key: 'fileLimit' } as const, FILE_PAGE)
 const services = atom({ plugin: 'soap-mods', key: 'services' } as const, EMPTY_SERVICES)
 const files = atom({ plugin: 'soap-mods', key: 'files' } as const, EMPTY_FILES)
+// Spec 分頁：.soap/tasks 底下的 feature 清單，和點開的那份 plan.yaml。
+const spec = atom({ plugin: 'soap-mods', key: 'spec' } as const, EMPTY_SPEC)
 const log = atom({ plugin: 'soap-mods', key: 'log' } as const, EMPTY_LOG)
 // 蓋住分頁的畫面：差異、三欄合併或檔案內容，一次一個（cover.ts）。
 const cover = atom({ plugin: 'soap-mods', key: 'cover' } as const, NO_COVER)
@@ -165,6 +173,10 @@ async function setServices($: EngineInterface, change: Partial<ServicesView>) {
 
 async function setFiles($: EngineInterface, change: Partial<FilesView>) {
   await update($, files, f => patch(f, change))
+}
+
+async function setSpec($: EngineInterface, change: Partial<SpecView>) {
+  await update($, spec, s => patch(s, change))
 }
 
 // ───── 跑 git ─────
@@ -390,12 +402,13 @@ function refresh($: EngineInterface): Promise<void> {
   return refreshing
 }
 
-// 回合結束時 git 狀態看不到（停在 Files 分頁、Soap Panel 不在前面）就不讀，只記著；
+// 回合結束時 git 狀態看不到（停在 Files、Spec 分頁、Soap Panel 不在前面）就不讀，只記著；
 // 換到 Git、Services 分頁（照那排 repo 分組），或 Soap Panel 被切到前面時再讀。
 let isGitStale = false
 
 async function refreshWhenShown($: EngineInterface) {
-  if ((await read($, tab)) !== 'files' && (await isPaneShown($))) await refresh($)
+  const t = await read($, tab)
+  if (t !== 'files' && t !== 'spec' && (await isPaneShown($))) await refresh($)
   else isGitStale = true
 }
 
@@ -1220,6 +1233,84 @@ async function stepFile($: EngineInterface, step: 1 | -1) {
   if (next !== undefined) await showFile($, next)
 }
 
+// ───── Spec 分頁 ─────
+
+// 連點兩個 feature、讀到一半按了 Back，晚到的舊清單、舊計劃不寫。
+const specLoads = latestOnly()
+const planReads = latestOnly()
+
+// 列出 .soap/tasks 底下的 feature 資料夾，每個看它的 plan.yaml 改過的時間（最新的排上面）。
+// 還沒有 .soap/tasks 是還沒寫過計劃，不是錯誤。
+async function loadSpecs($: EngineInterface) {
+  const isStale = specLoads.start()
+  const dir = `${await $.session.root()}/${SPEC_DIR}`
+  const listed = await (async () => {
+    if (!(await $.fs.exists(dir))) return { specs: [], error: '' }
+    const folders = (await $.fs.list(dir)).filter(e => e.kind === 'dir')
+    const specs = await Promise.all(
+      folders.map(async (f): Promise<SpecEntry> => {
+        const stat = await $.fs.stat(`${dir}/${f.name}/${PLAN_FILE}`).catch(() => undefined)
+        const hasPlan = stat?.kind === 'file'
+
+        return { name: f.name, mtimeMs: hasPlan ? stat.mtimeMs : 0, hasPlan }
+      }),
+    )
+
+    return { specs: sortSpecs(specs), error: '' }
+  })().catch((err: unknown) => ({ specs: [], error: `Couldn't list ./${SPEC_DIR}: ${errorText(err)}` }))
+  if (isStale()) return
+  await setSpec($, { isLoaded: true, ...listed })
+}
+
+// 讀一份 plan.yaml 畫出來；格式哪裡不對一起列出來。
+async function openSpec($: EngineInterface, name: string) {
+  const isStale = planReads.start()
+  const path = `${SPEC_DIR}/${name}/${PLAN_FILE}`
+  const shown = await $.fs
+    .read(`${await $.session.root()}/${path}`)
+    .then(readPlan, (err: unknown) => ({ plan: EMPTY_PLAN, problems: [`Couldn't read ${path}: ${errorText(err)}`] }))
+  if (isStale()) return
+  const prev = await read($, spec)
+  await setSpec($, { open: name, ...shown })
+  if (prev.open !== name) await scrollTop($)
+}
+
+async function closeSpec($: EngineInterface) {
+  planReads.drop()
+  await setSpec($, { open: '', plan: EMPTY_PLAN, problems: [] })
+  await loadSpecs($)
+}
+
+// 回合結束：Claude 可能寫了新的計劃、改了打開的那份。Spec 分頁開著就重列，開著計劃就重讀。
+async function reloadSpecsWhenShown($: EngineInterface) {
+  const [t, s] = await Promise.all([read($, tab), read($, spec)])
+  if (t !== 'spec') return
+  await Promise.all([loadSpecs($), s.open === '' ? undefined : openSpec($, s.open)])
+}
+
+// Claude 用 Write／Edit 寫了 .soap/tasks/<feature>/plan.yaml：寫完讀回整份檢查格式，
+// 不對就把哪裡不對塞進工具結果後面（只有 Claude 看得到，它會自己修），也跳個 toast 讓人知道。
+// Edit 只帶改的那一段，所以不在寫之前擋，寫完看整份。
+async function checkPlanWrite($: EngineInterface, path: string) {
+  const { problems } = readPlan(await $.fs.read(path))
+  if (problems.length === 0) return undefined
+  void $.ui.toast(`plan.yaml has ${problems.length} problem${problems.length === 1 ? '' : 's'}: ${problems[0]}`)
+
+  return [
+    `${path} is not a valid soap-plan plan.yaml. Fix it:`,
+    ...problems.map(p => `- ${p}`),
+    'Required keys: description (non-empty string), goals, constraints, related, verify (lists; [] when empty). Optional: branch, issue-number (strings).',
+  ].join('\n')
+}
+
+// Write／Edit 的結果 ran：寫的是 plan.yaml、寫成功了才檢查。讀不回來就不管，工具結果照原樣給 Claude。
+async function checkPlan<R extends ToolCallResult>($: EngineInterface, path: string, ran: R): Promise<R> {
+  if (ran.deny !== undefined || ran.isError === true || !isPlanPath(path)) return ran
+  const note = await checkPlanWrite($, path).catch(() => undefined)
+
+  return note === undefined ? ran : { ...ran, context: [...(ran.context ?? []), note] }
+}
+
 // ───── 蓋住分頁的畫面 ─────
 
 // 關掉差異、合併、檔案內容，回到分頁：合併選到一半的結果放掉（檔案沒動過，下次打開從頭選），
@@ -1250,6 +1341,7 @@ async function selectTab($: EngineInterface, id: TabId) {
   // 掃描要一秒左右，不等它：先切過去畫「掃描中」或舊清單。
   if (id === 'services') void refreshServices($).catch(() => undefined)
   if (id === 'files') void reloadFiles($).catch(() => undefined)
+  else if (id === 'spec') void loadSpecs($).catch(() => undefined)
   else refreshIfStale($)
 }
 
@@ -1314,6 +1406,8 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     openDir: dir => loadFiles($, dir),
     openFile: path => showFile($, path),
     stepFile: step => stepFile($, step),
+    openSpec: name => openSpec($, name),
+    closeSpec: () => closeSpec($),
     editChunks: edit => editChunks($, edit),
     jumpConflict: step => jumpConflict($, step),
     takeSide: side => takeSide($, side),
@@ -1362,13 +1456,18 @@ export const register: Register = on => {
   on('turn.complete', ($, e, next) => {
     void refreshWhenShown($).catch(() => undefined)
     void reloadFilesWhenShown($).catch(() => undefined)
+    void reloadSpecsWhenShown($).catch(() => undefined)
 
     return next(e)
   })
 
+  // plan.yaml 寫完檢查格式（checkPlan）。
+  on('tool.call', { tool: 'Write' }, async ($, e, next) => checkPlan($, e.file_path, await next(e))).catch(($, e, next) => next(e))
+  on('tool.call', { tool: 'Edit' }, async ($, e, next) => checkPlan($, e.file_path, await next(e))).catch(($, e, next) => next(e))
+
   // 畫面：這裡讀狀態，交給 ui/ 的純函式畫。
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const [activeTab, activeSub, v, isRemoteOpen, bf, bq, fl, sv, fileList, lg, lq, shown, usage, now] = await Promise.all([
+    const [activeTab, activeSub, v, isRemoteOpen, bf, bq, fl, sv, fileList, specs, lg, lq, shown, usage, now] = await Promise.all([
       read($, tab),
       read($, subTab),
       read($, view),
@@ -1378,6 +1477,7 @@ export const register: Register = on => {
       read($, fileLimit),
       read($, services),
       read($, files),
+      read($, spec),
       read($, log),
       read($, logQuery),
       read($, cover),
@@ -1401,6 +1501,7 @@ export const register: Register = on => {
         syncing,
         services: sv,
         files: fileList,
+        spec: specs,
         servicePending,
         log: lg,
         logQuery: lq,

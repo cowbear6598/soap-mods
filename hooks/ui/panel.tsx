@@ -16,6 +16,7 @@ import { diffTab } from './tabs/diff'
 import { filesTab } from './tabs/files'
 import { logTab } from './tabs/log'
 import { servicesTab } from './tabs/services'
+import { specTab } from './tabs/spec'
 import { usageBar } from './usage'
 import { makeWidgets } from './widgets'
 
@@ -39,6 +40,7 @@ const TAB_BODIES: Record<TabId, TabBody> = {
   git: gitTab,
   files: filesTab,
   services: servicesTab,
+  spec: specTab,
 }
 
 // Git Tab 的上半部：那排 repo、子分頁圖示（有衝突時 conflict 變紅）。

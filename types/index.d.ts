@@ -1,4 +1,4 @@
-export type TabId = 'git' | 'files' | 'services'
+export type TabId = 'git' | 'files' | 'services' | 'spec'
 export type GitSubTab = 'diff' | 'branch' | 'log' | 'conflict'
 /** The branch tab's Fetch / Pull buttons. */
 export type GitSync = 'fetch' | 'pull'
@@ -281,6 +281,39 @@ export type FileView = {
   stamp: string
 }
 
+/** A plan the soap-plan skill writes to `.soap/tasks/<feature>/plan.yaml`, as read; a missing or wrong field is empty. */
+export type Plan = {
+  branch: string
+  issueNumber: string
+  description: string
+  goals: string[]
+  constraints: string[]
+  related: string[]
+  verify: string[]
+}
+
+/** One feature folder under `.soap/tasks`. */
+export type SpecEntry = {
+  name: string
+  /** plan.yaml's modified time; 0 when the folder has none. */
+  mtimeMs: number
+  hasPlan: boolean
+}
+
+export type SpecView = {
+  /** False before the first listing finishes. */
+  isLoaded: boolean
+  /** Newest plan first; folders without a plan.yaml last. */
+  specs: SpecEntry[]
+  /** Why listing `.soap/tasks` failed, '' when none (a missing folder is no specs, not an error). */
+  error: string
+  /** The feature opened, '' for the list. */
+  open: string
+  plan: Plan
+  /** What is wrong with the opened plan.yaml (format, missing keys, reading it); empty when it is fine. */
+  problems: string[]
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'soap-mods': {
@@ -299,6 +332,7 @@ declare module 'claude-code' {
       fileLimit: number
       services: ServicesView
       files: FilesView
+      spec: SpecView
       log: LogView
       cover: Cover
     }

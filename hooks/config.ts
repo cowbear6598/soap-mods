@@ -47,6 +47,7 @@ export const ICONS = {
     '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
   services:
     '<rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/>',
+  spec: '<rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/>',
   restart: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
   stop: '<rect width="14" height="14" x="5" y="5" rx="2"/>',
   trash:
@@ -100,6 +101,7 @@ export const TABS: { id: TabId; label: string; icon: IconName }[] = [
   { id: 'files', label: 'Files', icon: 'files' },
   { id: 'git', label: 'Git', icon: 'git' },
   { id: 'services', label: 'Services', icon: 'services' },
+  { id: 'spec', label: 'Spec', icon: 'spec' },
 ]
 
 // Git Tab 的子分頁；內容在 ui/panel.tsx 的 SUB_TAB_BODIES。
@@ -126,6 +128,10 @@ export const FILE_PAGE = 50
 export const FILES_ROW_LIMIT = 200
 // 點檔案看內容：比這大的不讀（bytes）。
 export const FILE_VIEW_MAX_BYTES = 1_000_000
+// Spec 分頁：soap-plan skill 把每個 feature 的計劃寫在這個資料夾（相對 session 資料夾）底下的 <feature>/plan.yaml。
+export const SPEC_DIR = '.soap/tasks'
+export const PLAN_FILE = 'plan.yaml'
+
 // 差異、檔案內容最多畫前面這麼多字（引擎一次最多畫 100000 字），切在行尾。
 export const CODE_MAX_CHARS = 60_000
 

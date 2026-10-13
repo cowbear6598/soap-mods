@@ -18,6 +18,7 @@ import type {
   ServiceAction,
   ServicePending,
   ServicesView,
+  SpecView,
   TabId,
 } from '../../types'
 
@@ -68,6 +69,9 @@ export type Actions = {
   // 看檔案內容（畫在 Soap Panel 裡）；path 一樣相對 session 資料夾。
   openFile: (path: string) => unknown
   stepFile: (step: 1 | -1) => unknown
+  // spec：name 是 .soap/tasks 底下的 feature 資料夾。
+  openSpec: (name: string) => unknown
+  closeSpec: () => unknown
   // services
   runServiceAction: (s: Service, action: ServiceAction) => unknown
   // 合併（畫在 Soap Panel 裡）
@@ -93,6 +97,7 @@ export type PanelData = {
   syncing: GitSync | ''
   services: ServicesView
   files: FilesView
+  spec: SpecView
   // 正在停掉／重跑的服務。
   servicePending: readonly ServicePending[]
   log: LogView

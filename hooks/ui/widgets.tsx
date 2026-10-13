@@ -36,8 +36,8 @@ type Row = {
 // press：這個面板上的按鈕都經過它，動作做完後丟了焦點會補回來。
 export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
   const { Box, Button, Text } = ui
-  // 終端機沒有 Svg，那邊退回文字按鈕。
-  const Svg = 'Svg' in ui ? ui.Svg : undefined
+  // 終端機畫不出 Svg（元素表裡有這個 key，但畫成空的），那邊退回文字按鈕。
+  const Svg = !isTerminal && 'Svg' in ui ? ui.Svg : undefined
 
   // 只有圖示的按鈕，三層疊起來（後畫的 absolute 疊在上面）：
   // 1. 墊底的 Button 撐出外框大小，選中的底色畫在外框上；它被蓋住，點不到；
