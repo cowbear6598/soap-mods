@@ -33,38 +33,30 @@ function specList({ w, d, a }: TabContext) {
   )
 }
 
-// 一段：粗體標題，底下是內容；沒內容寫 None。
+// 一段：Markdown 標題（比面板的字大），底下的內容包在圓角框裡；沒內容寫 None。
 function section(w: Widgets, title: string, body: RenderChildren, isEmpty: boolean) {
-  const { Box, Text } = w
+  const { Box, Markdown, Text } = w
 
   return (
     <Box key={`spec:section:${title}`} flexDirection="column">
-      <Text bold>{title}</Text>
-      {isEmpty ? <Text dimColor>None</Text> : body}
+      <Markdown text={`### ${title}`} />
+      <Box flexDirection="column" borderStyle="round" borderDimColor paddingX={1}>
+        {isEmpty ? <Text dimColor>None</Text> : body}
+      </Box>
     </Box>
   )
 }
 
-// 條列：每項前面一個符號，太長換行時對齊在符號後面。
-function bullets(w: Widgets, prefix: string, items: readonly string[], mark: string) {
-  const { Box, Text } = w
+// 條列（Markdown 清單，跟 Claude 回覆的字一樣大）。code：每項包成 inline code（Verify 的指令）；
+// 指令裡有反引號就用兩個反引號包，前後各空一格，Markdown 才不會切錯。
+function bulletList(items: readonly string[], isCode = false) {
+  const asCode = (item: string) => (item.includes('`') ? `\`\` ${item} \`\`` : `\`${item}\``)
 
-  return (
-    <Box flexDirection="column">
-      {items.map((item, i) => (
-        <Box key={`${prefix}:${i}`} gap={1}>
-          <Text dimColor>{mark}</Text>
-          <Box flexShrink={1}>
-            <Text>{item}</Text>
-          </Box>
-        </Box>
-      ))}
-    </Box>
-  )
+  return items.map(item => `- ${isCode ? asCode(item) : item}`).join('\n')
 }
 
 function planView({ w, d, a }: TabContext) {
-  const { Box, Text } = w
+  const { Box, Markdown, Text } = w
   const s = d.spec
   const p = s.plan
   const meta = [p.issueNumber, p.branch].filter(m => m !== '').join(' · ')
@@ -77,14 +69,16 @@ function planView({ w, d, a }: TabContext) {
       </Box>
       {meta !== '' && <Text dimColor>{meta}</Text>}
       {s.problems.length > 0 && (
-        <Box flexDirection="column">
+        <Box flexDirection="column" borderStyle="round" borderColor="error" paddingX={1}>
           <Text color="error" bold>{`${SPEC_DIR}/${s.open}/${PLAN_FILE} has problems:`}</Text>
-          {bullets(w, 'spec:problem', s.problems, '!')}
+          {s.problems.map((problem, i) => (
+            <Text key={`spec:problem:${i}`} color="error">{`! ${problem}`}</Text>
+          ))}
         </Box>
       )}
-      {section(w, 'Description', <Text>{p.description}</Text>, p.description === '')}
-      {section(w, 'Goals', bullets(w, 'spec:goal', p.goals, '•'), p.goals.length === 0)}
-      {section(w, 'Verify', bullets(w, 'spec:verify', p.verify, '$'), p.verify.length === 0)}
+      {section(w, 'Description', <Markdown text={p.description} />, p.description === '')}
+      {section(w, 'Goals', <Markdown text={bulletList(p.goals)} />, p.goals.length === 0)}
+      {section(w, 'Verify', <Markdown text={bulletList(p.verify, true)} />, p.verify.length === 0)}
     </Box>
   )
 }

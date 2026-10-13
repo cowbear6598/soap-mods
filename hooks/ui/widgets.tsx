@@ -35,7 +35,7 @@ type Row = {
 
 // press：這個面板上的按鈕都經過它，動作做完後丟了焦點會補回來。
 export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
-  const { Box, Button, Text } = ui
+  const { Box, Button, Markdown, Text } = ui
   // 終端機畫不出 Svg（元素表裡有這個 key，但畫成空的），那邊退回文字按鈕。
   const Svg = !isTerminal && 'Svg' in ui ? ui.Svg : undefined
 
@@ -219,7 +219,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
       stretched(DIVIDER_SVG, 'Divider', 1)
     )
 
-  return { Box, Button, Text, hasSvg: Svg !== undefined, press, iconButton, pressRow, pathRow, searchField, iconBar, stretched, divider }
+  return { Box, Button, Markdown, Text, hasSvg: Svg !== undefined, press, iconButton, pressRow, pathRow, searchField, iconBar, stretched, divider }
 }
 
 export type Widgets = ReturnType<typeof makeWidgets>

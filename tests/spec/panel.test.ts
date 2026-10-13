@@ -54,8 +54,9 @@ test('the Spec tab lists the plans newest first, opens one to its Description, G
 
   await ui.press({ key: 'spec:item:login' })
   expect((await ui.find({ key: 'spec:back' }))?.props).toMatchObject({ label: '← Back', hotkey: 'b' })
-  for (const text of ['Description', 'Users need SSO.', 'Goals', 'SSO signs the user in', 'Verify', 'npm test -- login.spec.ts']) {
-    expect(await ui.find({ type: 'Text', text })).toBeDefined()
+  // 標題和內容都是 Markdown（字比面板大）：清單一項一行，Verify 的指令包成 inline code。
+  for (const text of ['### Description', 'Users need SSO.', '### Goals', '- SSO signs the user in', '### Verify', '- `npm test -- login.spec.ts`']) {
+    expect(await ui.find({ type: 'Markdown', text })).toBeDefined()
   }
   expect(await ui.find({ type: 'Text', text: /has problems/ })).toBeUndefined()
 
@@ -63,13 +64,13 @@ test('the Spec tab lists the plans newest first, opens one to its Description, G
   await ui.press({ key: 'spec:back' })
   await ui.press({ key: 'spec:item:search' })
   expect(await ui.find({ type: 'Text', text: '.soap/tasks/search/plan.yaml has problems:' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'use "goals", not "goal"' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'x' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '! use "goals", not "goal"' })).toBeDefined()
+  expect(await ui.find({ type: 'Markdown', text: 'x' })).toBeDefined()
 
   // 沒有 plan.yaml 的資料夾：說讀不到。
   await ui.press({ key: 'spec:back' })
   await ui.press({ key: 'spec:item:draft' })
-  expect(await ui.find({ type: 'Text', text: /^Couldn't read \.soap\/tasks\/draft\/plan\.yaml/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^! Couldn't read \.soap\/tasks\/draft\/plan\.yaml/ })).toBeDefined()
   await ui.press({ key: 'spec:back' })
   expect(await ui.find({ key: 'spec:item:login' })).toBeDefined()
   await ui.unmount()
@@ -88,12 +89,12 @@ test('with no .soap/tasks the Spec tab says to run /soap-mods:plan, and at turn 
   state.plans['login/plan.yaml'] = { text: LOGIN, mtimeMs: 1 }
   await endTurn($, ui)
   await ui.press({ key: 'spec:item:login' })
-  expect(await ui.find({ type: 'Text', text: 'SSO signs the user in' })).toBeDefined()
+  expect(await ui.find({ type: 'Markdown', text: '- SSO signs the user in' })).toBeDefined()
 
   // 改了打開的那份：重讀。
   state.plans['login/plan.yaml'] = { text: LOGIN.replace('SSO signs the user in', 'Passkeys sign the user in'), mtimeMs: 2 }
   await endTurn($, ui)
-  expect(await ui.find({ type: 'Text', text: 'Passkeys sign the user in' })).toBeDefined()
+  expect(await ui.find({ type: 'Markdown', text: '- Passkeys sign the user in' })).toBeDefined()
   await ui.unmount()
 })
 
