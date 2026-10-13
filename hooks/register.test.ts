@@ -796,8 +796,8 @@ type TestBody = Extract<Parameters<typeof test>[1], (...args: never[]) => unknow
 type TestEngine = Parameters<TestBody>[0]
 type TestOn = Parameters<TestBody>[1]
 
-// 停在 merge、src/a.ts 有一段衝突的 repo；git add 之後就沒有衝突了。
-function conflictRepo(on: TestOn) {
+// 停在 merge、src/a.ts 有一段衝突的 repo；git add 之後就沒有衝突了。status：git status 印出的衝突檔案。
+function conflictRepo(on: TestOn, status = '## main\0UU src/a.ts\0') {
   const calls: { args: string[]; cwd?: string; env?: Record<string, string> }[] = []
   const writes: { path: string; text: string }[] = []
   const prompts: string[] = []
@@ -823,7 +823,7 @@ function conflictRepo(on: TestOn) {
   on('process.run', (_$, e) => {
     const args = e.argv.slice(3)
     calls.push({ args, cwd: posix(e.init?.cwd), env: e.init?.env })
-    if (args[0] === 'status') return ok(isAdded ? '## main\0M  src/a.ts\0' : '## main\0UU src/a.ts\0')
+    if (args[0] === 'status') return ok(isAdded ? '## main\0M  src/a.ts\0' : status)
     if (args[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
     if (args[0] === 'show') return showStage(args)
     if (args[0] === 'add') isAdded = true
@@ -923,6 +923,30 @@ test('abort asks once more before running, and Ask Claude sends the file to the 
   await ui.press({ key: 'op:abort' })
   await ui.press({ key: 'op:abort' })
   expect(calls.some(c => c.args.join(' ') === 'merge --abort' && c.cwd === '/repo')).toBe(true)
+  await ui.unmount()
+})
+
+test('Next past the last conflict of a file opens the next conflicted file, and stops at the last one', async ($, on) => {
+  conflictRepo(on, '## main\0UU src/a.ts\0UU src/b.ts\0')
+  on('ui.scroll', () => ({}))
+  on('ui.focus', () => ({}))
+  await openPanel($)
+
+  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'desktop', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  await ui.press({ key: 'sub:conflict' })
+  await ui.press({ key: 'conflict:src/a.ts' })
+  // 第一下跳到這個檔案唯一的一段衝突，再按一下換到 src/b.ts。
+  await ui.press({ key: 'merge:next' })
+  expect(await ui.find({ type: 'Text', text: 'src/a.ts' })).toBeDefined()
+  await ui.press({ key: 'merge:next' })
+  expect(await ui.find({ type: 'Text', text: 'src/b.ts' })).toBeDefined()
+  // 最後一個檔案的最後一段再按：不動，不繞回第一個。往前換回上一個檔案，第一個檔案再往前也不動。
+  await ui.press({ key: 'merge:next' })
+  expect(await ui.find({ type: 'Text', text: 'src/b.ts' })).toBeDefined()
+  await ui.press({ key: 'merge:prev' })
+  expect(await ui.find({ type: 'Text', text: 'src/a.ts' })).toBeDefined()
+  await ui.press({ key: 'merge:prev' })
+  expect(await ui.find({ type: 'Text', text: 'src/a.ts' })).toBeDefined()
   await ui.unmount()
 })
 

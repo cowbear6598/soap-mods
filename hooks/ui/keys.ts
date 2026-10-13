@@ -27,9 +27,9 @@ export function tabIconKey(tab: string, subTab: string): string {
 
 /**
  * Where the focus ring lands once the pressed button is gone: `prefer` (the
- * button a press swaps in), the Back of an open diff or merge, else the tab
+ * button a press swaps in), the Back of an open diff, merge or commit, else the tab
  * icon. The first of these that is drawn; undefined when none is.
  */
 export function ringAnchor(keys: Set<string>, tab: string, subTab: string, prefer?: string): string | undefined {
-  return [prefer, 'diff:back', 'merge:back', tabIconKey(tab, subTab)].find(k => k !== undefined && keys.has(k))
+  return [prefer, 'diff:back', 'merge:back', 'log:back', tabIconKey(tab, subTab)].find(k => k !== undefined && keys.has(k))
 }

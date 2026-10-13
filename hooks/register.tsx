@@ -726,8 +726,8 @@ async function readStages($: EngineInterface, path: string, key: string | null):
 
 // 讀衝突的檔案。檔案裡還有衝突標記，就拿 git 留著的三個版本自己做三方比對，
 // 分出沒動過的、只有一邊改（自動合入）的、真的衝突的段落；讀不到版本才退回只看衝突標記。
-// 同一個檔案重讀時，沒變的段落保留已經做的選擇；結果跟現在畫的一樣就不寫，面板不會白白重畫。
-async function loadMerge($: EngineInterface, path: string) {
+// 同一個檔案重讀時，沒變的段落保留已經做的選擇；結果跟現在畫的一樣就不寫，面板不會白白重畫。回傳讀到的結果。
+async function loadMerge($: EngineInterface, path: string): Promise<MergeView> {
   const [text, listed, m, v] = await Promise.all([
     $.fs.read(inRepo(path)).catch(() => null),
     listStages($, path).catch(() => null),
@@ -746,22 +746,38 @@ async function loadMerge($: EngineInterface, path: string) {
       chunks: keepChoices(m.path === path ? m.chunks : [], chunks),
     }
   }
-  if (JSON.stringify(next) === JSON.stringify(m)) return
+  if (JSON.stringify(next) === JSON.stringify(m)) return m
   await update($, merge, () => next)
+
+  return next
 }
 
 // 上一次跳到的衝突（chunks 的位置）；換了檔案就從頭算。
 let conflictCursor = { path: '', at: -1 }
 
-// 跳到下一段（step 1）或上一段（-1）衝突：捲到那一列的頂端，焦點放在 ours 的 Accept 上。
+// 跳到下一段（step 1）或上一段（-1）衝突：焦點放在 ours 的 Accept 上，捲到那一列的頂端。
+// 已經在最後一段（往前是第一段）再按：換到下一個（上一個）衝突檔案的第一段（最後一段）；
+// 已經是最後一個（第一個）檔案就不動，不繞回去，焦點也留在原地。
+// 換檔不走 openMerge：不用先捲回最上面（馬上就捲到那段），合併蓋著分頁時也不會開著差異。
+// 先移焦點再捲：換了檔案時那一列還沒畫出來，focus 會等它畫好，scroll 不會。
 // 捲不動、焦點移不過去（面板沒拿著鍵盤）都不算錯，下次按再試。
 async function jumpConflict($: EngineInterface, step: 1 | -1) {
-  const m = await read($, merge)
-  const at = nextConflict(m.chunks, conflictCursor.path === m.path ? conflictCursor.at : -1, step)
-  if (at === null) return
+  let m = await read($, merge)
+  let at = nextConflict(m.chunks, conflictCursor.path === m.path ? conflictCursor.at : -1, step)
+  if (at === null) {
+    if (isMergeBusy) return
+    const files = (await read($, view)).files.filter(isConflict)
+    const i = files.findIndex(f => f.path === m.path)
+    const other = i === -1 ? undefined : files[i + step]
+    if (other === undefined) return
+    m = await loadMerge($, other.path)
+    at = nextConflict(m.chunks, -1, step)
+    // 那個檔案沒有可以一段一段選的衝突：停在它的最上面。
+    if (at === null) return scrollTop($)
+  }
   conflictCursor = { path: m.path, at }
-  await $.ui.scroll({ in: PANE, to: { key: `conflict:${at}` }, block: 'start' }).catch(() => undefined)
   await ringOn($, `merge:ours:${at}`)
+  await $.ui.scroll({ in: PANE, to: { key: `conflict:${at}` }, block: 'start' }).catch(() => undefined)
 }
 
 // 點衝突的檔案：在 Soap Panel 裡蓋掉分頁，畫三欄合併，從最上面開始看。

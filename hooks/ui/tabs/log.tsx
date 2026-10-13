@@ -10,11 +10,11 @@ export const logTab: TabBody = ctx => {
   return lg.opened.length === 0 ? commitList(ctx, lg) : commitFiles(ctx, lg, lg.opened)
 }
 
-// 點開的 commit：最上面 ← Back，下面是它們改了哪些檔案，點了在 diff 面板看差異。
+// 點開的 commit：最上面 ← Back（b），下面是它們改了哪些檔案，點了在 diff 面板看差異。
 // 選範圍打開的是合起來的結果（最舊那筆之前 → 最新那筆）：標題只寫筆數和頭尾的 sha；
 // 搜尋中選的範圍，夾在中間沒列出來的 commit 也算進去，會提示。
 function commitFiles({ w, d, a }: TabContext, lg: LogView, opened: GitCommit[]) {
-  const { Box, Text } = w
+  const { Box, Button, Text } = w
   const { now } = d
   const commitFileRow = (f: CommitFile, _: number, files: CommitFile[]) =>
     w.pathRow(`commit-file:${f.path}`, f.path, f.letter, letterKind(f.letter), () => a.openCommitDiff(opened, f, files))
@@ -41,7 +41,9 @@ function commitFiles({ w, d, a }: TabContext, lg: LogView, opened: GitCommit[]) 
 
   return (
     <Box flexDirection="column" gap={1}>
-      {w.pressRow({ key: 'log:back', label: '← Back', isDim: true, isBold: true, indent: 0, onPress: () => a.closeCommit() })}
+      <Box>
+        <Button key="log:back" label="← Back" hotkey="b" onPress={w.press(() => a.closeCommit())} />
+      </Box>
       {heading}
       {lg.commitError !== '' && <Text color="error">{lg.commitError}</Text>}
       {lg.files === null ? (

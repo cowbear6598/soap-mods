@@ -330,9 +330,10 @@ export function chooseAll(chunks: MergeChunk[], choice: MergeChoice): MergeChunk
 }
 
 /**
- * The conflict to jump to from the one at `from` (-1 before any): the next
- * (`step` 1) or previous (-1) one still open, or of all of them once every one
- * is chosen, wrapping around at the ends. Its index in `chunks`; null with none.
+ * The conflict to jump to from the one at `from` (-1 before any, so the first
+ * going forward or the last going back): the next (`step` 1) or previous (-1)
+ * one still open, or of all of them once every one is chosen. Its index in
+ * `chunks`; null past the end, or with none.
  */
 export function nextConflict(chunks: MergeChunk[], from: number, step: 1 | -1): number | null {
   const conflicts = chunks.flatMap((c, k) => (c.kind === 'conflict' ? [{ k, isOpen: c.choice === 'none' }] : []))
@@ -340,7 +341,7 @@ export function nextConflict(chunks: MergeChunk[], from: number, step: 1 | -1): 
   const targets = (open.length > 0 ? open : conflicts).map(c => c.k)
   if (step === -1) targets.reverse()
 
-  return targets.find(k => (step === 1 ? k > from : k < from)) ?? targets[0] ?? null
+  return targets.find(k => from === -1 || (step === 1 ? k > from : k < from)) ?? null
 }
 
 /** Undoes an automatically merged change, or puts it back. */

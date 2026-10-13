@@ -154,15 +154,16 @@ test('detectOp and conflictLabel', () => {
   expect(conflictLabel({ path: 'a', x: 'U', y: 'D' })).toBe('deleted by them')
 })
 
-test('nextConflict walks the conflicts still open, wrapping around, then all of them once each is chosen', () => {
+test('nextConflict walks the conflicts still open, stopping at the ends, then all of them once each is chosen', () => {
   const same: MergeChunk = { kind: 'same', lines: ['a'] }
   const open: MergeChunk = { kind: 'conflict', ours: ['x1'], base: null, theirs: ['x2'], choice: 'none' }
   const chunks = [same, open, same, open, same, open, same]
   expect(nextConflict(chunks, -1, 1)).toBe(1)
   expect(nextConflict(chunks, 1, 1)).toBe(3)
-  expect(nextConflict(chunks, 5, 1)).toBe(1)
+  expect(nextConflict(chunks, 5, 1)).toBeNull()
   expect(nextConflict(chunks, -1, -1)).toBe(5)
   expect(nextConflict(chunks, 3, -1)).toBe(1)
+  expect(nextConflict(chunks, 1, -1)).toBeNull()
   // 第 3 段選好了：跳過它。
   const picked = choose(chunks, 3, 'ours')
   expect(nextConflict(picked, 1, 1)).toBe(5)
