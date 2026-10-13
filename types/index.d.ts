@@ -182,9 +182,14 @@ export type MergeView = MergeText & {
   hasMarkers: boolean
   /** Why the last read or apply failed, '' when none. */
   error: string
-  /** The operation that stopped for conflicts (rebase swaps ours and theirs), copied from GitView when read. */
-  op: MergeOp
 }
+
+/** What covers the tabs in Soap Panel, one at a time: a diff, a conflicted file's merge, or a file's text; none shows the tabs. */
+export type Cover =
+  | { kind: 'none' }
+  | { kind: 'diff'; data: DiffPaneView }
+  | { kind: 'merge'; data: MergeView }
+  | { kind: 'file'; data: FileView }
 
 /** One process as the scan script reports it. */
 export type ScanProc = {
@@ -272,6 +277,8 @@ export type FileView = {
   note: string
   /** Why reading the file failed, '' when none. */
   error: string
+  /** The file's modified time and size when read (`mtimeMs:size`), '' when it could not be read; unchanged, a reread skips the file. */
+  stamp: string
 }
 
 declare module 'claude-code' {
@@ -292,10 +299,8 @@ declare module 'claude-code' {
       fileLimit: number
       services: ServicesView
       files: FilesView
-      fileView: FileView
-      merge: MergeView
       log: LogView
-      diffPane: DiffPaneView
+      cover: Cover
     }
   }
 }

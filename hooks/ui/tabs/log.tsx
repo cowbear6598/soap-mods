@@ -1,6 +1,7 @@
 import type { CommitFile, GitCommit, LogView } from '../../../types'
 import { LOG_AGO_WIDTH, LOG_AUTHOR_WIDTH, LOG_SHA_WIDTH } from '../../config'
 import { commitsLabel, formatAgo, hasQuery, letterKind, logBranch } from '../../git/parse'
+import { backButton } from '../stepBar'
 import type { TabBody, TabContext } from './context'
 
 // log 分頁：點開了 commit 就畫它們改了哪些檔案，否則畫 commit 列表。
@@ -14,7 +15,7 @@ export const logTab: TabBody = ctx => {
 // 選範圍打開的是合起來的結果（最舊那筆之前 → 最新那筆）：標題只寫筆數和頭尾的 sha；
 // 搜尋中選的範圍，夾在中間沒列出來的 commit 也算進去，會提示。
 function commitFiles({ w, d, a }: TabContext, lg: LogView, opened: GitCommit[]) {
-  const { Box, Button, Text } = w
+  const { Box, Text } = w
   const { now } = d
   const commitFileRow = (f: CommitFile, _: number, files: CommitFile[]) =>
     w.pathRow(`commit-file:${f.path}`, f.path, f.letter, letterKind(f.letter), () => a.openCommitDiff(opened, f, files))
@@ -42,7 +43,7 @@ function commitFiles({ w, d, a }: TabContext, lg: LogView, opened: GitCommit[]) 
   return (
     <Box flexDirection="column" gap={1}>
       <Box>
-        <Button key="log:back" label="← Back" hotkey="b" onPress={w.press(() => a.closeCommit())} />
+        {backButton(w, w.press, 'log', () => a.closeCommit())}
       </Box>
       {heading}
       {lg.commitError !== '' && <Text color="error">{lg.commitError}</Text>}
@@ -82,8 +83,9 @@ function commitList({ w, d, a }: TabContext, lg: LogView) {
         <Box key={`commit:${c.sha}:unpushed`} width={1} flexShrink={0}>
           {isUnpushed && <Text color="warning">↑</Text>}
         </Box>,
-        <Box key={`commit:${c.sha}:sha`} width={LOG_SHA_WIDTH} flexShrink={0}>
-          <Text color="suggestion">{c.shortSha}</Text>
+        <Box key={`commit:${c.sha}:sha`} width={LOG_SHA_WIDTH} flexShrink={0} overflow="hidden">
+          {/* git 的短 sha 在大 repo 會變長（10 碼），列表只畫前面幾碼，留一格間距才不會擠進作者欄。 */}
+          <Text color="suggestion">{c.shortSha.slice(0, LOG_SHA_WIDTH - 1)}</Text>
         </Box>,
         <Box key={`commit:${c.sha}:author`} width={LOG_AUTHOR_WIDTH} flexShrink={0} overflow="hidden">
           <Text dimColor wrap="truncate-end">
@@ -114,7 +116,7 @@ function commitList({ w, d, a }: TabContext, lg: LogView) {
   return (
     <Box flexDirection="column" gap={1}>
       {lg.error !== '' && <Text color="error">{lg.error}</Text>}
-      {w.searchField('log:search', query, text => a.searchLog(text), () => a.searchLog(''), rangeButton)}
+      {w.searchField('log:search', query, text => a.searchLog(text), rangeButton)}
       {lg.isPicking && (
         <Text color="suggestion">{lg.rangeStart === '' ? 'Press the first commit of the range.' : 'Press the other end of the range.'}</Text>
       )}

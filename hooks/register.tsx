@@ -4,6 +4,9 @@
 //   config.ts      常數（面板、分頁、顏色、時間）
 //   defaults.ts    狀態的初始值
 //   patch.ts       改物件 atom 的幾個欄位（沒變就不寫）
+//   cover.ts       蓋住分頁的畫面（差異、合併、檔案內容），一次一個
+//   latest.ts      非同步讀取只寫最新的那次
+//   neighbour.ts   Previous／Next 的上一個／下一個
 //   git/           解析 git 輸出（parse）、repo 的參數和解析（repo）
 //   merge/algo.ts  三方合併
 //   services/      找服務（scan）
@@ -15,6 +18,7 @@ import type { EngineInterface, PaneOpenArgs, ProcessRunInit, Register, RenderChi
 
 import type {
   CommitFile,
+  Cover,
   DiffPaneView,
   FileView,
   FilesView,
@@ -53,7 +57,8 @@ import {
   SYNC_TIMEOUT_MS,
   USAGE_TICK_MS,
 } from './config'
-import { EMPTY, EMPTY_DIFF, EMPTY_FILE_VIEW, EMPTY_FILES, EMPTY_LOG, EMPTY_MERGE, EMPTY_SERVICES, NO_MESSAGES } from './defaults'
+import { NO_COVER, coverData, patchCover, showCover } from './cover'
+import { EMPTY, EMPTY_DIFF, EMPTY_FILE_VIEW, EMPTY_FILES, EMPTY_LOG, EMPTY_MERGE, EMPTY_SERVICES, NO_COMMIT, NO_MESSAGES } from './defaults'
 import { fileSteps, formatSize, sortEntries, viewText } from './files/list'
 import { errorText, failure, isMissingCommand } from './errors'
 import {
@@ -85,7 +90,9 @@ import {
   MAC_SCAN_ARGV,
   descendants,
   isShellSafe,
+  macArgsArgv,
   macFilesArgv,
+  parseMacArgs,
   parseMacFiles,
   parseMacScan,
   wantedPids,
@@ -95,6 +102,8 @@ import { KILL_ARGV, LAUNCH_ARGV, SCAN_ARGV, findServices } from './services/scan
 import type { Actions } from './ui/actions'
 import { buttonKeys, ringAnchor, tabIconKey } from './ui/keys'
 import { renderPanel } from './ui/panel'
+import { latestOnly } from './latest'
+import { neighbour } from './neighbour'
 import { patch } from './patch'
 
 // ───── 面板 id（引擎要在這個檔案裡直接看到值，不能 import）─────
@@ -118,10 +127,9 @@ const logQuery = atom({ plugin: 'soap-mods', key: 'logQuery' } as const, '')
 const fileLimit = atom({ plugin: 'soap-mods', key: 'fileLimit' } as const, FILE_PAGE)
 const services = atom({ plugin: 'soap-mods', key: 'services' } as const, EMPTY_SERVICES)
 const files = atom({ plugin: 'soap-mods', key: 'files' } as const, EMPTY_FILES)
-const fileView = atom({ plugin: 'soap-mods', key: 'fileView' } as const, EMPTY_FILE_VIEW)
-const merge = atom({ plugin: 'soap-mods', key: 'merge' } as const, EMPTY_MERGE)
 const log = atom({ plugin: 'soap-mods', key: 'log' } as const, EMPTY_LOG)
-const diffPane = atom({ plugin: 'soap-mods', key: 'diffPane' } as const, EMPTY_DIFF)
+// 蓋住分頁的畫面：差異、三欄合併或檔案內容，一次一個（cover.ts）。
+const cover = atom({ plugin: 'soap-mods', key: 'cover' } as const, NO_COVER)
 
 // 改一個物件 atom 的其中幾個欄位；改的欄位內容都沒變就不寫（patch），面板不會白白重畫。
 // 引擎要看得出改的是哪個 atom，所以每個 atom 一個，不能寫成通用的。
@@ -133,8 +141,22 @@ async function setLog($: EngineInterface, change: Partial<LogView>) {
   await update($, log, l => patch(l, change))
 }
 
+// 只改開著的合併；開著的不是合併就不動。
 async function setMerge($: EngineInterface, change: Partial<MergeView>) {
-  await update($, merge, m => patch(m, change))
+  await update($, cover, c => patchCover(c, 'merge', change))
+}
+
+// 開著的合併、差異、檔案內容；開著的不是它就是空的（path 是 ''）。
+async function readMerge($: EngineInterface) {
+  return coverData(await read($, cover), 'merge') ?? EMPTY_MERGE
+}
+
+async function readDiffCover($: EngineInterface) {
+  return coverData(await read($, cover), 'diff') ?? EMPTY_DIFF
+}
+
+async function readFileCover($: EngineInterface) {
+  return coverData(await read($, cover), 'file') ?? EMPTY_FILE_VIEW
 }
 
 async function setServices($: EngineInterface, change: Partial<ServicesView>) {
@@ -202,6 +224,12 @@ let refocusUntil: number | undefined
 // 動作還在跑是 Infinity，做完再給 REFOCUS_AFTER_PRESS_MS）。這段時間內畫面上沒了這顆，就把焦點圈移走。
 let pressed: { key?: string; to?: string; until: number } | undefined
 
+async function isPaneShown($: EngineInterface) {
+  const pane = (await $.ui.panes()).find(p => p.id === PANE)
+
+  return pane?.isShown === true
+}
+
 async function focusPanel($: EngineInterface) {
   await $.ui.open({ ...PANE_ARGS, focus: true })
 }
@@ -250,6 +278,17 @@ function checkPressed($: EngineInterface, tree: RenderChildren, now: number, t: 
   $.clock.after(0, () => void ringOn($, anchor))
 }
 
+// 上一次畫的蓋版畫面。沒按按鈕它自己不見了（回合結束發現衝突解掉了、差異的檔案沒有變更了），
+// checkPressed 管不到：畫面整塊換回分頁，焦點圈移到分頁圖示。
+let drawnCover: Cover['kind'] = 'none'
+
+function checkCover($: EngineInterface, kind: Cover['kind'], now: number, t: string, sub: string) {
+  const wasCovered = drawnCover !== 'none'
+  drawnCover = kind
+  const isPressing = pressed !== undefined && now < pressed.until
+  if (wasCovered && kind === 'none' && !isPressing) $.clock.after(0, () => void ringOn($, tabIconKey(t, sub)))
+}
+
 async function focusWhenShown($: EngineInterface) {
   if (isWatching) return
   isWatching = true
@@ -263,6 +302,7 @@ async function focusWhenShown($: EngineInterface) {
         refocusUntil = undefined
       }
     }
+    if (isShown && wasShown === false) refreshIfStale($)
     wasShown = isShown
   } catch {
     // 讀不到就等下一輪。
@@ -310,14 +350,75 @@ async function readGitDir($: EngineInterface, r: Repo): Promise<string[]> {
   )
 }
 
-// 每次 refresh 拿一個號碼。讀完時已經有更新的 refresh 開始了（回合結束、按了按鈕、換了 repo），
-// 這次讀到的可能是舊的，就不寫，交給後面那次。
-let latestRefresh = 0
+// 上一次解析的 git 輸出：輸出一字不差就沿用上次的結果，不重新解析、排序。
+function parseOnce<T>(parse: (out: string) => T) {
+  let last: { out: string; value: T } | undefined
+
+  return (out: string) => {
+    if (last?.out !== out) last = { out, value: parse(out) }
+
+    return last.value
+  }
+}
+
+const parseActiveStatus = parseOnce(parseStatus)
+const parseActiveBranches = parseOnce(parseBranches)
+
+// 同一時間只讀一次：讀到一半又被叫（回合結束、按了按鈕、換了 repo），讀完再補讀一次；
+// 等著的呼叫拿到同一個 promise，補讀完才結束。有補讀排著時，這次讀到的可能是舊的，就不寫，交給補讀。
+let refreshing: Promise<void> | undefined
+let isRefreshWanted = false
+
+function refresh($: EngineInterface): Promise<void> {
+  isGitStale = false
+  if (refreshing !== undefined) {
+    isRefreshWanted = true
+
+    return refreshing
+  }
+  refreshing = (async () => {
+    try {
+      do {
+        isRefreshWanted = false
+        await readGit($)
+      } while (isRefreshWanted)
+    } finally {
+      refreshing = undefined
+    }
+  })()
+
+  return refreshing
+}
+
+// 回合結束時 git 狀態看不到（停在 Files 分頁、Soap Panel 不在前面）就不讀，只記著；
+// 換到 Git、Services 分頁（照那排 repo 分組），或 Soap Panel 被切到前面時再讀。
+let isGitStale = false
+
+async function refreshWhenShown($: EngineInterface) {
+  if ((await read($, tab)) !== 'files' && (await isPaneShown($))) await refresh($)
+  else isGitStale = true
+}
+
+function refreshIfStale($: EngineInterface) {
+  if (isGitStale) void refresh($).catch(() => undefined)
+}
+
+// 選中的 repo 的狀態、分支、.git 裡的檔案，和其他 repo 的摘要，一起讀。
+// 這次讀的 repo 固定下來：中途換了 repo，也不會把這個 repo 的狀態算到別的 repo 頭上。
+async function readRepos($: EngineInterface, active: Repo) {
+  const [status, refs, names, others] = await Promise.all([
+    git($, STATUS_ARGS, { cwd: active.root }),
+    git($, ['for-each-ref', `--format=${BRANCH_FORMAT}`, 'refs/heads', 'refs/remotes'], { cwd: active.root }),
+    readGitDir($, active),
+    Promise.all(repos.list.map(c => (c === active ? undefined : summarize($, c)))),
+  ])
+
+  return { status, refs, names, others }
+}
 
 // 重新讀 git 狀態、檔案清單、分支清單，保留原本點開的檔案；最後只寫一次 view，只重畫一次。
-async function refresh($: EngineInterface) {
-  const ticket = (latestRefresh += 1)
-  const isStale = () => ticket !== latestRefresh
+async function readGit($: EngineInterface) {
+  const isStale = () => isRefreshWanted
   let snap
   try {
     repos.list = await findRepos($)
@@ -329,14 +430,7 @@ async function refresh($: EngineInterface) {
 
       return
     }
-    // 這次讀的 repo 固定下來：中途換了 repo，也不會把這個 repo 的狀態算到別的 repo 頭上。
-    const [status, refs, names, others] = await Promise.all([
-      git($, STATUS_ARGS, { cwd: active.root }),
-      git($, ['for-each-ref', `--format=${BRANCH_FORMAT}`, 'refs/heads', 'refs/remotes'], { cwd: active.root }),
-      readGitDir($, active),
-      Promise.all(repos.list.map(c => (c === active ? undefined : summarize($, c)))),
-    ])
-    snap = { active, status, refs, names, others }
+    snap = { active, ...(await readRepos($, active)) }
   } catch (err) {
     if (!isStale()) await setView($, { isLoaded: true, isRepo: false, error: gitErrorText(err) })
 
@@ -346,10 +440,11 @@ async function refresh($: EngineInterface) {
 
   const { active, status, refs, names, others } = snap
   // 那排 repo：選中的那個用下面完整讀到的狀態，其他的用 summarize 的。
-  const repoBar = (files: GitFile[]) => others.map(o => o ?? toSummary(active, files))
+  const repoBar = (changes: GitFile[]) => others.map(o => o ?? toSummary(active, changes))
 
   if (status.exitCode !== 0) {
-    await update($, diffPane, d => (d.commits.length === 0 ? EMPTY_DIFF : d))
+    // 開著工作區檔案的差異就關掉；commit 裡的檔案不受影響。
+    await update($, cover, c => (coverData(c, 'diff')?.commits.length === 0 ? NO_COVER : c))
     await setView($, {
       isLoaded: true,
       isRepo: false,
@@ -363,28 +458,35 @@ async function refresh($: EngineInterface) {
     return
   }
 
-  const files = parseStatus(status.stdout)
+  const changes = parseActiveStatus(status.stdout)
   // 開著工作區檔案的差異就重讀；那個檔案已經沒有變更了，readDiff 給空的，就回到分頁。
-  // 開著的是 commit 裡的檔案就不用動，commit 不會變。內容沒變就不寫，整個 Soap Panel 不會白白重畫。
-  const shown = await read($, diffPane)
-  const reread = shown.commits.length === 0 && shown.path !== '' ? await readDiff($, files, shown.path) : shown
-  const pane = JSON.stringify(reread) === JSON.stringify(shown) ? shown : reread
+  // 開著的是 commit 裡的檔案就不用動，commit 不會變。內容沒變就不寫，整個 Soap Panel 不會白白重畫；
+  // 讀的時候換了畫面（按了 Back、換了檔案）也不寫。
+  const shown = coverData(await read($, cover), 'diff')
+  const reread = shown !== undefined && shown.commits.length === 0 ? await readDiff($, changes, shown.path) : undefined
   if (isStale()) return
   await Promise.all([
     setView($, {
       isLoaded: true,
       isRepo: true,
       error: '',
-      files,
-      repos: repoBar(files),
+      files: changes,
+      repos: repoBar(changes),
       repo: active.name,
-      branches: refs.exitCode === 0 ? parseBranches(refs.stdout) : [],
+      branches: refs.exitCode === 0 ? parseActiveBranches(refs.stdout) : [],
       op: detectOp(names),
     }),
-    pane === shown ? undefined : update($, diffPane, () => pane),
+    reread === undefined
+      ? undefined
+      : update($, cover, c => {
+          const cur = coverData(c, 'diff')
+          if (cur?.path !== shown?.path || cur.commits.length > 0) return c
+
+          return reread.path === '' ? NO_COVER : showCover(c, 'diff', reread)
+        }),
   ])
   // log 只在看得到時重讀（換到 log 分頁時也會讀）。
-  await Promise.all([syncMerge($, files), (await read($, subTab)) === 'log' ? loadLog($) : undefined])
+  await Promise.all([syncMerge($, changes), (await read($, subTab)) === 'log' ? loadLog($) : undefined])
 }
 
 // 換 Git 分頁看的 repo：開著的差異／合併是上一個 repo 的檔案，回到分頁；合併正在寫檔時不換。
@@ -392,11 +494,10 @@ async function selectRepo($: EngineInterface, name: string) {
   const next = repos.list.find(c => c.name === name)
   if (next === undefined || next === repos.current || isMergeBusy) return
   repos.current = next
-  dropLogLoads()
+  logLoads.drop()
   await Promise.all([
     setView($, { repo: name, ...NO_MESSAGES }),
-    clearDiff($),
-    clearMerge($),
+    closeCover($),
     // log 換成新 repo 的目前分支。
     update($, log, () => EMPTY_LOG),
   ])
@@ -451,13 +552,8 @@ async function readDiff($: EngineInterface, files: GitFile[], path: string): Pro
 // 不另開面板：鍵盤一直在 Soap Panel 上，Back／Previous／Next 的快捷鍵才按得到。
 // 按的那列不見了，焦點圈由 checkPressed 移到 Back。
 async function showDiff($: EngineInterface, pane: DiffPaneView) {
-  await update($, diffPane, () => pane)
+  await update($, cover, c => showCover(c, 'diff', pane))
   await scrollTop($)
-}
-
-// 沒開著差異就不寫，免得白白重畫。
-async function clearDiff($: EngineInterface) {
-  await update($, diffPane, d => (d.path === '' ? d : EMPTY_DIFF))
 }
 
 // 點檔案：在 Soap Panel 裡看它的差異；Back 回分頁。
@@ -481,8 +577,8 @@ async function openCommitDiff($: EngineInterface, commits: GitCommit[], f: Commi
 
 // 差異的 Previous／Next：換成上一個／下一個檔案。
 async function stepDiffFile($: EngineInterface, step: 1 | -1) {
-  const d = await read($, diffPane)
-  const next = d.files[d.files.findIndex(f => f.path === d.path) + step]
+  const d = await readDiffCover($)
+  const next = neighbour(d.files, f => f.path === d.path, step)
   if (next === undefined) return
   const isWorkTree = d.commits.length === 0
   await showDiff($, await (isWorkTree ? readDiff($, (await read($, view)).files, next.path) : readCommitDiff($, d.commits, next, d.files)))
@@ -567,9 +663,6 @@ async function syncBranches($: EngineInterface, kind: GitSync) {
 
 // ───── log 分頁 ─────
 
-// 關掉打開的 commit；選範圍也一起結束。
-const NO_COMMIT: Partial<LogView> = { opened: [], files: null, commitError: '', isPicking: false, rangeStart: '' }
-
 type LogRead = { commits: GitCommit[]; unpushed: string[]; isTruncated: boolean; error: string }
 
 // 讀 ref 的 commit（limit 沒給就是整條），和其中哪些還沒 push：有 upstream 比 upstream；
@@ -607,19 +700,14 @@ async function readHistory($: EngineInterface, ref: string, upstream: string, is
   return history.load
 }
 
-// 每次讀 log 拿一個號碼。讀完時已經有更新的讀取開始了（打字、Load more、refresh），
-// 或中途換了分支、repo、分頁（dropLogLoads），這次讀到的就不寫，免得蓋掉新的。
-let latestLog = 0
-
-function dropLogLoads() {
-  latestLog += 1
-}
+// 讀完時已經有更新的讀取開始了（打字、Load more、refresh），或中途換了分支、repo、分頁（logLoads.drop），
+// 這次讀到的就不寫，免得蓋掉新的。
+const logLoads = latestOnly()
 
 // 讀 log 分頁的 commit，列前 limit 筆（沒給就是目前的筆數）；有搜尋時從整條分支的歷史裡挑出符合的。
 // isFresh 是 false 時（打字、Load more）沿用讀過的歷史。
 async function loadLog($: EngineInterface, { isFresh = true, limit }: { isFresh?: boolean; limit?: number } = {}) {
-  const ticket = (latestLog += 1)
-  const isStale = () => ticket !== latestLog
+  const isStale = logLoads.start()
   const [v, l, query] = await Promise.all([read($, view), read($, log), read($, logQuery)])
   const branch = logBranch(v, l)
   // 按過的分支已經不在了：回到目前分支。
@@ -637,20 +725,22 @@ async function loadLog($: EngineInterface, { isFresh = true, limit }: { isFresh?
     const commits = found.commits.slice(0, count)
     const ahead = new Set(found.unpushed)
     const listed = new Set(commits.map(c => c.sha))
-    await update($, log, cur => ({
-      ...cur,
-      ref: isPicked ? l.ref : '',
-      isLoaded: true,
-      limit: count,
-      commits,
-      hasMore: found.commits.length > count,
-      isTruncated: found.isTruncated,
-      // 只留列出來的那些，整條歷史的可能很多。
-      unpushed: commits.filter(c => ahead.has(c.sha)).map(c => c.sha),
-      // 選範圍點過的起點只留還列著的（搜尋濾掉、或歷史變了就不算）：範圍要靠列表的順序分出中間有哪些。
-      rangeStart: listed.has(cur.rangeStart) ? cur.rangeStart : '',
-      error: found.error,
-    }))
+    // 內容沒變 patch 就不寫，停在 log 分頁時回合結束不會白白重畫。
+    await update($, log, cur =>
+      patch(cur, {
+        ref: isPicked ? l.ref : '',
+        isLoaded: true,
+        limit: count,
+        commits,
+        hasMore: found.commits.length > count,
+        isTruncated: found.isTruncated,
+        // 只留列出來的那些，整條歷史的可能很多。
+        unpushed: commits.filter(c => ahead.has(c.sha)).map(c => c.sha),
+        // 選範圍點過的起點只留還列著的（搜尋濾掉、或歷史變了就不算）：範圍要靠列表的順序分出中間有哪些。
+        rangeStart: listed.has(cur.rangeStart) ? cur.rangeStart : '',
+        error: found.error,
+      }),
+    )
   } catch (err) {
     if (!isStale()) await setLog($, { isLoaded: true, error: gitErrorText(err) })
   }
@@ -665,7 +755,7 @@ async function searchLog($: EngineInterface, text: string) {
 // 換分頁時清掉搜尋；不在這裡重讀，回到 log 分頁時才讀。
 async function clearLogQuery($: EngineInterface) {
   history = undefined
-  dropLogLoads()
+  logLoads.drop()
   await update($, logQuery, () => '')
 }
 
@@ -704,7 +794,11 @@ async function pickRange($: EngineInterface, c: GitCommit) {
 // ───── 解衝突（合併） ─────
 
 async function editChunks($: EngineInterface, edit: (chunks: MergeChunk[]) => MergeChunk[]) {
-  await update($, merge, m => ({ ...m, chunks: edit(m.chunks) }))
+  await update($, cover, c => {
+    const m = coverData(c, 'merge')
+
+    return m === undefined ? c : patchCover(c, 'merge', { chunks: edit(m.chunks) })
+  })
 }
 
 // git 為這個衝突檔案留了哪幾個版本（1 共同祖先、2 ours、3 theirs）。每列是「mode sha stage<TAB>path」，
@@ -716,8 +810,9 @@ async function listStages($: EngineInterface, path: string) {
   return { key: r.stdout, stages }
 }
 
-type Stages = { path: string; key: string; base: string[] | null; ours: string[] | null; theirs: string[] | null }
-// 上一次讀到的三個版本：同一個檔案、同一組版本就不用再跑三次 git show。
+// 三個版本做完三方比對的段落；少了 ours 或 theirs（一邊刪掉）比不了是 null。
+type Stages = { path: string; key: string; chunks: MergeChunk[] | null }
+// 上一次讀到的版本和比對結果：同一個檔案、同一組版本就不用再跑三次 git show，也不用再比一次。
 let stageCache: Stages | undefined
 
 // git 留著的某一個版本；那一邊沒有這個檔案就是 null。
@@ -730,7 +825,7 @@ async function readStage($: EngineInterface, stage: 1 | 2 | 3, path: string) {
 async function readStages($: EngineInterface, path: string, key: string | null): Promise<Stages> {
   if (key !== null && stageCache?.path === path && stageCache.key === key) return stageCache
   const [base, ours, theirs] = await Promise.all([readStage($, 1, path), readStage($, 2, path), readStage($, 3, path)])
-  const stages = { path, key: key ?? '', base, ours, theirs }
+  const stages = { path, key: key ?? '', chunks: ours !== null && theirs !== null ? merge3(base, ours, theirs) : null }
   if (key !== null) stageCache = stages
 
   return stages
@@ -740,26 +835,23 @@ async function readStages($: EngineInterface, path: string, key: string | null):
 // 分出沒動過的、只有一邊改（自動合入）的、真的衝突的段落；讀不到版本才退回只看衝突標記。
 // 同一個檔案重讀時，沒變的段落保留已經做的選擇；結果跟現在畫的一樣就不寫，面板不會白白重畫。回傳讀到的結果。
 async function loadMerge($: EngineInterface, path: string): Promise<MergeView> {
-  const [text, listed, m, v] = await Promise.all([
+  const [text, listed, m] = await Promise.all([
     $.fs.read(inRepo(path)).catch(() => null),
     listStages($, path).catch(() => null),
-    read($, merge),
-    read($, view),
+    readMerge($),
   ])
   const parsed = text === null ? null : parseConflicts(text)
-  let next: MergeView = { ...EMPTY_MERGE, path, op: v.op }
+  let next: MergeView = { ...EMPTY_MERGE, path }
   if (parsed !== null) {
-    const { base, ours, theirs } = await readStages($, path, listed?.key ?? null)
-    const chunks = ours !== null && theirs !== null ? merge3(base, ours, theirs) : parsed.chunks
+    const { chunks } = await readStages($, path, listed?.key ?? null)
     next = {
       ...next,
       ...parsed,
       hasMarkers: true,
-      chunks: keepChoices(m.path === path ? m.chunks : [], chunks),
+      chunks: keepChoices(m.path === path ? m.chunks : [], chunks ?? parsed.chunks),
     }
   }
-  if (JSON.stringify(next) === JSON.stringify(m)) return m
-  await update($, merge, () => next)
+  await update($, cover, c => showCover(c, 'merge', next))
 
   return next
 }
@@ -770,17 +862,16 @@ let conflictCursor = { path: '', at: -1 }
 // 跳到下一段（step 1）或上一段（-1）衝突：焦點放在 ours 的 Accept 上，捲到那一列的頂端。
 // 已經在最後一段（往前是第一段）再按：換到下一個（上一個）衝突檔案的第一段（最後一段）；
 // 已經是最後一個（第一個）檔案就不動，不繞回去，焦點也留在原地。
-// 換檔不走 openMerge：不用先捲回最上面（馬上就捲到那段），合併蓋著分頁時也不會開著差異。
+// 換檔不走 openMerge：不用先捲回最上面（馬上就捲到那段）。
 // 先移焦點再捲：換了檔案時那一列還沒畫出來，focus 會等它畫好，scroll 不會。
 // 捲不動、焦點移不過去（面板沒拿著鍵盤）都不算錯，下次按再試。
 async function jumpConflict($: EngineInterface, step: 1 | -1) {
-  let m = await read($, merge)
+  let m = await readMerge($)
   let at = nextConflict(m.chunks, conflictCursor.path === m.path ? conflictCursor.at : -1, step)
   if (at === null) {
     if (isMergeBusy) return
-    const files = (await read($, view)).files.filter(isConflict)
-    const i = files.findIndex(f => f.path === m.path)
-    const other = i === -1 ? undefined : files[i + step]
+    const conflicted = (await read($, view)).files.filter(isConflict)
+    const other = neighbour(conflicted, f => f.path === m.path, step)
     if (other === undefined) return
     m = await loadMerge($, other.path)
     at = nextConflict(m.chunks, -1, step)
@@ -794,32 +885,19 @@ async function jumpConflict($: EngineInterface, step: 1 | -1) {
 
 // 點衝突的檔案：在 Soap Panel 裡蓋掉分頁，畫三欄合併，從最上面開始看。
 async function openMerge($: EngineInterface, path: string) {
-  await Promise.all([loadMerge($, path), clearDiff($)])
+  await loadMerge($, path)
   await scrollTop($)
-}
-
-// 放掉選到一半的結果（檔案沒動過，下次打開從頭選）。
-async function clearMerge($: EngineInterface) {
-  stageCache = undefined
-  setMergeBusy($, false)
-  await update($, merge, () => EMPTY_MERGE)
 }
 
 // refresh 之後：合併的檔案已經不是衝突了（解掉了、abort 了）就回到分頁，否則重讀一次（檔案可能被改過）。
 async function syncMerge($: EngineInterface, files: GitFile[]) {
   if (isMergeBusy) return
-  const m = await read($, merge)
+  const m = await readMerge($)
   if (m.path === '') return
   const file = files.find(f => f.path === m.path)
-  if (file === undefined || !isConflict(file)) {
-    // 回合結束發現解掉了也會走到這：沒按按鈕，checkPressed 管不到，合併畫面整塊不見，焦點圈自己移到分頁圖示。
-    await clearMerge($)
-    const [t, sub] = await Promise.all([read($, tab), read($, subTab)])
-    await ringOn($, tabIconKey(t, sub))
-
-    return
-  }
-  await loadMerge($, m.path)
+  // 合併畫面整塊不見時，焦點圈由 checkCover 移到分頁圖示。
+  if (file === undefined || !isConflict(file)) await closeCover($)
+  else await loadMerge($, m.path)
 }
 
 // 正在套用合併或用某一邊解掉。跟 syncing 一樣放模組變數不放 atom，免得被熱重載中斷後一直卡著；
@@ -836,7 +914,7 @@ function setMergeBusy($: EngineInterface, isBusy: boolean) {
 // 成功就回到分頁、重讀狀態。
 async function resolveFile($: EngineInterface, what: string, work: (path: string) => Promise<unknown>) {
   if (isMergeBusy) return
-  const m = await read($, merge)
+  const m = await readMerge($)
   if (m.path === '') return
   setMergeBusy($, true)
   await setMerge($, { error: '' })
@@ -848,14 +926,14 @@ async function resolveFile($: EngineInterface, what: string, work: (path: string
 
     return
   }
-  await clearMerge($)
+  await closeCover($)
   await refresh($)
   $.ui.toast(`Resolved ${m.path}`)
 }
 
 // 把中間那欄寫回檔案並 git add（標成已解決）。每一段衝突都選好了才做。
 async function applyMerge($: EngineInterface) {
-  const m = await read($, merge)
+  const m = await readMerge($)
   if (!m.hasMarkers || !isResolved(m.chunks)) return
   await resolveFile($, 'Apply', async path => {
     await $.fs.write(inRepo(path), buildResult(m))
@@ -879,14 +957,14 @@ async function takeSide($: EngineInterface, side: 'ours' | 'theirs' | 'as-is') {
 // 交給 Claude 解這個檔案：當作使用者自己打的訊息送出，session 空下來就會跑。
 // 檔名來自被合併的分支，會原樣放進以使用者身分送出的訊息：有反引號、換行這些的就不送，免得檔名夾帶指令。
 async function askClaude($: EngineInterface) {
-  const m = await read($, merge)
+  const [m, { op }] = await Promise.all([readMerge($), read($, view)])
   if (m.path === '') return
   if (!isPromptSafePath(m.path)) {
     await setMerge($, { error: 'Ask Claude is off for this file: its name has a backtick or a control character.' })
 
     return
   }
-  const during = m.op === '' ? '' : ` (a ${m.op} is in progress; do not continue or abort it)`
+  const during = op === '' ? '' : ` (a ${op} is in progress; do not continue or abort it)`
   await $.prompt.submit({
     text: `Resolve the git conflicts in \`${inRepo(m.path)}\`${during}. Keep what both sides meant to do, remove every conflict marker, then run \`git add\` on the file.`,
     asUser: true,
@@ -947,15 +1025,18 @@ async function scanWindows($: EngineInterface) {
   return JSON.parse(r.stdout) as ScanResult
 }
 
-// 先用 ps 列出所有程序和 port，再只對用得到的程序讀工作目錄和執行檔。
+// 先用 ps 列出所有程序和 port，再只對用得到的程序讀工作目錄、執行檔和指令。
 async function scanMac($: EngineInterface) {
   const r = await runOk($, MAC_SCAN_ARGV, 'Process scan', { env: MAC_ENV })
   const all = parseMacScan(r.stdout)
   const want = wantedPids(all)
-  // 有讀不到的程序（root 跑的）lsof 會回 1，照樣用它讀到的。
-  const files = await $.process.run(macFilesArgv(want), { env: MAC_ENV })
+  // 有讀不到的程序（root 跑的）lsof 會回 1、剛結束的程序 ps 會回 1，照樣用讀到的。
+  const [files, args] = await Promise.all([
+    $.process.run(macFilesArgv(want), { env: MAC_ENV }),
+    $.process.run(macArgsArgv(want), { env: MAC_ENV }),
+  ])
 
-  return withFiles(all, want, parseMacFiles(files.stdout))
+  return withFiles(all, want, parseMacFiles(files.stdout), parseMacArgs(args.stdout))
 }
 
 // 掃一次：這個資料夾的服務，和目前所有活著的 PID（重跑後的檢查用）。
@@ -1073,27 +1154,25 @@ function watchRestart($: EngineInterface, name: string, pid: number) {
 
 // Services 分頁看得到時才定時掃，看不到就不花那一秒。
 async function scanWhenShown($: EngineInterface) {
-  if ((await read($, tab)) !== 'services') return
-  const pane = (await $.ui.panes()).find(p => p.id === PANE)
-  if (pane?.isShown !== true) return
+  if ((await read($, tab)) !== 'services' || !(await isPaneShown($))) return
   await refreshServices($)
 }
 
 // ───── Files 分頁 ─────
 
-// 每次列資料夾拿一個號碼；連點兩個資料夾時，先點的讀得比較慢也不會蓋掉後點的。
-let latestFilesLoad = 0
+// 連點兩個資料夾時，先點的讀得比較慢也不會蓋掉後點的。
+const folderLoads = latestOnly()
 
 // 列出 dir（相對 session 資料夾，'' 是它本身）。用 session.root 不用 cwd，跟 Git 分頁一樣不跟著 Bash 的 cd 跑。
 // 只存畫得到的前 FILES_ROW_LIMIT 筆：每次重列比對、每次重畫都不用帶著上千筆。
 async function loadFiles($: EngineInterface, dir: string) {
-  const ticket = (latestFilesLoad += 1)
+  const isStale = folderLoads.start()
   const root = await $.session.root()
   const listed = await $.fs.list(dir === '' ? root : `${root}/${dir}`).then(
     list => ({ entries: sortEntries(list), error: '' }),
     (err: unknown) => ({ entries: [], error: `Couldn't list ./${dir}: ${errorText(err)}` }),
   )
-  if (ticket !== latestFilesLoad) return
+  if (isStale()) return
   await setFiles($, { dir, isLoaded: true, entries: listed.entries.slice(0, FILES_ROW_LIMIT), total: listed.entries.length, error: listed.error })
 }
 
@@ -1101,15 +1180,18 @@ async function reloadFiles($: EngineInterface) {
   await loadFiles($, (await read($, files)).dir)
 }
 
-// 每次讀檔案內容拿一個號碼；連按 Next、或讀到一半按了 Back，晚到的舊內容不寫。
-let latestFileRead = 0
+// 連按 Next、或讀到一半按了 Back，晚到的舊內容不寫。
+const fileReads = latestOnly()
 
 // 讀一個檔案（path 相對 session 資料夾）要畫的內容。太大的、二進位檔、資料夾的連結不畫內容，只說為什麼。
-async function readFileView($: EngineInterface, path: string): Promise<FileView> {
-  const shown = { ...EMPTY_FILE_VIEW, path }
+// known：畫面上已經是這個檔案時它的 stamp；修改時間和大小都沒變就不讀內容，回傳 null（回合結束重讀時常常沒變）。
+async function readFileView($: EngineInterface, path: string, known: string): Promise<FileView | null> {
   try {
     const full = `${await $.session.root()}/${path}`
     const stat = await $.fs.stat(full)
+    const stamp = `${stat.mtimeMs}:${stat.size}`
+    if (stamp === known) return null
+    const shown = { ...EMPTY_FILE_VIEW, path, stamp }
     if (stat.kind !== 'file') return { ...shown, note: 'Not a file; nothing to show.' }
     if (stat.size > FILE_VIEW_MAX_BYTES) return { ...shown, note: `Too large to show (${formatSize(stat.size)}).` }
     const text = viewText(await $.fs.read(full))
@@ -1117,35 +1199,41 @@ async function readFileView($: EngineInterface, path: string): Promise<FileView>
 
     return text.text === '' ? { ...shown, note: 'Empty file.' } : { ...shown, ...text }
   } catch (err) {
-    return { ...shown, error: `Couldn't read ${path}: ${errorText(err)}` }
+    return { ...EMPTY_FILE_VIEW, path, error: `Couldn't read ${path}: ${errorText(err)}` }
   }
 }
 
 // 在 Soap Panel 裡看檔案內容（蓋掉分頁）。換了檔案才捲回最上面，回合結束重讀同一個檔案不捲；內容沒變不寫，不重畫。
 async function showFile($: EngineInterface, path: string) {
-  const ticket = (latestFileRead += 1)
-  const [shown, prev] = await Promise.all([readFileView($, path), read($, fileView)])
-  if (ticket !== latestFileRead) return
-  await update($, fileView, v => patch(v, shown))
+  const isStale = fileReads.start()
+  const prev = await readFileCover($)
+  const shown = await readFileView($, path, prev.path === path ? prev.stamp : '')
+  if (isStale() || shown === null) return
+  await update($, cover, c => showCover(c, 'file', shown))
   if (prev.path !== path) await scrollTop($)
 }
 
 // 檔案內容的 Previous／Next：照 Files 分頁的檔案順序換成上一個／下一個。
 async function stepFile($: EngineInterface, step: 1 | -1) {
-  const [shown, list] = await Promise.all([read($, fileView), read($, files)])
-  const steps = fileSteps(list)
-  const next = steps[steps.indexOf(shown.path) + step]
+  const [shown, list] = await Promise.all([readFileCover($), read($, files)])
+  const next = neighbour(fileSteps(list), p => p === shown.path, step)
   if (next !== undefined) await showFile($, next)
 }
 
-async function closeFile($: EngineInterface) {
-  latestFileRead += 1
-  await update($, fileView, v => (v.path === '' ? v : EMPTY_FILE_VIEW))
+// ───── 蓋住分頁的畫面 ─────
+
+// 關掉差異、合併、檔案內容，回到分頁：合併選到一半的結果放掉（檔案沒動過，下次打開從頭選），
+// 讀到一半的檔案內容晚到也不寫。沒開著就不寫，免得白白重畫。
+async function closeCover($: EngineInterface) {
+  stageCache = undefined
+  fileReads.drop()
+  setMergeBusy($, false)
+  await update($, cover, c => (c.kind === 'none' ? c : NO_COVER))
 }
 
 // 回合結束：Claude 可能改了檔案。Files 分頁開著就重列，開著檔案內容就重讀。
 async function reloadFilesWhenShown($: EngineInterface) {
-  const [t, shown] = await Promise.all([read($, tab), read($, fileView)])
+  const [t, shown] = await Promise.all([read($, tab), readFileCover($)])
   if (t !== 'files') return
   await Promise.all([reloadFiles($), shown.path === '' ? undefined : showFile($, shown.path)])
 }
@@ -1162,6 +1250,7 @@ async function selectTab($: EngineInterface, id: TabId) {
   // 掃描要一秒左右，不等它：先切過去畫「掃描中」或舊清單。
   if (id === 'services') void refreshServices($).catch(() => undefined)
   if (id === 'files') void reloadFiles($).catch(() => undefined)
+  else refreshIfStale($)
 }
 
 // 換子分頁。log 不在看的時候不讀，換過來才讀。
@@ -1173,7 +1262,7 @@ async function selectSubTab($: EngineInterface, id: GitSubTab) {
 // branch 分頁的 log 按鈕：換到 log 分頁看那個分支，從最近的 LOG_PAGE 筆開始。
 // 按目前分支那列就是回到「跟著目前分支」，之後切分支 log 也跟著換。
 async function viewLog($: EngineInterface, b: GitBranch) {
-  dropLogLoads()
+  logLoads.drop()
   await update($, log, () => ({ ...EMPTY_LOG, ref: b.isCurrent ? '' : branchRef(b) }))
   await selectSubTab($, 'log')
 }
@@ -1216,7 +1305,7 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     closeCommit: () => setLog($, NO_COMMIT),
     openCommitDiff: (commits, f, files) => openCommitDiff($, commits, f, files),
     stepDiffFile: step => stepDiffFile($, step),
-    closeDiff: () => clearDiff($),
+    closeCover: () => closeCover($),
     abortOp: () => abortOp($),
     cancelAbort: () => setView($, { isAbortArmed: false }),
     continueOp: () => continueOp($),
@@ -1225,13 +1314,11 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     openDir: dir => loadFiles($, dir),
     openFile: path => showFile($, path),
     stepFile: step => stepFile($, step),
-    closeFile: () => closeFile($),
     editChunks: edit => editChunks($, edit),
     jumpConflict: step => jumpConflict($, step),
     takeSide: side => takeSide($, side),
     applyMerge: () => applyMerge($),
     askClaude: () => askClaude($),
-    closeMerge: () => clearMerge($),
   }
 }
 
@@ -1271,9 +1358,9 @@ export const register: Register = on => {
     return { text: 'Soap Panel opened.' }
   })
 
-  // 每個回合結束後，檔案可能已經變了，順手更新。不等它讀完，免得擋住回合結束；讀不到就維持舊畫面。
+  // 每個回合結束後，檔案可能已經變了，看得到的就順手更新。不等它讀完，免得擋住回合結束；讀不到就維持舊畫面。
   on('turn.complete', ($, e, next) => {
-    void refresh($).catch(() => undefined)
+    void refreshWhenShown($).catch(() => undefined)
     void reloadFilesWhenShown($).catch(() => undefined)
 
     return next(e)
@@ -1281,7 +1368,7 @@ export const register: Register = on => {
 
   // 畫面：這裡讀狀態，交給 ui/ 的純函式畫。
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const [activeTab, activeSub, v, isRemoteOpen, bf, bq, fl, sv, fileList, openFile, lg, lq, df, mg, usage, now] = await Promise.all([
+    const [activeTab, activeSub, v, isRemoteOpen, bf, bq, fl, sv, fileList, lg, lq, shown, usage, now] = await Promise.all([
       read($, tab),
       read($, subTab),
       read($, view),
@@ -1291,11 +1378,9 @@ export const register: Register = on => {
       read($, fileLimit),
       read($, services),
       read($, files),
-      read($, fileView),
       read($, log),
       read($, logQuery),
-      read($, diffPane),
-      read($, merge),
+      read($, cover),
       // 讀不到用量就當作還沒有讀數，不要讓整個面板畫不出來。
       $.session.usage().catch(() => undefined),
       $.clock.now(),
@@ -1316,12 +1401,10 @@ export const register: Register = on => {
         syncing,
         services: sv,
         files: fileList,
-        fileView: openFile,
         servicePending,
         log: lg,
         logQuery: lq,
-        diff: df,
-        merge: mg,
+        cover: shown,
         isMergeBusy,
         usage: usage?.rateLimits ?? [],
         now,
@@ -1330,6 +1413,7 @@ export const register: Register = on => {
       (fn, ringKey) => act($, fn, ringKey),
     )
     checkPressed($, tree, now, activeTab, activeSub)
+    checkCover($, shown.kind, now, activeTab, activeSub)
 
     return tree
   })

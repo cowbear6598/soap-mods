@@ -72,12 +72,18 @@ function gitHeader({ w, d, a }: TabContext) {
 }
 
 // 打開了衝突檔案、檔案的差異或檔案內容：蓋掉分頁畫它；都沒有是 null。
-function coverOf(ui: Ui, d: PanelData, a: Actions, press: Press) {
-  if (d.merge.path !== '') return mergeView(ui, d.merge, d.isMergeBusy, a, press)
-  if (d.diff.path !== '') return diffView(ui, d.diff, a, press)
-  if (d.fileView.path !== '') return fileView(ui, d.fileView, d.files, a, press)
-
-  return null
+function coverView(ui: Ui, d: PanelData, a: Actions, press: Press) {
+  const c = d.cover
+  switch (c.kind) {
+    case 'merge':
+      return mergeView(ui, c.data, d.view.op, d.isMergeBusy, a, press)
+    case 'diff':
+      return diffView(ui, c.data, a, press)
+    case 'file':
+      return fileView(ui, c.data, d.files, a, press)
+    case 'none':
+      return null
+  }
 }
 
 export function renderPanel(ui: Ui, d: PanelData, a: Actions, press: Press) {
@@ -85,7 +91,7 @@ export function renderPanel(ui: Ui, d: PanelData, a: Actions, press: Press) {
   const { Box, Text } = w
   const ctx: TabContext = { w, d, a }
   const isGit = d.tab === 'git'
-  const cover = coverOf(ui, d, a, press)
+  const cover = coverView(ui, d, a, press)
 
   // 整棵樹至少跟面板一樣高、內容區撐滿剩下的高度，用量就會被推到面板最底下；
   // 內容比面板還長時用量跟在後面。面板的高度只有引擎知道（bodyRows），百分比高度量不到。

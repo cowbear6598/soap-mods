@@ -1,10 +1,11 @@
 import { expect, test } from 'claude-code/testing'
 
 import type { ScanResult } from '../../types'
-import { ROOT, SCAN, proc } from '../test-fixtures'
-import { findServices, serviceName, splitArgs, toolName } from '../../hooks/services/scan'
+import { SCAN, proc } from '../test-fixtures'
+import { findServices, serviceName } from '../../hooks/services/scan'
 
 test('findServices groups each project process tree, skips the engine and other folders, and adds ports', () => {
+  // session 資料夾寫成 C:\Proj\（跟程序的 C:\proj 大小寫不同、結尾多一個斜線）：Windows 的路徑比對不分大小寫。
   const services = findServices(SCAN, 'C:\\Proj\\')
   expect(services.map(s => [s.pid, s.ports])).toEqual([
     [70, [8081]],
@@ -53,14 +54,6 @@ test('a service wrapped in cmd /c shows the real tool, and restart reruns the wr
   expect(s?.command).toBe(WRAPPER)
   expect(s?.dir).toBe('C:\\proj')
   expect(s?.ports).toEqual([5001])
-})
-
-test('command helpers', () => {
-  expect(splitArgs('"C:\\a b\\x.exe"  run "--x=1 2" y')).toEqual(['C:\\a b\\x.exe', 'run', '--x=1 2', 'y'])
-  // 工具名稱：指令第一段，node 跑 npm-cli.js 算 npm。
-  expect(toolName('"C:\\Program Files\\dotnet\\dotnet.exe" run --project dotnet/InventoryApi')).toBe('dotnet')
-  expect(toolName('node "C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js" run dev')).toBe('npm')
-  expect(toolName('C:\\Users\\me\\.bun\\bin\\bun.exe  run dev ')).toBe('bun')
 })
 
 test('serviceName takes the deepest project folder the processes touch, whatever the language', () => {

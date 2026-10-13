@@ -22,7 +22,7 @@ export const SYNC_ARGS: Record<GitSync, string[]> = {
   pull: ['pull', '--ff-only'],
 }
 
-export const NO_GIT = 'git not found. Make sure it is installed and on your PATH.'
+const NO_GIT = 'git not found. Make sure it is installed and on your PATH.'
 
 // 每次跑 git 都帶的環境變數。repo 自己的設定（.git/config）可以讓 git 執行指令：core.fsmonitor、
 // log.showSignature 搭 gpg.program。面板每個回合都會自己跑 git，資料夾裡有別人給的 repo 時不能讓它決定要跑什麼，

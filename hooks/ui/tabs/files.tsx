@@ -2,13 +2,14 @@ import type { FolderEntry } from '../../../types'
 import { childPath, formatSize } from '../../files/list'
 import { FOLDER_COLOR } from '../../config'
 import { splitPath } from '../../git/parse'
+import { backButton } from '../stepBar'
 import type { TabBody } from './context'
 
 // Files 分頁：session 資料夾（或點進去的子資料夾）裡有什麼。資料夾在前、點了進去。
 // 子資料夾裡最上面是 ← Back（b）回上一層、旁邊是路徑；session 資料夾本身兩個都不畫，也就走不出去。
 // 檔案列名稱和大小，點了在 Soap Panel 裡看內容（fileView）；register 只存前 FILES_ROW_LIMIT 筆，其餘寫「… N more」。
 export const filesTab: TabBody = ({ w, d, a }) => {
-  const { Box, Button, Text } = w
+  const { Box, Text } = w
   const f = d.files
   const hidden = f.total - f.entries.length
 
@@ -46,7 +47,7 @@ export const filesTab: TabBody = ({ w, d, a }) => {
     <Box flexDirection="column" gap={1}>
       {f.dir !== '' && (
         <Box gap={1} alignItems="center">
-          <Button key="files:back" label="← Back" hotkey="b" onPress={w.press(() => a.openDir(splitPath(f.dir).dir))} />
+          {backButton(w, w.press, 'files', () => a.openDir(splitPath(f.dir).dir))}
           <Text bold dimColor wrap="truncate-start">{`${f.dir}/`}</Text>
         </Box>
       )}

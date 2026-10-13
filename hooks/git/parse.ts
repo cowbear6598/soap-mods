@@ -63,7 +63,7 @@ export function parseBranches(out: string): GitBranch[] {
 }
 
 /** The lowercased words of a search; none when it is blank. */
-export function searchWords(query: string): string[] {
+function searchWords(query: string): string[] {
   return query.toLowerCase().split(/\s+/).filter(w => w !== '')
 }
 

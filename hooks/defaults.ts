@@ -23,7 +23,7 @@ export const EMPTY_SERVICES: ServicesView = { isLoaded: false, items: [], error:
 
 export const EMPTY_FILES: FilesView = { dir: '', isLoaded: false, entries: [], total: 0, error: '' }
 
-export const EMPTY_FILE_VIEW: FileView = { path: '', text: '', isTruncated: false, note: '', error: '' }
+export const EMPTY_FILE_VIEW: FileView = { path: '', text: '', isTruncated: false, note: '', error: '', stamp: '' }
 
 export const EMPTY_MERGE: MergeView = {
   path: '',
@@ -34,7 +34,6 @@ export const EMPTY_MERGE: MergeView = {
   oursLabel: '',
   theirsLabel: '',
   error: '',
-  op: '',
 }
 
 export const EMPTY_LOG: LogView = {
@@ -62,6 +61,9 @@ export const EMPTY_DIFF: DiffPaneView = {
   commits: [],
   files: [],
 }
+
+// 關掉 log 分頁打開的 commit；選範圍也一起結束。
+export const NO_COMMIT: Partial<LogView> = { opened: [], files: null, commitError: '', isPicking: false, rangeStart: '' }
 
 // 切換／刪除分支、abort／continue 失敗的訊息和待確認的刪除、abort：換分頁、換 repo 時清掉。
 export const NO_MESSAGES = { branchError: '', deleteArmed: null, opError: '', isAbortArmed: false } as const

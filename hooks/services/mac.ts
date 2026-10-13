@@ -8,14 +8,12 @@ import { baseName } from './scan'
 export const MAC_ENV = { LC_ALL: 'C' }
 
 // 掃描第一步：自己的 PID（往上的祖先就是引擎）、現在的時間、所有程序、在 LISTEN 的 port。
-// comm（執行檔）和 args（指令）都可能有空白，分兩次 ps 才切得開。
+// 指令（args）很長（Chrome、Electron 的每個 helper 都好幾 KB），第二步只讀用得到的那幾個。
 const SCAN_SCRIPT = `
 echo "$$"
 date '+%Y %m %d %H %M %S %s'
 echo '#comm'
 ps -axww -o pid=,ppid=,lstart=,comm=
-echo '#args'
-ps -axww -o pid=,args=
 echo '#ports'
 lsof -nP -iTCP -sTCP:LISTEN -Fpn
 exit 0
@@ -23,9 +21,14 @@ exit 0
 
 export const MAC_SCAN_ARGV = ['/bin/sh', '-c', SCAN_SCRIPT]
 
-// 掃描第二步：只讀用得到的程序的工作目錄和執行檔（lsof 第一個 txt 就是執行檔）。
+// 掃描第二步：只讀用得到的程序的工作目錄和執行檔（lsof 第一個 txt 就是執行檔），和指令（ps）。
+// comm（執行檔）和 args（指令）都可能有空白，要分兩次 ps 才切得開。
 export function macFilesArgv(pids: number[]) {
   return ['lsof', '-a', '-nP', '-d', 'cwd,txt', '-p', pids.join(','), '-Fpfn']
+}
+
+export function macArgsArgv(pids: number[]) {
+  return ['ps', '-ww', '-o', 'pid=,args=', '-p', pids.join(',')]
 }
 
 // 停止前列出所有程序的父子關係和啟動時間，找出整棵樹。
@@ -53,7 +56,7 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 const lstartMs = ([mon = '', day, hh, mm, ss, year]: (string | undefined)[]) =>
   Date.UTC(Number(year), MONTHS.indexOf(mon), Number(day), Number(hh), Number(mm), Number(ss))
 
-// 掃描第一步的輸出 → 所有程序（工作目錄、執行檔先空著）、port、自己往上的祖先。
+// 掃描第一步的輸出 → 所有程序（工作目錄、執行檔、指令先空著）、port、自己往上的祖先。
 export function parseMacScan(out: string): ScanResult {
   const lines = out.split('\n')
   const selfPid = Number(lines[0])
@@ -62,7 +65,6 @@ export function parseMacScan(out: string): ScanResult {
   const offset = (epoch ?? 0) * 1000 - Date.UTC(y ?? 0, (mo ?? 1) - 1, d, h, mi, s)
 
   const byPid = new Map<number, ScanProc>()
-  const cmds = new Map<number, string>()
   const ports: ScanResult['ports'] = []
   let section = ''
   let portPid = 0
@@ -79,9 +81,6 @@ export function parseMacScan(out: string): ScanResult {
       // 登入 shell 的名字前面有 -（-zsh）。
       const name = baseName(comm.trim()).replace(/^-/, '')
       byPid.set(Number(pid), { pid: Number(pid), ppid: Number(ppid), name, cmd: null, exe: null, cwd: null, started })
-    } else if (section === '#args') {
-      const m = /^\s*(\d+)\s(.*)$/.exec(line)
-      if (m !== null) cmds.set(Number(m[1]), (m[2] ?? '').trim())
     } else if (section === '#ports') {
       if (line.startsWith('p')) portPid = Number(line.slice(1))
       // n*:5173、n127.0.0.1:5173、n[::1]:5173：port 是最後一個冒號後面。
@@ -91,11 +90,6 @@ export function parseMacScan(out: string): ScanResult {
       }
     }
   }
-  for (const [pid, cmd] of cmds) {
-    const p = byPid.get(pid)
-    if (p !== undefined) p.cmd = cmd
-  }
-
   const chain = (pid: number) => {
     const out: number[] = []
     for (let p = byPid.get(pid); p !== undefined && !out.includes(p.pid); p = byPid.get(p.ppid)) out.push(p.pid)
@@ -138,10 +132,26 @@ export function parseMacFiles(out: string) {
   return files
 }
 
-// 把工作目錄和執行檔填回去，只留用得到的程序。
-export function withFiles(scan: ScanResult, want: number[], files: Map<number, { cwd: string | null; exe: string | null }>): ScanResult {
+// macArgsArgv 的輸出 → 每個程序的指令。已經結束的程序不會出現。
+export function parseMacArgs(out: string) {
+  const cmds = new Map<number, string>()
+  for (const line of out.split('\n')) {
+    const m = /^\s*(\d+)\s(.*)$/.exec(line)
+    if (m !== null) cmds.set(Number(m[1]), (m[2] ?? '').trim())
+  }
+
+  return cmds
+}
+
+// 把工作目錄、執行檔和指令填回去，只留用得到的程序。
+export function withFiles(
+  scan: ScanResult,
+  want: number[],
+  files: Map<number, { cwd: string | null; exe: string | null }>,
+  cmds: Map<number, string>,
+): ScanResult {
   const keep = new Set(want)
-  const procs = scan.procs.filter(p => keep.has(p.pid)).map(p => ({ ...p, ...files.get(p.pid) }))
+  const procs = scan.procs.filter(p => keep.has(p.pid)).map(p => ({ ...p, ...files.get(p.pid), cmd: cmds.get(p.pid) ?? null }))
 
   return { ...scan, procs }
 }

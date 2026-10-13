@@ -1,6 +1,103 @@
-// 測試共用的資料：純邏輯的測試和面板的測試都用。
+// 測試共用的資料和 helper：純邏輯的測試和面板的測試都用。
+
+import type { test } from 'claude-code/testing'
 
 import type { ScanProc, ScanResult } from '../types'
+
+type TestBody = Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>
+export type TestEngine = Parameters<TestBody>[0]
+export type TestOn = Parameters<TestBody>[1]
+
+// ───── 面板測試的 helper ─────
+
+// 面板的 props：引擎畫面板時一定會給，測試照實給一份。
+const PANE_PROPS = {
+  title: 'Soap Panel',
+  isFocused: true,
+  bodyColumns: 60,
+  placement: 'dock',
+  scroll: { offset: 0, bodyRows: 40 },
+  view: {},
+} as const
+
+export const mountPane = ($: TestEngine, surface: 'terminal' | 'desktop' = 'terminal') =>
+  $.ui.mount({ plugin: 'soap-mods', surface, component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+
+// 使用者打 /soap-panel 打開面板。
+export const openPanel = ($: TestEngine) =>
+  $.command.run({ command: 'soap-panel', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 120 } })
+
+// 面板開起來要的引擎回應：開／列／關 pane、session 資料夾、時間。now 給 null：測試自己用 mock.clock
+// （clock.now 先登記的算數，兩個都登記的話 mock.clock 推不動時間）。
+export function stubPanel(on: TestOn, { root = '/repo', now = 0 }: { root?: string; now?: number | null } = {}) {
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.panes', () => ({ value: [] }))
+  on('ui.close', () => ({ value: undefined }))
+  on('session.root', () => ({ value: root }))
+  if (now !== null) on('clock.now', () => ({ value: now }))
+}
+
+// 引擎會把 fs、process 的路徑轉成這台電腦的絕對路徑（Windows 加磁碟代號、換反斜線），比對前轉回 /repo 這種寫法。
+export const posix = (p: string | undefined) => p?.replace(/\\/g, '/').replace(/^[A-Za-z]:/, '')
+
+// process.run 的結果：成功印出 stdout；失敗印出 stderr。
+export const ok = (stdout: string) => ({
+  value: {
+    exitCode: 0,
+    stdout,
+    stderr: '',
+    isStdoutTruncated: false,
+    isStderrTruncated: false,
+  },
+})
+export const fail = (stderr: string, exitCode = 128) => ({ value: { ...ok('').value, exitCode, stderr } })
+
+type RunResult = ReturnType<typeof ok>
+type RunEvent = { argv: readonly string[]; init?: { cwd?: string; env?: Record<string, string> } }
+
+// session 資料夾 /repo 就是一個 git repo：status 是 git status 印出的、branches 是 for-each-ref 的每一行（branchLine）。
+// run 先看每個 git 指令（cmd 從子指令開始），給了結果就用它的，沒給就照上面的回。
+export function gitRepo(
+  on: TestOn,
+  repo: { status: string; branches?: string[] | (() => string[]); run?: (cmd: string[], e: RunEvent) => RunResult | undefined },
+) {
+  on('process.run', (_$, e) => {
+    const cmd = e.argv.slice(3)
+    const own = repo.run?.(cmd, e)
+    if (own !== undefined) return own
+    if (cmd[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
+    if (cmd[0] === 'status') return ok(repo.status)
+    if (cmd[0] === 'for-each-ref') {
+      const branches = typeof repo.branches === 'function' ? repo.branches() : (repo.branches ?? [])
+
+      return ok([...branches, ''].join('\n'))
+    }
+
+    return ok('')
+  })
+}
+
+// git for-each-ref 印出的一行分支：目前分支標 *，origin/ 開頭的是遠端分支。
+export const branchLine = (
+  name: string,
+  { isCurrent = false, upstream = '', track = '', ago = '1 day ago', subject = 'Wip' }: { isCurrent?: boolean; upstream?: string; track?: string; ago?: string; subject?: string } = {},
+) => [isCurrent ? '*' : ' ', `refs/${name.startsWith('origin/') ? 'remotes' : 'heads'}/${name}`, name, upstream, track, ago, subject].join('\t')
+
+// fs.list 列出的一筆。
+export const fsEntry = (name: string, kind: 'file' | 'dir' | 'other' = 'file', size = 0) => ({ name, kind, size, mtimeMs: 0, isLink: false })
+
+// 計時器裡跑的工作要多等幾輪才寫進畫面：一直找到為止（最多 tries 輪）。
+export async function waitFor<T>(find: () => Promise<T | undefined>, tries = 20): Promise<T | undefined> {
+  for (let i = 0; i < tries; i++) {
+    const found = await find()
+    if (found !== undefined) return found
+    await Promise.resolve()
+  }
+
+  return find()
+}
+
+// ───── 資料 ─────
 
 export const ROOT = 'C:\\proj'
 export const proc = (p: Partial<ScanProc> & Pick<ScanProc, 'pid' | 'ppid' | 'name'>): ScanProc => ({
@@ -113,16 +210,6 @@ export const MAC_SCAN_OUT = `900
    12    11 Mon Oct 12 09:20:01 2026     /bin/sh
    13    12 Mon Oct 12 09:20:01 2026     node
    30   100 Mon Oct 12 09:00:02 2026     node
-#args
-    1 /sbin/launchd
-   80 /Applications/Claude.app/Contents/MacOS/Claude
-  100 claude
-  900 /bin/sh -c echo
-   10 -zsh
-   11 npm run dev
-   12 sh -c vite
-   13 node /Users/me/proj/web/node_modules/.bin/vite
-   30 node mcp-server.js
 #ports
 p13
 f20
@@ -132,6 +219,16 @@ n[::1]:5173
 p30
 f22
 n127.0.0.1:9999
+`
+// 第二步的 ps -o pid=,args=：只問用得到的那幾個程序。
+export const MAC_ARGS_OUT = `   10 -zsh
+   11 npm run dev
+   12 sh -c vite
+   13 node /Users/me/proj/web/node_modules/.bin/vite
+   30 node mcp-server.js
+   80 /Applications/Claude.app/Contents/MacOS/Claude
+  100 claude
+  900 /bin/sh -c echo
 `
 const NODE = '/Users/me/.nvm/versions/node/v24.14.0/bin/node'
 export const MAC_FILES_OUT = [

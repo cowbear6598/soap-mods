@@ -43,7 +43,7 @@ if (-not (Test-Path $dll)) {
   Add-Type -TypeDefinition $src -OutputAssembly $dll
 }
 Add-Type -Path $dll
-$all = @(Get-CimInstance Win32_Process)
+$all = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId, Name, CommandLine, ExecutablePath, CreationDate)
 $byId = @{}; foreach ($p in $all) { $byId[[int]$p.ProcessId] = $p }
 $ports = @(Get-NetTCPConnection -State Listen | ForEach-Object { [pscustomobject]@{ port = [int]$_.LocalPort; pid = [int]$_.OwningProcess } })
 # 只回報用得到的程序：開著 port 的、它們往上的祖先（往上併要看），以及掃描程序自己往上的祖先。

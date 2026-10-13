@@ -12,7 +12,7 @@ export function fileView(ui: Ui, shown: FileView, files: FilesView, a: Actions, 
 
   return (
     <Box flexDirection="column" gap={1}>
-      {stepBar(ui, press, 'fileview', steps.indexOf(shown.path), steps.length, () => a.closeFile(), step => a.stepFile(step))}
+      {stepBar(ui, press, 'fileview', steps.indexOf(shown.path), steps.length, () => a.closeCover(), step => a.stepFile(step))}
       <Text bold>{shown.path}</Text>
       {shown.error !== '' && <Text color="error">{shown.error}</Text>}
       {shown.note !== '' && <Text dimColor>{shown.note}</Text>}

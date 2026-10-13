@@ -115,13 +115,7 @@ export const branchTab: TabBody = ({ w, d, a }) => {
   // 兩組的標題對齊最左邊、分支名稱縮兩格；搜尋那行下面是切換、刪除、同步失敗的訊息，換分頁就清掉。
   return (
     <Box flexDirection="column" gap={1}>
-      {w.searchField(
-        'branch:search',
-        query,
-        text => a.searchBranches(text),
-        () => a.searchBranches(''),
-        syncButtons,
-      )}
+      {w.searchField('branch:search', query, text => a.searchBranches(text), syncButtons)}
       {v.branchError !== '' && <Text color="error">{v.branchError}</Text>}
       {v.deleteArmed?.isForce === true && (
         <Text color="error">{`${v.deleteArmed.name} has unmerged commits; press again to force delete and lose them.`}</Text>

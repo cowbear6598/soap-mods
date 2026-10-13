@@ -5,8 +5,7 @@ import type { Elements, RenderSurface, SessionUsage, UiPressArgument } from 'cla
 
 import type {
   CommitFile,
-  DiffPaneView,
-  FileView,
+  Cover,
   FilesView,
   GitBranch,
   GitCommit,
@@ -15,7 +14,6 @@ import type {
   GitView,
   LogView,
   MergeChunk,
-  MergeView,
   Service,
   ServiceAction,
   ServicePending,
@@ -58,7 +56,8 @@ export type Actions = {
   openCommitDiff: (commits: GitCommit[], f: CommitFile, files: CommitFile[]) => unknown
   // 差異（畫在 Soap Panel 裡）
   stepDiffFile: (step: 1 | -1) => unknown
-  closeDiff: () => unknown
+  // 關掉蓋住分頁的差異、合併、檔案內容，回到分頁
+  closeCover: () => unknown
   // conflict
   abortOp: () => unknown
   cancelAbort: () => unknown
@@ -69,7 +68,6 @@ export type Actions = {
   // 看檔案內容（畫在 Soap Panel 裡）；path 一樣相對 session 資料夾。
   openFile: (path: string) => unknown
   stepFile: (step: 1 | -1) => unknown
-  closeFile: () => unknown
   // services
   runServiceAction: (s: Service, action: ServiceAction) => unknown
   // 合併（畫在 Soap Panel 裡）
@@ -78,7 +76,6 @@ export type Actions = {
   takeSide: (side: 'ours' | 'theirs' | 'as-is') => unknown
   applyMerge: () => unknown
   askClaude: () => unknown
-  closeMerge: () => unknown
 }
 
 // Soap Panel 畫一次要的全部資料。
@@ -96,16 +93,12 @@ export type PanelData = {
   syncing: GitSync | ''
   services: ServicesView
   files: FilesView
-  // 點開的檔案；path 不是 '' 時蓋掉分頁，畫它的內容。
-  fileView: FileView
   // 正在停掉／重跑的服務。
   servicePending: readonly ServicePending[]
   log: LogView
   logQuery: string
-  // 打開的檔案差異；path 不是 '' 時蓋掉分頁，畫差異。
-  diff: DiffPaneView
-  // 打開的衝突檔案；path 不是 '' 時蓋掉分頁，畫三欄合併。isMergeBusy：正在套用。
-  merge: MergeView
+  // 蓋住分頁的差異、三欄合併或檔案內容；kind 是 none 時畫分頁。isMergeBusy：合併正在套用。
+  cover: Cover
   isMergeBusy: boolean
   usage: readonly UsageReading[]
   now: number

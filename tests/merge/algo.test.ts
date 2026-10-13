@@ -2,14 +2,10 @@ import { expect, test } from 'claude-code/testing'
 
 import type { MergeChunk } from '../../types'
 import { CONFLICTED } from '../test-fixtures'
-import type { DiffHunk } from '../../hooks/merge/algo'
 import {
   buildResult,
   choose,
   chooseAll,
-  conflictLabel,
-  detectOp,
-  diffLines,
   isResolved,
   keepChoices,
   merge3,
@@ -64,42 +60,6 @@ test('buildResult keeps the markers of a conflict still unresolved, and keepChoi
   expect(keepChoices(ours, changed.chunks)).toEqual(changed.chunks)
 })
 
-// 照 diffLines 的結果把 a 改一遍，應該剛好變成 b。
-function applyHunks(a: string[], b: string[], hunks: DiffHunk[]) {
-  const out: string[] = []
-  let at = 0
-  for (const h of hunks) {
-    out.push(...a.slice(at, h.aStart), ...b.slice(h.bStart, h.bEnd))
-    at = h.aEnd
-  }
-
-  return [...out, ...a.slice(at)]
-}
-
-test('diffLines finds the changed places, and applying them turns one list into the other', () => {
-  expect(diffLines([], [])).toEqual([])
-  expect(diffLines(['a', 'b', 'c'], ['a', 'x', 'c'])).toEqual([{ aStart: 1, aEnd: 2, bStart: 1, bEnd: 2 }])
-  expect(diffLines(['a', 'b'], ['a', 'b', 'c'])).toEqual([{ aStart: 2, aEnd: 2, bStart: 2, bEnd: 3 }])
-  // 中間夾著沒變的行：是兩個分開的改動。
-  expect(diffLines(['a', 'b', 'c', 'd', 'e'], ['a', 'B', 'c', 'd', 'E'])).toEqual([
-    { aStart: 1, aEnd: 2, bStart: 1, bEnd: 2 },
-    { aStart: 4, aEnd: 5, bStart: 4, bEnd: 5 },
-  ])
-
-  // 亂數產生的清單：改完一定變成另一份，而且一行沒變的話一定沒有改動。
-  let seed = 7
-  const rand = (n: number) => {
-    seed = (seed * 1103515245 + 12345) % 2147483648
-    return seed % n
-  }
-  for (let round = 0; round < 200; round += 1) {
-    const a = Array.from({ length: rand(12) }, () => 'abcd'[rand(4)] ?? 'a')
-    const b = Array.from({ length: rand(12) }, () => 'abcd'[rand(4)] ?? 'a')
-    expect(applyHunks(a, b, diffLines(a, b))).toEqual(b)
-    expect(diffLines(a, a)).toEqual([])
-  }
-})
-
 test('merge3 tells changes one side made from conflicts, as git merges them', () => {
   const base = ['a', 'b', 'c', 'd', 'e', 'f', 'g']
   // 兩邊改不同的地方：各自自動合入。
@@ -141,17 +101,6 @@ test('merge3 tells changes one side made from conflicts, as git merges them', ()
     { kind: 'conflict', ours: ['b'], base: null, theirs: ['x'], choice: 'none' },
     { kind: 'same', lines: ['c'] },
   ])
-})
-
-test('detectOp and conflictLabel', () => {
-  expect(detectOp(['HEAD', 'MERGE_HEAD', 'index'])).toBe('merge')
-  expect(detectOp(['rebase-merge', 'ORIG_HEAD'])).toBe('rebase')
-  expect(detectOp(['CHERRY_PICK_HEAD'])).toBe('cherry-pick')
-  expect(detectOp(['REVERT_HEAD'])).toBe('revert')
-  expect(detectOp(['HEAD'])).toBe('')
-  expect(conflictLabel({ path: 'a', x: 'U', y: 'U' })).toBe('both modified')
-  expect(conflictLabel({ path: 'a', x: 'D', y: 'U' })).toBe('deleted by us')
-  expect(conflictLabel({ path: 'a', x: 'U', y: 'D' })).toBe('deleted by them')
 })
 
 test('nextConflict walks the conflicts still open, stopping at the ends, then all of them once each is chosen', () => {

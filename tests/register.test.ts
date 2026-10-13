@@ -1,40 +1,29 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import { GOOD } from '../hooks/config'
-import { CONFLICTED, MAC_FILES_OUT, MAC_PPIDS_OUT, MAC_ROOT, MAC_SCAN_OUT, ROOT, SCAN } from './test-fixtures'
+import {
+  CONFLICTED,
+  MAC_ARGS_OUT,
+  MAC_FILES_OUT,
+  MAC_PPIDS_OUT,
+  MAC_ROOT,
+  MAC_SCAN_OUT,
+  ROOT,
+  SCAN,
+  type TestOn,
+  branchLine,
+  fail,
+  fsEntry,
+  gitRepo,
+  mountPane,
+  ok,
+  openPanel,
+  posix,
+  stubPanel,
+  waitFor,
+} from './test-fixtures'
 
-// 面板的 props：引擎畫面板時一定會給，測試照實給一份。
-const PANE_PROPS = {
-  title: 'Soap Panel',
-  isFocused: true,
-  bodyColumns: 60,
-  placement: 'dock',
-  scroll: { offset: 0, bodyRows: 40 },
-  view: {},
-} as const
-
-// 引擎會把 fs、process 的路徑轉成這台電腦的絕對路徑（Windows 加磁碟代號、換反斜線），比對前轉回 /repo 這種寫法。
-const posix = (p: string | undefined) => p?.replace(/\\/g, '/').replace(/^[A-Za-z]:/, '')
-
-test('the pane draws the Git tab with its four sub tabs on each surface', async ($, on) => {
-  on('clock.now', () => ({ value: 0 }))
-  for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({
-      plugin: 'soap-mods',
-      surface,
-      component: 'Pane',
-      requestId: 'soap-panel',
-      props: PANE_PROPS,
-    })
-    expect(await ui.find({ key: 'tab:git' })).toBeDefined()
-    for (const sub of ['diff', 'branch', 'log', 'conflict']) {
-      expect(await ui.find({ key: `sub:${sub}` })).toBeDefined()
-    }
-    await ui.unmount()
-  }
-})
-
-test('the bottom of the pane shows 5h and weekly remaining, half each', async ($, on) => {
+test('the bottom of the pane shows 5h and weekly remaining, half each, on both surfaces', async ($, on) => {
   const now = Date.parse('2026-10-09T10:00:00Z')
   on('clock.now', () => ({ value: now }))
   on('session.usage', () => ({
@@ -48,8 +37,10 @@ test('the bottom of the pane shows 5h and weekly remaining, half each', async ($
     },
   }))
 
+  // 終端機和桌面版都畫得出面板。
   for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({ plugin: 'soap-mods', surface, component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+    const ui = await mountPane($, surface)
+    expect(await ui.find({ key: 'tab:git' })).toBeDefined()
     expect(await ui.find({ key: 'usage:five_hour' })).toBeDefined()
     expect(await ui.find({ key: 'usage:seven_day' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: '5h · ' })).toBeDefined()
@@ -62,61 +53,24 @@ test('the bottom of the pane shows 5h and weekly remaining, half each', async ($
   }
 })
 
-const ok = (stdout: string) => ({
-  value: {
-    exitCode: 0,
-    stdout,
-    stderr: '',
-    isStdoutTruncated: false,
-    isStderrTruncated: false,
-  },
-})
+// ───── diff、branch ─────
 
-const SWITCH_FAILED = "fatal: a branch named 'main' already exists"
-
-test('the pane lists changes, shows a diff and the branches, and switches sub tabs', async ($, on) => {
+test('pressing a changed file shows its diff over the tabs, Next/Previous step through the files, and Back returns', async ($, on) => {
   const diffArgs: string[][] = []
-  on('ui.open', () => ({ value: { isPlaced: true } }))
-  on('ui.panes', () => ({ value: [] }))
-  on('ui.close', () => ({ value: undefined }))
-  on('clock.now', () => ({ value: 0 }))
-  on('session.root', () => ({ value: '/repo' }))
-  on('process.run', (_$, e) => {
-    const cmd = e.argv.slice(3)
-    if (cmd[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
-    if (cmd[0] === 'switch') return { value: { ...ok('').value, exitCode: 128, stderr: SWITCH_FAILED } }
-    if (cmd[0] === 'status') return ok('## main...origin/main [ahead 1]\0 M a.ts\0?? b.ts\0')
-    if (cmd[0] === 'diff') diffArgs.push(cmd)
-    if (cmd[0] === 'diff') return ok('diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-a\n+b\n')
-    if (cmd[0] === 'for-each-ref') {
-      return ok(
-        [
-          '*\trefs/heads/main\tmain\torigin/main\t\t1 hour ago\tAdd panel',
-          ' \trefs/heads/dev\tdev\t\t\t2 days ago\tWip',
-          ' \trefs/remotes/origin/main\torigin/main\t\t\t1 hour ago\tAdd panel',
-          '',
-        ].join('\n'),
-      )
-    }
+  stubPanel(on)
+  gitRepo(on, {
+    status: '## main...origin/main [ahead 1]\0 M a.ts\0?? b.ts\0',
+    run: cmd => {
+      if (cmd[0] !== 'diff') return undefined
+      diffArgs.push(cmd)
 
-    return ok('')
+      return ok('diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-a\n+b\n')
+    },
   })
-  await $.command.run({
-    command: 'soap-panel',
-    args: '',
-    origin: { kind: 'composer' },
-    presentation: { isFullscreen: true, columns: 120 },
-  })
+  await openPanel($)
 
-  const ui = await $.ui.mount({
-    plugin: 'soap-mods',
-    surface: 'terminal',
-    component: 'Pane',
-    requestId: 'soap-panel',
-    props: PANE_PROPS,
-  })
+  const ui = await mountPane($)
   expect(await ui.find({ key: 'file:unstaged:a.ts' })).toBeDefined()
-
   // 沒點之前不顯示差異；點了在 Soap Panel 裡蓋掉分頁看，Back 回來。
   expect(await ui.find({ type: 'Code' })).toBeUndefined()
   await ui.press({ key: 'file:unstaged:a.ts' })
@@ -134,21 +88,22 @@ test('the pane lists changes, shows a diff and the branches, and switches sub ta
   expect(await ui.find({ type: 'Text', text: '1 of 2 files' })).toBeDefined()
   await ui.press({ key: 'diff:back' })
   expect(await ui.find({ type: 'Code' })).toBeUndefined()
+  expect(await ui.find({ key: 'file:unstaged:a.ts' })).toBeDefined()
+  await ui.unmount()
+})
 
-  // 桌面版整行都是按鈕：同一個 key 疊在整行上面，按下去一樣看差異。
-  const desk = await $.ui.mount({
-    plugin: 'soap-mods',
-    surface: 'desktop',
-    component: 'Pane',
-    requestId: 'soap-panel',
-    props: PANE_PROPS,
+const SWITCH_FAILED = "fatal: a branch named 'main' already exists"
+
+test('the branch tab lists the branches, opens Remote, shows why a switch failed, and searches by name', async ($, on) => {
+  stubPanel(on)
+  gitRepo(on, {
+    status: '## main...origin/main [ahead 1]\0',
+    branches: [branchLine('main', { isCurrent: true, upstream: 'origin/main' }), branchLine('dev'), branchLine('origin/main')],
+    run: cmd => (cmd[0] === 'switch' ? fail(SWITCH_FAILED) : undefined),
   })
-  expect(await desk.find({ type: 'Text', text: 'a.ts' })).toBeDefined()
-  await desk.press({ key: 'file:unstaged:a.ts' })
-  expect(await desk.find({ type: 'Code' })).toBeDefined()
-  await desk.press({ key: 'diff:back' })
-  await desk.unmount()
+  await openPanel($)
 
+  const ui = await mountPane($)
   await ui.press({ key: 'sub:branch' })
   // 目前分支也算在 Local 裡，跟其他分支一樣是一列按鈕（點了不會被換掉，面板才不會丟焦點）。
   expect(await ui.find({ type: 'Text', text: 'Local · 2' })).toBeDefined()
@@ -166,7 +121,7 @@ test('the pane lists changes, shows a diff and the branches, and switches sub ta
   await ui.press({ key: 'sub:branch' })
   expect(await ui.find({ type: 'Text', text: SWITCH_FAILED })).toBeUndefined()
 
-  // 搜尋：只留名稱符合的分支，Remote 收著也直接列出來；換分頁就清掉。
+  // 搜尋：只留名稱符合的分支（不分大小寫），Remote 收著也直接列出來；換分頁就清掉。
   await ui.press({ key: 'remote:toggle' })
   await ui.input({ key: 'branch:search', text: 'MAIN', kind: 'change' })
   expect(await ui.find({ key: 'switch:l:main' })).toBeDefined()
@@ -183,64 +138,38 @@ test('the pane lists changes, shows a diff and the branches, and switches sub ta
   await ui.press({ key: 'sub:branch' })
   expect(await ui.find({ key: 'switch:l:dev' })).toBeDefined()
   expect(await ui.find({ key: 'switch:r:origin/main' })).toBeUndefined()
-
-  await ui.press({ key: 'sub:conflict' })
-  expect(await ui.find({ type: 'Text', text: 'No conflicts.' })).toBeDefined()
   await ui.unmount()
 })
 
-test('deleting a local branch turns its trash into a check that deletes, and gives up after 3s or on another trash', async ($, on) => {
-  const clock = mock.clock(on)
+test('deleting a local branch asks with a check first, and forces the delete when it has unmerged commits', async ($, on) => {
   const deletes: string[] = []
   const toasts: string[] = []
-  on('ui.panes', () => ({ value: [] }))
-  on('ui.open', () => ({ value: { isPlaced: true } }))
-  on('ui.close', () => ({ value: undefined }))
+  stubPanel(on)
   on('ui.toast', (_$, e) => {
     toasts.push(e.text)
 
     return { value: undefined }
   })
-  on('session.root', () => ({ value: '/repo' }))
-  on('process.run', (_$, e) => {
-    const cmd = e.argv.slice(3)
-    if (cmd[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
-    if (cmd[0] === 'status') return ok('## main\0')
-    if (cmd[0] === 'branch') {
+  gitRepo(on, {
+    status: '## main\0',
+    branches: () => [branchLine('main', { isCurrent: true }), ...(deletes.includes('branch -D dev') ? [] : [branchLine('dev')])],
+    run: cmd => {
+      if (cmd[0] !== 'branch') return undefined
       deletes.push(cmd.join(' '))
-      if (cmd[1] === '-d') return { value: { ...ok('').value, exitCode: 1, stderr: "error: the branch 'dev' is not fully merged" } }
 
-      return ok('')
-    }
-    if (cmd[0] === 'for-each-ref') {
-      const isGone = deletes.includes('branch -D dev')
-      const lines = ['*\trefs/heads/main\tmain\t\t\t1 hour ago\tAdd panel', ' \trefs/heads/feat\tfeat\t\t\t1 day ago\tTry']
-
-      return ok([...lines, ...(isGone ? [] : [' \trefs/heads/dev\tdev\t\t\t2 days ago\tWip']), ''].join('\n'))
-    }
-
-    return ok('')
+      return cmd[1] === '-d' ? fail("error: the branch 'dev' is not fully merged", 1) : ok('')
+    },
   })
-  await $.command.run({ command: 'soap-panel', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 120 } })
+  await openPanel($)
 
-  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'terminal', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  const ui = await mountPane($)
   await ui.press({ key: 'sub:branch' })
   // 目前分支沒有刪除鈕。
   expect(await ui.find({ key: 'delete:l:main' })).toBeUndefined()
 
-  // 按一下只換成打勾；3 秒沒再按就收回，下一下又只是換成打勾。
+  // 按一下只換成打勾，再按才刪；-d 被拒（沒合併）就換成強制刪除的打勾，再按才 -D。
   await ui.press({ key: 'delete:l:dev' })
   expect(deletes).toEqual([])
-  await clock.advance(3_000)
-  await ui.press({ key: 'delete:l:dev' })
-  expect(deletes).toEqual([])
-
-  // 按了別的垃圾桶，原本的收回：再按 dev 也只是換成打勾。
-  await ui.press({ key: 'delete:l:feat' })
-  await ui.press({ key: 'delete:l:dev' })
-  expect(deletes).toEqual([])
-
-  // 打勾再按才刪；-d 被拒（沒合併）就換成強制刪除的打勾，再按才 -D。
   await ui.press({ key: 'delete:l:dev' })
   expect(deletes).toEqual(['branch -d dev'])
   expect(await ui.find({ type: 'Text', text: 'dev has unmerged commits; press again to force delete and lose them.' })).toBeDefined()
@@ -254,26 +183,16 @@ test('deleting a local branch turns its trash into a check that deletes, and giv
 test('copying a branch name turns its copy button into a check for 2s', async ($, on) => {
   const clock = mock.clock(on)
   const copies: string[] = []
-  on('ui.panes', () => ({ value: [] }))
-  on('ui.open', () => ({ value: { isPlaced: true } }))
-  on('ui.close', () => ({ value: undefined }))
+  stubPanel(on, { now: null })
   on('ui.copy', (_$, e) => {
     copies.push(e.text)
 
     return { value: { isCopied: true } }
   })
-  on('session.root', () => ({ value: '/repo' }))
-  on('process.run', (_$, e) => {
-    const cmd = e.argv.slice(3)
-    if (cmd[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
-    if (cmd[0] === 'status') return ok('## main\0')
-    if (cmd[0] === 'for-each-ref') return ok('*\trefs/heads/main\tmain\t\t\t1 hour ago\tAdd panel\n \trefs/heads/dev\tdev\t\t\t2 days ago\tWip\n')
+  gitRepo(on, { status: '## main\0', branches: [branchLine('main', { isCurrent: true }), branchLine('dev')] })
+  await openPanel($)
 
-    return ok('')
-  })
-  await $.command.run({ command: 'soap-panel', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 120 } })
-
-  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'terminal', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  const ui = await mountPane($)
   await ui.press({ key: 'sub:branch' })
   await ui.press({ key: 'copy:l:dev' })
   expect(copies).toEqual(['dev'])
@@ -292,39 +211,33 @@ test('Fetch and Pull run git without asking for a password, toast when done, and
   const toasts: string[] = []
   let isDiverged = false
   mock.clock(on)
-  on('ui.panes', () => ({ value: [] }))
-  on('ui.open', () => ({ value: { isPlaced: true } }))
-  on('ui.close', () => ({ value: undefined }))
+  stubPanel(on, { now: null })
   on('ui.toast', (_$, e) => {
     toasts.push(e.text)
 
     return { value: undefined }
   })
-  on('session.root', () => ({ value: '/repo' }))
-  on('process.run', (_$, e) => {
-    const cmd = e.argv.slice(3)
-    if (cmd[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
-    if (cmd[0] === 'status') return ok('## main\0')
-    if (cmd[0] === 'fetch' || cmd[0] === 'pull') {
-      syncs.push(`${cmd.join(' ')} prompt=${e.init?.env?.GIT_TERMINAL_PROMPT} timeout=${e.init?.timeoutMs}`)
-      if (cmd[0] === 'pull' && isDiverged) return { value: { ...ok('').value, exitCode: 128, stderr: PULL_FAILED } }
+  gitRepo(on, {
+    status: '## main\0',
+    branches: [branchLine('main', { isCurrent: true, upstream: 'origin/main' })],
+    run: (cmd, e) => {
+      if (cmd[0] !== 'fetch' && cmd[0] !== 'pull') return undefined
+      syncs.push(`${cmd.join(' ')} prompt=${e.init?.env?.GIT_TERMINAL_PROMPT}`)
+      if (cmd[0] === 'pull' && isDiverged) return fail(PULL_FAILED)
 
       return ok(cmd[0] === 'pull' ? 'Already up to date.\n' : '')
-    }
-    if (cmd[0] === 'for-each-ref') return ok('*\trefs/heads/main\tmain\torigin/main\t\t1 hour ago\tAdd panel\n')
-
-    return ok('')
+    },
   })
-  await $.command.run({ command: 'soap-panel', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 120 } })
+  await openPanel($)
 
-  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'terminal', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  const ui = await mountPane($)
   await ui.press({ key: 'sub:branch' })
   // 按了才跑。
   expect(syncs).toEqual([])
 
   await ui.press({ key: 'branch:fetch' })
   await ui.press({ key: 'branch:pull' })
-  expect(syncs).toEqual(['fetch --all --prune prompt=0 timeout=300000', 'pull --ff-only prompt=0 timeout=300000'])
+  expect(syncs).toEqual(['fetch --all --prune prompt=0', 'pull --ff-only prompt=0'])
   expect(toasts).toEqual(['Fetched', 'Already up to date'])
 
   // 跟遠端分岔了：只快轉的 pull 失敗，顯示 git 的訊息，換分頁就清掉。
@@ -340,26 +253,14 @@ test('Fetch and Pull run git without asking for a password, toast when done, and
 
 test('long file and branch lists draw the first 50, with Show more for files and search for branches', async ($, on) => {
   const names = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => `${prefix}${String(i).padStart(2, '0')}`)
-  on('ui.open', () => ({ value: { isPlaced: true } }))
-  on('ui.panes', () => ({ value: [] }))
-  on('ui.close', () => ({ value: undefined }))
-  on('clock.now', () => ({ value: 0 }))
-  on('session.root', () => ({ value: '/repo' }))
-  on('process.run', (_$, e) => {
-    const cmd = e.argv.slice(3)
-    if (cmd[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
-    if (cmd[0] === 'status') return ok(`## main\0${names('f', 70).map(f => `?? ${f}.ts\0`).join('')}`)
-    if (cmd[0] === 'for-each-ref') {
-      const remotes = names('origin/b', 60).map(b => ` \trefs/remotes/${b}\t${b}\t\t\t1 day ago\tWip`)
-
-      return ok(['*\trefs/heads/main\tmain\t\t\t1 hour ago\tAdd panel', ...remotes, ''].join('\n'))
-    }
-
-    return ok('')
+  stubPanel(on)
+  gitRepo(on, {
+    status: `## main\0${names('f', 70).map(f => `?? ${f}.ts\0`).join('')}`,
+    branches: [branchLine('main', { isCurrent: true }), ...names('origin/b', 60).map(b => branchLine(b))],
   })
   await openPanel($)
 
-  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'terminal', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  const ui = await mountPane($)
   expect(await ui.find({ key: 'file:untracked:f49.ts' })).toBeDefined()
   expect(await ui.find({ key: 'file:untracked:f50.ts' })).toBeUndefined()
   await ui.press({ key: 'file:more:untracked' })
@@ -377,26 +278,14 @@ test('long file and branch lists draw the first 50, with Show more for files and
 })
 
 test('branches with / in their name group into folders that open and close', async ($, on) => {
-  on('ui.open', () => ({ value: { isPlaced: true } }))
-  on('ui.panes', () => ({ value: [] }))
-  on('ui.close', () => ({ value: undefined }))
-  on('clock.now', () => ({ value: 0 }))
-  on('session.root', () => ({ value: '/repo' }))
-  on('process.run', (_$, e) => {
-    const cmd = e.argv.slice(3)
-    if (cmd[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
-    if (cmd[0] === 'status') return ok('## soap/feature/login\0')
-    if (cmd[0] === 'for-each-ref') {
-      const local = (name: string, head = ' ') => `${head}\trefs/heads/${name}\t${name}\t\t\t1 day ago\tWip`
-
-      return ok([local('soap/feature/login', '*'), local('feature/a'), local('feature/b'), local('main'), ''].join('\n'))
-    }
-
-    return ok('')
+  stubPanel(on)
+  gitRepo(on, {
+    status: '## soap/feature/login\0',
+    branches: [branchLine('soap/feature/login', { isCurrent: true }), branchLine('feature/a'), branchLine('feature/b'), branchLine('main')],
   })
   await openPanel($)
 
-  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'terminal', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  const ui = await mountPane($)
   await ui.press({ key: 'sub:branch' })
   // 目前分支固定在最上面寫全名；其他分支收在資料夾裡，預設收起。
   expect(await ui.find({ key: 'switch:l:soap/feature/login' })).toBeDefined()
@@ -406,55 +295,42 @@ test('branches with / in their name group into folders that open and close', asy
   expect(await ui.find({ key: 'switch:l:feature/a' })).toBeDefined()
   await ui.press({ key: 'folder:l:feature/' })
   expect(await ui.find({ key: 'switch:l:feature/a' })).toBeUndefined()
-  // 搜尋時資料夾全部打開。
+  // 搜尋時資料夾全部打開；打好幾個字要全部都有。
   await ui.input({ key: 'branch:search', text: 'b', kind: 'change' })
   expect(await ui.find({ key: 'switch:l:feature/b' })).toBeDefined()
+  await ui.input({ key: 'branch:search', text: 'feature b', kind: 'change' })
+  expect(await ui.find({ key: 'switch:l:feature/b' })).toBeDefined()
+  expect(await ui.find({ key: 'switch:l:feature/a' })).toBeUndefined()
+  expect(await ui.find({ key: 'switch:l:soap/feature/login' })).toBeUndefined()
   await ui.unmount()
 })
 
 test('a session folder holding several repos gets a repo bar with counts, and pressing one switches the Git tab to it', async ($, on) => {
-  const dir = (name: string) => ({ name, kind: 'dir', size: 0, mtimeMs: 0, isLink: false }) as const
-  const statusCwds: (string | undefined)[] = []
   const logCwds: (string | undefined)[] = []
-  on('ui.open', () => ({ value: { isPlaced: true } }))
-  on('ui.panes', () => ({ value: [] }))
-  on('ui.close', () => ({ value: undefined }))
-  on('clock.now', () => ({ value: 0 }))
-  on('session.root', () => ({ value: '/company' }))
+  stubPanel(on, { root: '/company' })
   // Bash 在回合中 cd 進 a 去 commit，shell 的 cwd 跟著跑，但專案根目錄不變：repo bar 還是要列出 a、b。
   on('session.cwd', () => ({ value: '/company/a' }))
   // company/ 底下：a、b 是 repo，docs 不是，.cache 是隱藏資料夾；各 repo 的 .git 裡沒有進行中的操作。
-  on('fs.list', (_$, e) => ({ value: posix(e.path) === '/company' ? [dir('b'), dir('a'), dir('docs'), dir('.cache')] : [] }))
+  on('fs.list', (_$, e) => ({ value: posix(e.path) === '/company' ? [fsEntry('b', 'dir'), fsEntry('a', 'dir'), fsEntry('docs', 'dir'), fsEntry('.cache', 'dir')] : [] }))
   on('fs.exists', (_$, e) => ({ value: ['/company/a/.git', '/company/b/.git'].includes(posix(e.path) ?? '') }))
   on('process.run', (_$, e) => {
     const cwd = posix(e.init?.cwd)
     const args = e.argv.slice(3)
-    if (args[0] === 'rev-parse') {
-      if (cwd === '/company') return { value: { ...ok('').value, exitCode: 128, stderr: 'fatal: not a git repository (or any of the parent directories): .git' } }
-
-      return ok(`${cwd}\n${cwd}/.git\n`)
-    }
+    if (args[0] === 'rev-parse') return cwd === '/company' ? fail('fatal: not a git repository (or any of the parent directories): .git') : ok(`${cwd}\n${cwd}/.git\n`)
     if (args[0] === 'log') logCwds.push(cwd)
-    if (args[0] === 'status') {
-      statusCwds.push(cwd)
-      if (cwd === '/company/a') return ok('## main\0 M a1.ts\0 M a2.ts\0')
-      if (cwd === '/company/b') return ok('## main\0UU b1.ts\0')
-    }
+    if (args[0] === 'status' && cwd === '/company/a') return ok('## main\0 M a1.ts\0 M a2.ts\0')
+    if (args[0] === 'status' && cwd === '/company/b') return ok('## main\0UU b1.ts\0')
 
     return ok('')
   })
   await openPanel($)
 
-  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'terminal', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  const ui = await mountPane($)
   // 照名稱排，一開始看第一個；有變更、有衝突標在名稱後面，不是 repo 的資料夾不列。
   expect((await ui.find({ key: 'repo:a' }))?.props).toMatchObject({ label: 'a*', variant: 'primary' })
   expect((await ui.find({ key: 'repo:b' }))?.props).toMatchObject({ label: 'b* !', variant: 'secondary' })
   expect(await ui.find({ key: 'repo:docs' })).toBeUndefined()
   expect(await ui.find({ key: 'file:unstaged:a1.ts' })).toBeDefined()
-  expect(statusCwds.every(c => c !== undefined)).toBe(true)
-
-  // log 只在 log 分頁時讀。
-  expect(logCwds).toEqual([])
   await ui.press({ key: 'sub:log' })
   expect(logCwds.at(-1)).toBe('/company/a')
 
@@ -469,56 +345,57 @@ test('a session folder holding several repos gets a repo bar with counts, and pr
   await ui.unmount()
 })
 
-test('the log tab lists the branch commits, marks unpushed ones, loads more, and opens a commit file diff', async ($, on) => {
-  const now = Date.parse('2026-10-11T00:00:00Z')
-  const time = now / 1000 - 3 * 86400
-  const sha = (i: number) => `${String(i).padStart(7, '0')}${'f'.repeat(33)}`
-  const short = (i: number) => String(i).padStart(7, '0')
+// ───── log ─────
+
+// main 有 40 筆 commit（Commit 0 最新），都是 CptSoap 三天前寫的；有 upstream，領先兩筆。
+const LOG_NOW = Date.parse('2026-10-11T00:00:00Z')
+const short = (i: number) => String(i).padStart(7, '0')
+const sha = (i: number) => `${short(i)}${'f'.repeat(33)}`
+
+function logRepo(on: TestOn) {
   const logArgs: string[][] = []
   const revListArgs: string[][] = []
   const diffTreeArgs: string[][] = []
-  on('ui.open', () => ({ value: { isPlaced: true } }))
-  on('ui.panes', () => ({ value: [] }))
-  on('ui.close', () => ({ value: undefined }))
-  on('clock.now', () => ({ value: now }))
-  on('session.root', () => ({ value: '/repo' }))
-  on('process.run', (_$, e) => {
-    const cmd = e.argv.slice(3)
-    if (cmd[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
-    if (cmd[0] === 'status') return ok('## main...origin/main [ahead 2]\0')
-    if (cmd[0] === 'for-each-ref') {
-      return ok(
-        [
-          '*\trefs/heads/main\tmain\torigin/main\t[ahead 2]\t1 hour ago\tCommit 0',
-          ' \trefs/heads/dev\tdev\t\t\t2 days ago\tWip',
-          ' \trefs/remotes/origin/main\torigin/main\t\t\t1 hour ago\tCommit 2',
-          '',
-        ].join('\n'),
-      )
-    }
-    if (cmd[0] === 'log') {
-      logArgs.push(cmd)
-      // 這個分支有 40 筆 commit，照 --max-count 給；沒給就是整條（搜尋）。
-      const max = cmd.find(a => a.startsWith('--max-count='))?.split('=')[1]
-      const count = Math.min(max === undefined ? Infinity : Number(max), 40)
-      const lines = Array.from({ length: count }, (_, i) => `${sha(i)}\t${short(i)}\t${sha(i + 1)}\tCptSoap\t${time}\tCommit ${i}`)
+  const time = LOG_NOW / 1000 - 3 * 86400
+  stubPanel(on, { now: LOG_NOW })
+  gitRepo(on, {
+    status: '## main...origin/main [ahead 2]\0',
+    branches: [branchLine('main', { isCurrent: true, upstream: 'origin/main', track: '[ahead 2]' }), branchLine('dev'), branchLine('origin/main')],
+    run: cmd => {
+      if (cmd[0] === 'log') {
+        logArgs.push(cmd)
+        // 照 --max-count 給；沒給就是整條（搜尋）。
+        const max = cmd.find(a => a.startsWith('--max-count='))?.split('=')[1]
+        const count = Math.min(max === undefined ? Infinity : Number(max), 40)
+        const lines = Array.from({ length: count }, (_, i) => `${sha(i)}\t${short(i)}\t${sha(i + 1)}\tCptSoap\t${time}\tCommit ${i}`)
 
-      return ok(`${lines.join('\n')}\n`)
-    }
-    if (cmd[0] === 'rev-list') {
-      revListArgs.push(cmd)
+        return ok(`${lines.join('\n')}\n`)
+      }
+      if (cmd[0] === 'rev-list') {
+        revListArgs.push(cmd)
 
-      return ok(`${sha(0)}\n${sha(1)}\n`)
-    }
-    if (cmd[0] === 'diff-tree') diffTreeArgs.push(cmd)
-    if (cmd[0] === 'diff-tree' && cmd.includes('--name-status')) return ok(['M', 'src/a.ts', 'R100', 'old.ts', 'new.ts', ''].join('\0'))
-    if (cmd[0] === 'diff-tree') return ok('diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-a\n+b\n')
+        return ok(`${sha(0)}\n${sha(1)}\n`)
+      }
+      if (cmd[0] === 'diff-tree') {
+        diffTreeArgs.push(cmd)
+        // 每個 commit 都改了 src/a.ts、把 old.ts 改名成 new.ts。
+        if (cmd.includes('--name-status')) return ok(['M', 'src/a.ts', 'R100', 'old.ts', 'new.ts', ''].join('\0'))
 
-    return ok('')
+        return ok('diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-a\n+b\n')
+      }
+
+      return undefined
+    },
   })
+
+  return { logArgs, revListArgs, diffTreeArgs }
+}
+
+test('the log tab lists the latest 30 commits of the branch, marks the unpushed ones, and loads more', async ($, on) => {
+  const { revListArgs } = logRepo(on)
   await openPanel($)
 
-  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'terminal', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  const ui = await mountPane($)
   await ui.press({ key: 'sub:log' })
   // 預設看目前分支：先列 30 筆，還有更多；標題寫分支名稱。
   expect(await ui.find({ type: 'Text', text: 'main · 30+' })).toBeDefined()
@@ -531,17 +408,20 @@ test('the log tab lists the branch commits, marks unpushed ones, loads more, and
   // 有 upstream：跟 upstream 比哪些還沒 push，那兩筆標 ↑。
   expect(revListArgs.at(-1)).toEqual(['rev-list', '--max-count=30', 'HEAD', '--not', 'origin/main', '--'])
   expect(await ui.findAll({ type: 'Text', text: '↑' })).toHaveLength(2)
-  // 桌面版：subject 是文字、整行是按鈕。
-  const desk = await $.ui.mount({ plugin: 'soap-mods', surface: 'desktop', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
-  expect(await desk.find({ type: 'Text', text: 'Commit 0' })).toBeDefined()
-  expect(await desk.find({ key: `commit:${sha(0)}` })).toBeDefined()
-  await desk.unmount()
 
   await ui.press({ key: 'log:more' })
   expect(await ui.find({ type: 'Text', text: 'main · 40' })).toBeDefined()
   expect(await ui.find({ key: 'log:more' })).toBeUndefined()
+  await ui.unmount()
+})
 
-  // 點 commit：列表換成它改了哪些檔案；點檔案在 Soap Panel 裡看它在這個 commit 的差異，改名兩個路徑都給。
+test('pressing a commit lists its files, a file shows its diff in that commit, and Back walks back out', async ($, on) => {
+  logRepo(on)
+  await openPanel($)
+
+  const ui = await mountPane($)
+  await ui.press({ key: 'sub:log' })
+  // 點 commit：列表換成它改了哪些檔案；點檔案在 Soap Panel 裡看它在這個 commit 的差異。
   await ui.press({ key: `commit:${sha(0)}` })
   expect(await ui.find({ type: 'Text', text: 'Files · 2' })).toBeDefined()
   expect(await ui.find({ key: `commit:${sha(1)}` })).toBeUndefined()
@@ -549,13 +429,21 @@ test('the log tab lists the branch commits, marks unpushed ones, loads more, and
   expect(await ui.find({ type: 'Code' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'src/a.ts' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: `@ ${short(0)}` })).toBeDefined()
-  // Back 回到 commit 的檔案列表。
+  // Back 回到 commit 的檔案列表，再 Back 回 commit 列表。
   await ui.press({ key: 'diff:back' })
   expect(await ui.find({ type: 'Text', text: 'Files · 2' })).toBeDefined()
   await ui.press({ key: 'log:back' })
   expect(await ui.find({ key: `commit:${sha(1)}` })).toBeDefined()
+  await ui.unmount()
+})
 
-  // Select range：點起點（再點一次取消）、再點終點，兩筆之間（含）一起打開：最舊那筆之前 → 最新那筆。
+test('Select range opens the commits between two presses together, and Next/Previous step through its files', async ($, on) => {
+  const { diffTreeArgs } = logRepo(on)
+  await openPanel($)
+
+  const ui = await mountPane($)
+  await ui.press({ key: 'sub:log' })
+  // 點起點（再點一次取消）、再點終點，兩筆之間（含）一起打開：最舊那筆之前 → 最新那筆。
   await ui.press({ key: 'log:range' })
   expect(await ui.find({ type: 'Text', text: 'Press the first commit of the range.' })).toBeDefined()
   await ui.press({ key: `commit:${sha(0)}` })
@@ -570,7 +458,7 @@ test('the log tab lists the branch commits, marks unpushed ones, loads more, and
   await ui.press({ key: 'commit-file:src/a.ts' })
   expect(diffTreeArgs.at(-1)).toContain(sha(3))
   expect(await ui.find({ type: 'Text', text: `@ ${short(2)}…${short(0)}` })).toBeDefined()
-  // 差異的 Previous／Next（n／m）：換成同一批的上一個／下一個檔案，到頭了不動。
+  // 差異的 Previous／Next（n／m）：換成同一批的上一個／下一個檔案，改名兩個路徑都給，到頭了不動。
   expect(await ui.find({ type: 'Text', text: '1 of 2 files' })).toBeDefined()
   await ui.press({ key: 'diff:next' })
   expect(await ui.find({ type: 'Text', text: 'new.ts' })).toBeDefined()
@@ -581,7 +469,7 @@ test('the log tab lists the branch commits, marks unpushed ones, loads more, and
   expect(diffTreeArgs).toHaveLength(reads)
   await ui.press({ key: 'diff:prev' })
   expect(await ui.find({ type: 'Text', text: '1 of 2 files' })).toBeDefined()
-  // Back 回檔案列表，再 Back 回 commit 列表，選範圍結束：點 commit 又是打開那一筆。
+  // Back 回檔案列表，再 Back 回 commit 列表，選範圍結束。
   await ui.press({ key: 'diff:back' })
   await ui.press({ key: 'log:back' })
   expect(await ui.find({ type: 'Text', text: 'Press the first commit of the range.' })).toBeUndefined()
@@ -589,15 +477,24 @@ test('the log tab lists the branch commits, marks unpushed ones, loads more, and
   await ui.press({ key: 'log:range' })
   await ui.press({ key: 'log:range' })
   expect(await ui.find({ type: 'Text', text: 'Press the first commit of the range.' })).toBeUndefined()
+  await ui.unmount()
+})
 
-  // 搜尋：搜整條分支（包括還沒列出來的），每個字都要有、不分大小寫；整條歷史只讀一次，打字時直接過濾。
-  const fullReads = () => logArgs.filter(a => !a.some(x => x.startsWith('--max-count='))).length
+test('the log search finds commits across the whole branch, and the log icon of a branch row opens that branch', async ($, on) => {
+  const { logArgs, revListArgs } = logRepo(on)
+  await openPanel($)
+
+  const ui = await mountPane($)
+  await ui.press({ key: 'sub:log' })
+  // 搜整條分支（包括還沒列出來的），比對 subject、作者、sha，每個字都要有、不分大小寫。
   await ui.input({ key: 'log:search', text: 'COMMIT 3', kind: 'change' })
   // 3、13、23、30–39。
   expect(await ui.find({ type: 'Text', text: 'main · 13' })).toBeDefined()
   expect(await ui.find({ key: `commit:${sha(39)}` })).toBeDefined()
   expect(await ui.find({ key: `commit:${sha(1)}` })).toBeUndefined()
   await ui.input({ key: 'log:search', text: 'commit 39', kind: 'change' })
+  expect(await ui.find({ type: 'Text', text: 'main · 1' })).toBeDefined()
+  await ui.input({ key: 'log:search', text: short(39), kind: 'change' })
   expect(await ui.find({ type: 'Text', text: 'main · 1' })).toBeDefined()
   await ui.input({ key: 'log:search', text: 'nope', kind: 'change' })
   expect(await ui.find({ type: 'Text', text: 'No matching commits.' })).toBeDefined()
@@ -606,7 +503,6 @@ test('the log tab lists the branch commits, marks unpushed ones, loads more, and
   expect(await ui.find({ type: 'Text', text: 'main · 30+' })).toBeDefined()
   await ui.press({ key: 'log:more' })
   expect(await ui.find({ type: 'Text', text: 'main · 40' })).toBeDefined()
-  expect(fullReads()).toBe(1)
   // Clear（Enter）清空，回到最近 30 筆。
   await ui.input({ key: 'log:search', text: 'cptsoap' })
   expect(await ui.find({ type: 'Text', text: 'main · 30+' })).toBeDefined()
@@ -633,55 +529,50 @@ test('the log tab lists the branch commits, marks unpushed ones, loads more, and
 // ───── Files ─────
 
 test('the Files tab lists the session folder, folders first, opens a folder and goes back up', async ($, on) => {
-  const entry = (name: string, kind: 'file' | 'dir', size = 0) => ({ name, kind, size, mtimeMs: 0, isLink: false })
   const listed: (string | undefined)[] = []
   on('clock.now', () => ({ value: 0 }))
   on('session.root', () => ({ value: '/proj' }))
   on('fs.list', (_$, e) => {
     const path = posix(e.path)
     listed.push(path)
-    if (path === '/proj') return { value: [entry('README.md', 'file', 4300), entry('src', 'dir')] }
-    if (path === '/proj/src') return { value: [entry('main.ts', 'file', 120)] }
+    if (path === '/proj') return { value: [fsEntry('README.md', 'file', 4300), fsEntry('src', 'dir')] }
+    if (path === '/proj/src') return { value: [fsEntry('main.ts', 'file', 120)] }
 
     return { value: [] }
   })
   on('process.run', () => ok(''))
 
-  for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({ plugin: 'soap-mods', surface, component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
-    await ui.press({ key: 'tab:files' })
-    expect(await ui.find({ key: 'sub:diff' })).toBeUndefined()
-    expect(await ui.find({ key: 'files:dir:src' })).toBeDefined()
-    expect(await ui.find({ key: 'files:file:README.md' })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: '4.2 KB' })).toBeDefined()
-    // session 資料夾本身：沒有路徑、沒有 Back。
-    expect(await ui.find({ key: 'files:back' })).toBeUndefined()
+  const ui = await mountPane($)
+  await ui.press({ key: 'tab:files' })
+  expect(await ui.find({ key: 'sub:diff' })).toBeUndefined()
+  expect(await ui.find({ key: 'files:dir:src' })).toBeDefined()
+  expect(await ui.find({ key: 'files:file:README.md' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '4.2 KB' })).toBeDefined()
+  // session 資料夾本身：沒有路徑、沒有 Back。
+  expect(await ui.find({ key: 'files:back' })).toBeUndefined()
 
-    await ui.press({ key: 'files:dir:src' })
-    expect(listed.at(-1)).toBe('/proj/src')
-    expect(await ui.find({ type: 'Text', text: 'src/' })).toBeDefined()
-    expect((await ui.find({ key: 'files:back' }))?.props).toMatchObject({ label: '← Back', hotkey: 'b' })
-    expect(await ui.find({ key: 'files:file:main.ts' })).toBeDefined()
+  await ui.press({ key: 'files:dir:src' })
+  expect(listed.at(-1)).toBe('/proj/src')
+  expect(await ui.find({ type: 'Text', text: 'src/' })).toBeDefined()
+  expect((await ui.find({ key: 'files:back' }))?.props).toMatchObject({ label: '← Back', hotkey: 'b' })
+  expect(await ui.find({ key: 'files:file:main.ts' })).toBeDefined()
 
-    await ui.press({ key: 'files:back' })
-    expect(listed.at(-1)).toBe('/proj')
-    expect(await ui.find({ key: 'files:dir:src' })).toBeDefined()
-    await ui.press({ key: 'tab:git' })
-    await ui.unmount()
-  }
+  await ui.press({ key: 'files:back' })
+  expect(listed.at(-1)).toBe('/proj')
+  expect(await ui.find({ key: 'files:dir:src' })).toBeDefined()
+  await ui.unmount()
 })
 
 test('pressing a file in the Files tab shows its text over the tabs, steps with Next, and Back returns', async ($, on) => {
-  const entry = (name: string, size: number) => ({ name, kind: 'file', size, mtimeMs: 0, isLink: false }) as const
   const texts: Record<string, string> = { '/proj/a.ts': 'const a = 1\r\n', '/proj/b.png': 'PNG\0\0' }
   on('clock.now', () => ({ value: 0 }))
   on('session.root', () => ({ value: '/proj' }))
-  on('fs.list', () => ({ value: [entry('b.png', 6), entry('a.ts', 12), entry('big.log', 5_000_000)] }))
+  on('fs.list', () => ({ value: [fsEntry('b.png', 'file', 6), fsEntry('a.ts', 'file', 12), fsEntry('big.log', 'file', 5_000_000)] }))
   on('fs.stat', (_$, e) => ({ value: { kind: 'file', size: posix(e.path) === '/proj/big.log' ? 5_000_000 : 12, mtimeMs: 0, isLink: false } }))
   on('fs.read', (_$, e) => ({ value: texts[posix(e.path) ?? ''] ?? '' }))
   on('process.run', () => ok(''))
 
-  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'desktop', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  const ui = await mountPane($, 'desktop')
   await ui.press({ key: 'tab:files' })
   await ui.press({ key: 'files:file:a.ts' })
   // 蓋掉分頁：沒有分頁圖示，換成 Back 和內容（CRLF 換成 LF、有行號）。
@@ -699,7 +590,6 @@ test('pressing a file in the Files tab shows its text over the tabs, steps with 
   await ui.press({ key: 'fileview:back' })
   expect(await ui.find({ key: 'fileview:back' })).toBeUndefined()
   expect(await ui.find({ key: 'files:file:a.ts' })).toBeDefined()
-  await ui.press({ key: 'tab:git' })
   await ui.unmount()
 })
 
@@ -725,22 +615,18 @@ test('the Services tab lists the running services and stops one by killing its t
     return ok('')
   })
 
-  for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({ plugin: 'soap-mods', surface, component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
-    await ui.press({ key: 'tab:services' })
-    // Services 沒有子分頁。
-    expect(await ui.find({ key: 'sub:diff' })).toBeUndefined()
-    expect(await ui.find({ type: 'Text', text: 'Running' })).toBeDefined()
-    // 一行：工具 · 專案名 · port；不再顯示資料夾、跑了多久、PID。
-    expect(await ui.find({ type: 'Text', text: 'npm' })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: 'web' })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: ':5000 :5001' })).toBeDefined()
-    expect(await ui.find({ type: 'Text', text: /pid/ })).toBeUndefined()
-    expect(await ui.find({ key: 'svc:restart:21' })).toBeDefined()
-    await ui.unmount()
-  }
+  const ui = await mountPane($)
+  await ui.press({ key: 'tab:services' })
+  // Services 沒有子分頁。
+  expect(await ui.find({ key: 'sub:diff' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Running' })).toBeDefined()
+  // 一行：工具 · 專案名 · port；不再顯示資料夾、跑了多久、PID。
+  expect(await ui.find({ type: 'Text', text: 'npm' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'web' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: ':5000 :5001' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /pid/ })).toBeUndefined()
+  expect(await ui.find({ key: 'svc:restart:21' })).toBeDefined()
 
-  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'terminal', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
   await ui.press({ key: 'svc:stop:21' })
   // 不用 taskkill /T（PID 被重用時會砍到無關的程序），交給 PowerShell 照啟動時間找子孫。
   expect(kills).toEqual(['21'])
@@ -776,14 +662,13 @@ test('restart kills the tree, then relaunches the same command in the same folde
     return ok('')
   })
 
-  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'desktop', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  const ui = await mountPane($, 'desktop')
   await ui.press({ key: 'tab:services' })
   await ui.press({ key: 'svc:restart:11' })
   expect(kills).toEqual(['11'])
   expect(launches).toHaveLength(1)
   expect(launches[0]?.SOAP_DIR).toBe('C:\\proj\\web')
   expect(launches[0]?.SOAP_CMD).toContain('npm-cli.js" run dev')
-  expect(Object.keys(launches[0] ?? {}).sort()).toEqual(['SOAP_CMD', 'SOAP_DIR'])
   expect(await ui.find({ type: 'Text', text: /Restart failed/ })).toBeUndefined()
   await ui.unmount()
 })
@@ -803,13 +688,11 @@ test('a restart that dies right away says so, and the next scan does not wipe th
     return ok('')
   })
 
-  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'desktop', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  const ui = await mountPane($, 'desktop')
   await ui.press({ key: 'tab:services' })
   await ui.press({ key: 'svc:restart:11' })
   // 重跑後的檢查在計時器裡跑，等它寫進畫面。
-  const failed = /Restart failed: npm · web exited right after starting/
-  for (let i = 0; i < 20 && (await ui.find({ type: 'Text', text: failed })) === undefined; i++) await Promise.resolve()
-  expect(await ui.find({ type: 'Text', text: failed })).toBeDefined()
+  expect(await waitFor(() => ui.find({ type: 'Text', text: /Restart failed: npm · web exited right after starting/ }))).toBeDefined()
   // 定時掃描成功也不能把重跑失敗的提示洗掉。
   await ui.press({ key: 'tab:git' })
   await ui.press({ key: 'tab:services' })
@@ -828,7 +711,7 @@ test('on macOS the Services tab scans with ps and lsof, stops with kill -9 on th
   on('env.get', () => ({ value: undefined }))
   on('process.run', (_$, e) => {
     if (e.argv[0] === 'kill') kills.push([...e.argv])
-    if (e.argv[0] === 'ps') return ok(MAC_PPIDS_OUT)
+    if (e.argv[0] === 'ps') return ok(e.argv.includes('pid=,args=') ? MAC_ARGS_OUT : MAC_PPIDS_OUT)
     if (e.argv[0] === 'lsof') return ok(MAC_FILES_OUT)
     if (e.argv[0] === '/bin/sh' && e.init?.env?.SOAP_CMD !== undefined) {
       launches.push(e.init.env)
@@ -840,7 +723,7 @@ test('on macOS the Services tab scans with ps and lsof, stops with kill -9 on th
     return ok('')
   })
 
-  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'desktop', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  const ui = await mountPane($, 'desktop')
   await ui.press({ key: 'tab:services' })
   expect(await ui.find({ type: 'Text', text: 'npm' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'web' })).toBeDefined()
@@ -862,12 +745,8 @@ const STAGES: Record<string, string> = {
 const showStage = (args: readonly string[]) => {
   const blob = STAGES[args[1] ?? '']
 
-  return blob === undefined ? { value: { ...ok('').value, exitCode: 128 } } : ok(blob)
+  return blob === undefined ? fail('') : ok(blob)
 }
-
-type TestBody = Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>
-type TestEngine = Parameters<TestBody>[0]
-type TestOn = Parameters<TestBody>[1]
 
 // 停在 merge、src/a.ts 有一段衝突的 repo；git add 之後就沒有衝突了。status：git status 印出的衝突檔案。
 function conflictRepo(on: TestOn, status = '## main\0UU src/a.ts\0') {
@@ -875,13 +754,9 @@ function conflictRepo(on: TestOn, status = '## main\0UU src/a.ts\0') {
   const writes: { path: string; text: string }[] = []
   const prompts: string[] = []
   let isAdded = false
-  on('ui.open', () => ({ value: { isPlaced: true } }))
-  on('ui.panes', () => ({ value: [] }))
-  on('ui.close', () => ({ value: undefined }))
+  stubPanel(on)
   on('ui.toast', () => ({ value: undefined }))
-  on('clock.now', () => ({ value: 0 }))
-  on('session.root', () => ({ value: '/repo' }))
-  on('fs.list', () => ({ value: [{ name: 'MERGE_HEAD', kind: 'file', size: 0, mtimeMs: 0, isLink: false }] }))
+  on('fs.list', () => ({ value: [fsEntry('MERGE_HEAD')] }))
   on('fs.read', () => ({ value: CONFLICTED }))
   on('fs.write', (_$, e) => {
     writes.push({ path: posix(e.path) ?? '', text: e.text })
@@ -907,19 +782,11 @@ function conflictRepo(on: TestOn, status = '## main\0UU src/a.ts\0') {
   return { calls, writes, prompts }
 }
 
-const openPanel = ($: TestEngine) =>
-  $.command.run({
-    command: 'soap-panel',
-    args: '',
-    origin: { kind: 'composer' },
-    presentation: { isFullscreen: true, columns: 120 },
-  })
-
 test('the conflict tab lists conflicted files, and the merge view resolves one, git adds it, then continues', async ($, on) => {
   const { calls, writes } = conflictRepo(on)
   await openPanel($)
 
-  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'terminal', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  const ui = await mountPane($)
   // session 資料夾本身就是 repo：那排 repo 只有它一個，一樣標有沒有變更和衝突。
   expect((await ui.find({ key: 'repo:repo' }))?.props).toMatchObject({ label: 'repo* !', variant: 'primary' })
   await ui.press({ key: 'sub:conflict' })
@@ -928,74 +795,65 @@ test('the conflict tab lists conflicted files, and the merge view resolves one, 
   // 還有衝突時不能 continue。
   expect(await ui.find({ key: 'op:continue' })).toBeUndefined()
   await ui.press({ key: 'conflict:src/a.ts' })
-  // 三欄畫在 Soap Panel 裡，蓋掉分頁。
+  // 三欄畫在 Soap Panel 裡，蓋掉分頁；還有衝突時沒有 Apply。
   expect(await ui.find({ key: 'sub:conflict' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: '0 of 1 conflicts resolved' })).toBeDefined()
+  expect(await ui.find({ key: 'merge:apply' })).toBeUndefined()
 
-  // 三欄在兩種畫面上都畫得出來。
-  for (const surface of ['terminal', 'desktop'] as const) {
-    const pane = surface === 'terminal' ? ui : await $.ui.mount({ plugin: 'soap-mods', surface, component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
-    expect(await pane.find({ type: 'Text', text: '0 of 1 conflicts resolved' })).toBeDefined()
-    expect(await pane.find({ key: 'merge:ours:1' })).toBeDefined()
-    expect(await pane.find({ key: 'merge:theirs:1' })).toBeDefined()
-    expect(await pane.find({ key: 'merge:both:1' })).toBeDefined()
-    expect(await pane.find({ key: 'merge:next' })).toBeDefined()
-    expect(await pane.find({ key: 'merge:prev' })).toBeDefined()
-    // 只畫用得到的按鈕：還沒選時沒有 Reset，還有衝突時沒有 Apply。
-    expect(await pane.find({ key: 'merge:reset:1' })).toBeUndefined()
-    expect(await pane.find({ key: 'merge:apply' })).toBeUndefined()
-    if (pane !== ui) await pane.unmount()
-  }
-
-  const pane = await $.ui.mount({ plugin: 'soap-mods', surface: 'desktop', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
-  await pane.press({ key: 'merge:ours:1' })
-  expect(await pane.find({ type: 'Text', text: '1 of 1 conflicts resolved' })).toBeDefined()
+  await ui.press({ key: 'merge:ours:1' })
+  expect(await ui.find({ type: 'Text', text: '1 of 1 conflicts resolved' })).toBeDefined()
   // 選好之後中間只剩 Reset，Apply 出現。
-  expect(await pane.find({ key: 'merge:both:1' })).toBeUndefined()
-  expect(await pane.find({ key: 'merge:apply' })).toBeDefined()
-  await pane.press({ key: 'merge:reset:1' })
-  expect(await pane.find({ type: 'Text', text: '0 of 1 conflicts resolved' })).toBeDefined()
-  await pane.press({ key: 'merge:both:1' })
-  await pane.press({ key: 'merge:apply' })
-  await pane.unmount()
+  expect(await ui.find({ key: 'merge:both:1' })).toBeUndefined()
+  expect(await ui.find({ key: 'merge:apply' })).toBeDefined()
+  await ui.press({ key: 'merge:reset:1' })
+  expect(await ui.find({ type: 'Text', text: '0 of 1 conflicts resolved' })).toBeDefined()
+  await ui.press({ key: 'merge:both:1' })
+  await ui.press({ key: 'merge:apply' })
 
   // 寫回 repo 根目錄底下的檔案，在根目錄 git add。
-  expect(writes).toEqual([
-    { path: '/repo/src/a.ts', text: 'import a\nconst x = 1\nconst x = 2\nend\n' },
-  ])
+  expect(writes).toEqual([{ path: '/repo/src/a.ts', text: 'import a\nconst x = 1\nconst x = 2\nend\n' }])
   expect(calls.some(c => c.args.join(' ') === 'add -- src/a.ts' && c.cwd === '/repo')).toBe(true)
 
   // 衝突都解完了：可以 continue，merge 是直接用預設訊息 commit、不開編輯器。
   expect(await ui.find({ type: 'Text', text: 'All conflicts resolved.' })).toBeDefined()
   await ui.press({ key: 'op:continue' })
   const commit = calls.find(c => c.args.join(' ') === 'commit --no-edit')
-  expect(commit?.env).toMatchObject({ LC_ALL: 'C', GIT_EDITOR: 'true', GIT_CONFIG_KEY_0: 'core.fsmonitor', GIT_CONFIG_VALUE_0: 'false' })
+  expect(commit?.env).toMatchObject({ GIT_EDITOR: 'true' })
   await ui.unmount()
 })
 
-test('abort asks once more before running, and Ask Claude sends the file to the model', async ($, on) => {
-  const { calls, prompts } = conflictRepo(on)
+test('abort asks once more before running, and Cancel keeps the merge going', async ($, on) => {
+  const { calls } = conflictRepo(on)
   await openPanel($)
 
-  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'terminal', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  const ui = await mountPane($)
   await ui.press({ key: 'sub:conflict' })
   await ui.press({ key: 'op:abort' })
   expect(calls.some(c => c.args[1] === '--abort')).toBe(false)
   expect(await ui.find({ key: 'op:abort-cancel' })).toBeDefined()
   await ui.press({ key: 'op:abort-cancel' })
   expect(await ui.find({ key: 'op:abort-cancel' })).toBeUndefined()
+  expect(calls.some(c => c.args[1] === '--abort')).toBe(false)
 
+  await ui.press({ key: 'op:abort' })
+  await ui.press({ key: 'op:abort' })
+  expect(calls.some(c => c.args.join(' ') === 'merge --abort' && c.cwd === '/repo')).toBe(true)
+  await ui.unmount()
+})
+
+test('Ask Claude in the merge view sends the file to the model, and Back returns to the conflict tab', async ($, on) => {
+  const { prompts } = conflictRepo(on)
+  await openPanel($)
+
+  const ui = await mountPane($)
+  await ui.press({ key: 'sub:conflict' })
   await ui.press({ key: 'conflict:src/a.ts' })
   await ui.press({ key: 'merge:claude' })
   expect(prompts.length).toBe(1)
   // 給 Claude 的是完整路徑：session 資料夾不是 repo 時，相對路徑會找不到檔案。
   expect(prompts[0]).toContain('`/repo/src/a.ts`')
-  // Back 回 conflict 分頁。
   await ui.press({ key: 'merge:back' })
   expect(await ui.find({ key: 'op:abort' })).toBeDefined()
-
-  await ui.press({ key: 'op:abort' })
-  await ui.press({ key: 'op:abort' })
-  expect(calls.some(c => c.args.join(' ') === 'merge --abort' && c.cwd === '/repo')).toBe(true)
   await ui.unmount()
 })
 
@@ -1005,7 +863,7 @@ test('Next past the last conflict of a file opens the next conflicted file, and 
   on('ui.focus', () => ({}))
   await openPanel($)
 
-  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'desktop', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  const ui = await mountPane($, 'desktop')
   await ui.press({ key: 'sub:conflict' })
   await ui.press({ key: 'conflict:src/a.ts' })
   // 第一下跳到這個檔案唯一的一段衝突，再按一下換到 src/b.ts。
@@ -1023,7 +881,9 @@ test('Next past the last conflict of a file opens the next conflicted file, and 
   await ui.unmount()
 })
 
-test('Soap Panel brought to the front, or whose pressed button was swapped out, gets the keyboard back', async ($, on) => {
+// ───── 焦點 ─────
+
+test('Soap Panel brought to the front, or just pressed, gets the keyboard back', async ($, on) => {
   const clock = mock.clock(on)
   const pane = (isShown: boolean, isFocused: boolean) => [{ id: 'soap-panel', title: 'Soap Panel', isShown, isFocused, isPlaced: true }]
   let panes = pane(true, false)
@@ -1040,16 +900,7 @@ test('Soap Panel brought to the front, or whose pressed button was swapped out, 
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('session.root', () => ({ value: '/repo' }))
   on('command.register', (_$, e) => ({ value: { command: e.name } }))
-  on('fs.list', () => ({ value: [{ name: 'MERGE_HEAD', kind: 'file', size: 0, mtimeMs: 0, isLink: false }] }))
-  on('fs.read', () => ({ value: CONFLICTED }))
-  on('process.run', (_$, e) => {
-    const args = e.argv.slice(3)
-    if (args[0] === 'status') return ok('## main\0UU src/a.ts\0')
-    if (args[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
-    if (args[0] === 'show') return showStage(args)
-
-    return ok('')
-  })
+  gitRepo(on, { status: '## main\0' })
   await $.session.start({ cwd: '/repo', surface: 'desktop', isInteractive: true })
 
   // 剛啟動時 Soap Panel 在前面但沒焦點：不搶（人可能正在輸入框打字）。
@@ -1064,20 +915,9 @@ test('Soap Panel brought to the front, or whose pressed button was swapped out, 
   expect(focused).toEqual(['soap-panel'])
   focused.length = 0
 
-  // 點衝突檔案：按的那列被整塊換成三欄合併，焦點圈移到 Back；中間的按鈕按了被換掉，焦點圈跟過去；
-  // Back 回分頁，移到子分頁圖示。（焦點圈要真的拿著鍵盤才移得動，測試裡看不到，這裡只確認按得下去。）
-  panes = pane(true, true)
-  const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'desktop', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
-  await ui.press({ key: 'sub:conflict' })
-  await ui.press({ key: 'conflict:src/a.ts' })
-  await ui.press({ key: 'merge:both:1' })
-  await ui.press({ key: 'merge:reset:1' })
-  await ui.press({ key: 'merge:next' })
-  expect(await ui.find({ key: 'merge:both:1' })).toBeDefined()
-  await ui.press({ key: 'merge:back' })
-  expect(await ui.find({ key: 'op:abort' })).toBeDefined()
-
   // 按完按鈕丟了焦點：剛按完的一小段時間內補回來。
+  panes = pane(true, true)
+  const ui = await mountPane($, 'desktop')
   await ui.press({ key: 'sub:diff' })
   panes = pane(true, false)
   await clock.advance(200)

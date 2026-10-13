@@ -15,7 +15,7 @@ export function diffView(ui: Ui, shown: DiffPaneView, a: Actions, press: Press) 
 
   return (
     <Box flexDirection="column" gap={1}>
-      {stepBar(ui, press, 'diff', index, shown.files.length, () => a.closeDiff(), step => a.stepDiffFile(step))}
+      {stepBar(ui, press, 'diff', index, shown.files.length, () => a.closeCover(), step => a.stepDiffFile(step))}
       <Box gap={1} flexWrap="wrap">
         <Text bold color={kind.theme}>
           {kind.label}

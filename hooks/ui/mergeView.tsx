@@ -6,17 +6,18 @@
 
 import type { RenderChildren } from 'claude-code'
 
-import type { MergeChoice, MergeView } from '../../types'
+import type { MergeChoice, MergeOp, MergeView } from '../../types'
 import { KIND_STYLE, MERGE_COLUMN_WIDTH, MERGE_CONTEXT } from '../config'
 import { choose, chooseAll, chunkResult, takesSide, toggleApplied } from '../merge/algo'
 import type { Actions, Press, Ui } from './actions'
+import { backButton } from './stepBar'
 
-// isBusy：正在套用或用某一邊解掉。m.op 是進行中的操作（rebase 時提醒 ours／theirs 是反的）。
-export function mergeView(ui: Ui, m: MergeView, isBusy: boolean, a: Actions, press: Press) {
+// isBusy：正在套用或用某一邊解掉。op 是進行中的操作（rebase 時提醒 ours／theirs 是反的）。
+export function mergeView(ui: Ui, m: MergeView, op: MergeOp, isBusy: boolean, a: Actions, press: Press) {
   const { Box, Button, Code, Text } = ui
 
   // 套用中不能離開：做到一半放掉，結果會不見。
-  const back = isBusy ? null : <Button key="merge:back" label="← Back" hotkey="b" onPress={press(() => a.closeMerge())} />
+  const back = isBusy ? null : backButton(ui, press, 'merge', () => a.closeCover())
   const title = (
     <Box gap={1} flexWrap="wrap" alignItems="center">
       {back}
@@ -29,7 +30,7 @@ export function mergeView(ui: Ui, m: MergeView, isBusy: boolean, a: Actions, pre
   const error = m.error !== '' ? <Text color="error">{m.error}</Text> : null
   // rebase 時 ours／theirs 跟直覺相反，提醒一下。
   const rebaseHint =
-    m.op === 'rebase' ? (
+    op === 'rebase' ? (
       <Text dimColor>Rebasing: ours is the branch you are rebasing onto, theirs is your commit being replayed.</Text>
     ) : null
 
