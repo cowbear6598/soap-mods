@@ -6,7 +6,7 @@ import type { FilesView, FolderEntry } from '../../types'
 import { cutAtLineEnd } from '../text'
 
 // node_modules 這種上千個的也要排；共用一個 Collator 比每次 localeCompare 快很多。不分大小寫，file2 排在 file10 前面。
-const byName = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true }).compare
+export const byName = new Intl.Collator(undefined, { sensitivity: 'base', numeric: true }).compare
 
 /** Folders first, then the rest, each by name. */
 export function sortEntries(list: readonly FsEntry[]): FolderEntry[] {

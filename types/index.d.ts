@@ -312,6 +312,8 @@ export type SpecView = {
   plan: Plan
   /** What is wrong with the opened plan.yaml (format, missing keys, reading it); empty when it is fine. */
   problems: string[]
+  /** The opened plan.yaml's modified time and size when read (`mtimeMs:size`), '' when it could not be read; unchanged, a reread skips it. */
+  stamp: string
 }
 
 declare module 'claude-code' {

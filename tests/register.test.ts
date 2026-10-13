@@ -95,7 +95,6 @@ test('the usage bar shows — until there is a reading, then colors what is left
   await ui.unmount()
 })
 
-// 這套 kit 沒有 test.skip：先不登記，修好後換回 test。
 test('on the terminal the usage bar is a row of █░ in the color of what is left', async ($, on) => {
   const state = usage(on)
   state.used = [40, 85]

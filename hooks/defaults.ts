@@ -27,7 +27,7 @@ export const EMPTY_FILE_VIEW: FileView = { path: '', text: '', isTruncated: fals
 
 export const EMPTY_PLAN: Plan = { branch: '', issueNumber: '', description: '', goals: [], constraints: [], related: [], verify: [] }
 
-export const EMPTY_SPEC: SpecView = { isLoaded: false, specs: [], error: '', open: '', plan: EMPTY_PLAN, problems: [] }
+export const EMPTY_SPEC: SpecView = { isLoaded: false, specs: [], error: '', open: '', plan: EMPTY_PLAN, problems: [], stamp: '' }
 
 export const EMPTY_MERGE: MergeView = {
   path: '',

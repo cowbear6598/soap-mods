@@ -15,24 +15,31 @@ verify:
   - npm test -- login.spec.ts
 `
 
-// .soap/tasks 底下的檔案：路徑（相對 /proj/.soap/tasks）→ 內容和修改時間。folders 是 feature 資料夾。
-function tasks(on: TestOn, state: { folders: string[]; plans: Record<string, { text: string; mtimeMs: number }> }) {
+// .soap/tasks 底下的計劃：路徑（相對 /proj/.soap/tasks）→ 內容和修改時間。
+type Plans = Record<string, { text: string; mtimeMs: number }>
+
+// folders 是 feature 資料夾；一個都沒有就當 .soap/tasks 不存在（列不出來）。
+function tasks(on: TestOn, state: { folders: string[]; plans: Plans }) {
+  const planAt = (path: string | undefined) => {
+    const plan = state.plans[posix(path)?.slice(TASKS.length + 1) ?? '']
+    if (plan === undefined) throw new Error('ENOENT')
+
+    return plan
+  }
   stubPanel(on, { root: '/proj' })
   on('process.run', () => ok(''))
   on('fs.exists', (_$, e) => ({ value: posix(e.path) === TASKS && state.folders.length > 0 }))
-  on('fs.list', (_$, e) => ({ value: posix(e.path) === TASKS ? state.folders.map(n => fsEntry(n, 'dir')) : [] }))
+  on('fs.list', (_$, e) => {
+    if (posix(e.path) === TASKS && state.folders.length === 0) throw new Error('ENOENT')
+
+    return { value: posix(e.path) === TASKS ? state.folders.map(n => fsEntry(n, 'dir')) : [] }
+  })
   on('fs.stat', (_$, e) => {
-    const plan = state.plans[posix(e.path)?.slice(TASKS.length + 1) ?? '']
-    if (plan === undefined) throw new Error('ENOENT')
+    const plan = planAt(e.path)
 
     return { value: { kind: 'file', size: plan.text.length, mtimeMs: plan.mtimeMs, isLink: false } }
   })
-  on('fs.read', (_$, e) => {
-    const plan = state.plans[posix(e.path)?.slice(TASKS.length + 1) ?? '']
-    if (plan === undefined) throw new Error('ENOENT')
-
-    return { value: plan.text }
-  })
+  on('fs.read', (_$, e) => ({ value: planAt(e.path).text }))
 }
 
 test('the Spec tab lists the plans newest first, opens one to its Description, Goals and Verify, and b goes back', async ($, on) => {
@@ -41,7 +48,7 @@ test('the Spec tab lists the plans newest first, opens one to its Description, G
     plans: {
       'login/plan.yaml': { text: LOGIN, mtimeMs: 1 },
       'search/plan.yaml': { text: 'description: x\ngoal:\n  - y\n', mtimeMs: 5 },
-    } as Record<string, { text: string; mtimeMs: number }>,
+    } as Plans,
   }
   tasks(on, state)
   const prompts: { text: string; asUser?: boolean }[] = []
@@ -102,7 +109,7 @@ test('the Spec tab lists the plans newest first, opens one to its Description, G
 })
 
 test('with no .soap/tasks the Spec tab says to run /soap-mods:plan, and at turn end it picks up a new plan and rereads the open one', async ($, on) => {
-  const state = { folders: [] as string[], plans: {} as Record<string, { text: string; mtimeMs: number }> }
+  const state = { folders: [] as string[], plans: {} as Plans }
   tasks(on, state)
 
   const ui = await mountPane($)

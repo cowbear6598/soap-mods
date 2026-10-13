@@ -1,6 +1,5 @@
-import type { RenderChildren } from 'claude-code'
-
-import { PLAN_FILE, SPEC_DIR } from '../../config'
+import { PLAN_FILE } from '../../config'
+import { planPath } from '../../spec/parse'
 import { backButton } from '../stepBar'
 import type { Widgets } from '../widgets'
 import type { TabBody, TabContext } from './context'
@@ -33,15 +32,15 @@ function specList({ w, d, a }: TabContext) {
   )
 }
 
-// 一段：Markdown 標題（比面板的字大），底下的內容包在圓角框裡；沒內容寫 None。
-function section(w: Widgets, title: string, body: RenderChildren, isEmpty: boolean) {
+// 一段：Markdown 標題（比面板的字大），底下的內容（一樣是 Markdown）包在圓角框裡；沒內容寫 None。
+function section(w: Widgets, title: string, markdown: string) {
   const { Box, Markdown, Text } = w
 
   return (
     <Box key={`spec:section:${title}`} flexDirection="column">
       <Markdown text={`### ${title}`} />
       <Box flexDirection="column" borderStyle="round" borderDimColor paddingX={1}>
-        {isEmpty ? <Text dimColor>None</Text> : body}
+        {markdown === '' ? <Text dimColor>None</Text> : <Markdown text={markdown} />}
       </Box>
     </Box>
   )
@@ -56,7 +55,7 @@ function bulletList(items: readonly string[], isCode = false) {
 }
 
 function planView({ w, d, a }: TabContext) {
-  const { Box, Button, Markdown, Text } = w
+  const { Box, Button, Text } = w
   const s = d.spec
   const p = s.plan
   const meta = [p.issueNumber, p.branch].filter(m => m !== '').join(' · ')
@@ -70,18 +69,18 @@ function planView({ w, d, a }: TabContext) {
       {meta !== '' && <Text dimColor>{meta}</Text>}
       {s.problems.length > 0 && (
         <Box flexDirection="column" borderStyle="round" borderColor="error" paddingX={1}>
-          <Text color="error" bold>{`${SPEC_DIR}/${s.open}/${PLAN_FILE} has problems:`}</Text>
+          <Text color="error" bold>{`${planPath(s.open)} has problems:`}</Text>
           {s.problems.map((problem, i) => (
             <Text key={`spec:problem:${i}`} color="error">{`! ${problem}`}</Text>
           ))}
         </Box>
       )}
-      {section(w, 'Description', <Markdown text={p.description} />, p.description === '')}
-      {section(w, 'Goals', <Markdown text={bulletList(p.goals)} />, p.goals.length === 0)}
-      {section(w, 'Related', <Markdown text={bulletList(p.related, true)} />, p.related.length === 0)}
-      {section(w, 'Verify', <Markdown text={bulletList(p.verify, true)} />, p.verify.length === 0)}
+      {section(w, 'Description', p.description)}
+      {section(w, 'Goals', bulletList(p.goals))}
+      {section(w, 'Related', bulletList(p.related, true))}
+      {section(w, 'Verify', bulletList(p.verify, true))}
       <Box justifyContent="center">
-        <Button key="spec:do" label="Do" hotkey="d" variant="primary" onPress={w.press(() => a.doSpec())} />
+        <Button key="spec:do" label="Do" hotkey="d" onPress={w.press(() => a.doSpec())} />
       </Box>
     </Box>
   )

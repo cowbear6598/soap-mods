@@ -3,7 +3,8 @@
 // > 和 | 區塊、- 清單、[] 和 [a, b]。其他寫法（巢狀物件、錨點）一律算格式錯誤。
 
 import type { Plan, SpecEntry } from '../../types'
-import { EMPTY_PLAN } from '../defaults'
+import { PLAN_FILE, SPEC_DIR } from '../config'
+import { byName } from '../files/list'
 
 type Value = string | string[]
 
@@ -18,7 +19,7 @@ const ITEM_LINE = /^([ \t]*)-(?:[ \t]+(.*))?$/
 const indentOf = (line: string) => line.length - line.trimStart().length
 
 /** A scalar as written: quotes removed (with `''` / `\"` escapes), a plain one without its ` # comment`. */
-export function unquote(raw: string): string {
+function unquote(raw: string): string {
   const s = raw.trim()
   if (s.startsWith('"') && s.endsWith('"') && s.length >= 2) {
     try {
@@ -57,7 +58,7 @@ function flowList(raw: string): string[] {
 function blockScalar(style: string, lines: string[]): string {
   const indent = Math.min(...lines.filter(l => l.trim() !== '').map(indentOf))
   const body = lines.map(l => l.slice(Number.isFinite(indent) ? indent : 0))
-  while ((body.at(-1) ?? 'x').trim() === '') body.pop()
+  while (body.length > 0 && body[body.length - 1]?.trim() === '') body.pop()
   const text = style.startsWith('|')
     ? body.join('\n')
     : body.reduce((out, l) => (l === '' ? `${out}\n` : out === '' || out.endsWith('\n') ? out + l : `${out} ${l}`), '')
@@ -165,7 +166,6 @@ export function readPlan(text: string): { plan: Plan; problems: string[] } {
 
   return {
     plan: {
-      ...EMPTY_PLAN,
       branch: asText(values.get('branch')),
       issueNumber: asText(values.get('issue-number')),
       description: asText(description),
@@ -178,10 +178,25 @@ export function readPlan(text: string): { plan: Plan; problems: string[] } {
   }
 }
 
+/** The plan of feature `name`, relative to the session folder: `.soap/tasks/<name>/plan.yaml`. */
+export const planPath = (name: string) => `${SPEC_DIR}/${name}/${PLAN_FILE}`
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const PLAN_PATH = new RegExp(`(^|/)${escapeRegExp(SPEC_DIR)}/[^/]+/${escapeRegExp(PLAN_FILE)}$`)
+
 /** Whether `path` (any separator) is a plan the plan skill writes: `…/.soap/tasks/<feature>/plan.yaml`. */
-export const isPlanPath = (path: string) => /(^|\/)\.soap\/tasks\/[^/]+\/plan\.yaml$/.test(path.replace(/\\/g, '/'))
+export const isPlanPath = (path: string) => PLAN_PATH.test(path.replace(/\\/g, '/'))
+
+/** What Claude reads after writing a plan.yaml with `problems`: what to fix, and the keys a plan has. */
+export function planFixNote(path: string, problems: readonly string[]): string {
+  return [
+    `${path} is not a valid soap-mods plan.yaml. Fix it:`,
+    ...problems.map(p => `- ${p}`),
+    `Required keys: description (non-empty string), ${LIST_KEYS.join(', ')} (lists; [] when empty). Optional: ${OPTIONAL.join(', ')} (strings).`,
+  ].join('\n')
+}
 
 /** Newest plan first; folders without a plan.yaml last, by name. */
 export function sortSpecs(specs: readonly SpecEntry[]): SpecEntry[] {
-  return [...specs].sort((a, b) => Number(b.hasPlan) - Number(a.hasPlan) || b.mtimeMs - a.mtimeMs || a.name.localeCompare(b.name))
+  return [...specs].sort((a, b) => Number(b.hasPlan) - Number(a.hasPlan) || b.mtimeMs - a.mtimeMs || byName(a.name, b.name))
 }

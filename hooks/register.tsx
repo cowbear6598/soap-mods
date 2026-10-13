@@ -53,7 +53,6 @@ import {
   LOG_PAGE,
   OP_LABEL,
   PANEL_TITLE,
-  PLAN_FILE,
   REFOCUS_AFTER_PRESS_MS,
   RESTART_CHECK_MS,
   RESTART_GAP_MS,
@@ -104,7 +103,7 @@ import {
   withFiles,
 } from './services/mac'
 import { KILL_ARGV, LAUNCH_ARGV, SCAN_ARGV, findServices } from './services/scan'
-import { isPlanPath, readPlan, sortSpecs } from './spec/parse'
+import { isPlanPath, planFixNote, planPath, readPlan, sortSpecs } from './spec/parse'
 import type { Actions } from './ui/actions'
 import { buttonKeys, ringAnchor, tabIconKey } from './ui/keys'
 import { renderPanel } from './ui/panel'
@@ -406,9 +405,11 @@ function refresh($: EngineInterface): Promise<void> {
 // 換到 Git、Services 分頁（照那排 repo 分組），或 Soap Panel 被切到前面時再讀。
 let isGitStale = false
 
+// 畫得到 git 狀態的分頁：Git，和照 repo 分組的 Services。新分頁預設不讀 git。
+const showsGit = (t: TabId) => t === 'git' || t === 'services'
+
 async function refreshWhenShown($: EngineInterface) {
-  const t = await read($, tab)
-  if (t !== 'files' && t !== 'spec' && (await isPaneShown($))) await refresh($)
+  if (showsGit(await read($, tab)) && (await isPaneShown($))) await refresh($)
   else isGitStale = true
 }
 
@@ -1240,16 +1241,16 @@ const specLoads = latestOnly()
 const planReads = latestOnly()
 
 // 列出 .soap/tasks 底下的 feature 資料夾，每個看它的 plan.yaml 改過的時間（最新的排上面）。
-// 還沒有 .soap/tasks 是還沒寫過計劃，不是錯誤。
+// 還沒有 .soap/tasks 是還沒寫過計劃，不是錯誤：列不出來時才看它在不在。
 async function loadSpecs($: EngineInterface) {
   const isStale = specLoads.start()
-  const dir = `${await $.session.root()}/${SPEC_DIR}`
+  const root = await $.session.root()
+  const dir = `${root}/${SPEC_DIR}`
   const listed = await (async () => {
-    if (!(await $.fs.exists(dir))) return { specs: [], error: '' }
     const folders = (await $.fs.list(dir)).filter(e => e.kind === 'dir')
     const specs = await Promise.all(
       folders.map(async (f): Promise<SpecEntry> => {
-        const stat = await $.fs.stat(`${dir}/${f.name}/${PLAN_FILE}`).catch(() => undefined)
+        const stat = await $.fs.stat(`${root}/${planPath(f.name)}`).catch(() => undefined)
         const hasPlan = stat?.kind === 'file'
 
         return { name: f.name, mtimeMs: hasPlan ? stat.mtimeMs : 0, hasPlan }
@@ -1257,28 +1258,42 @@ async function loadSpecs($: EngineInterface) {
     )
 
     return { specs: sortSpecs(specs), error: '' }
-  })().catch((err: unknown) => ({ specs: [], error: `Couldn't list ./${SPEC_DIR}: ${errorText(err)}` }))
+  })().catch(async (err: unknown) => ({
+    specs: [],
+    error: (await $.fs.exists(dir).catch(() => true)) ? `Couldn't list ./${SPEC_DIR}: ${errorText(err)}` : '',
+  }))
   if (isStale()) return
   await setSpec($, { isLoaded: true, ...listed })
 }
 
-// 讀一份 plan.yaml 畫出來；格式哪裡不對一起列出來。
+// 讀一份 plan.yaml 畫出來；格式哪裡不對一起列出來。畫面上已經是它、修改時間和大小都沒變就不讀（回合結束重讀時常常沒變）。
 async function openSpec($: EngineInterface, name: string) {
   const isStale = planReads.start()
-  const path = `${SPEC_DIR}/${name}/${PLAN_FILE}`
-  const shown = await $.fs
-    .read(`${await $.session.root()}/${path}`)
-    .then(readPlan, (err: unknown) => ({ plan: EMPTY_PLAN, problems: [`Couldn't read ${path}: ${errorText(err)}`] }))
-  if (isStale()) return
   const prev = await read($, spec)
+  const path = planPath(name)
+  const shown = await (async () => {
+    const full = `${await $.session.root()}/${path}`
+    const stat = await $.fs.stat(full)
+    const stamp = `${stat.mtimeMs}:${stat.size}`
+    if (prev.open === name && prev.stamp === stamp) return null
+
+    return { ...readPlan(await $.fs.read(full)), stamp }
+  })().catch((err: unknown) => ({ plan: EMPTY_PLAN, problems: [`Couldn't read ${path}: ${errorText(err)}`], stamp: '' }))
+  if (isStale() || shown === null) return
   await setSpec($, { open: name, ...shown })
   if (prev.open !== name) await scrollTop($)
 }
 
 async function closeSpec($: EngineInterface) {
   planReads.drop()
-  await setSpec($, { open: '', plan: EMPTY_PLAN, problems: [] })
+  await setSpec($, { open: '', plan: EMPTY_PLAN, problems: [], stamp: '' })
   await loadSpecs($)
+}
+
+// Spec 分頁看得到的那個：清單，或打開的計劃（清單這時畫不到，不用重列）。
+async function reloadSpec($: EngineInterface) {
+  const s = await read($, spec)
+  await (s.open === '' ? loadSpecs($) : openSpec($, s.open))
 }
 
 // Do：叫 Claude 照打開的那份 plan.yaml 做（像使用者自己打的一樣送出）。
@@ -1286,7 +1301,7 @@ async function closeSpec($: EngineInterface) {
 async function doSpec($: EngineInterface) {
   const s = await read($, spec)
   if (s.open === '') return
-  const path = `${SPEC_DIR}/${s.open}/${PLAN_FILE}`
+  const path = planPath(s.open)
   if (s.problems.length > 0) return void $.ui.toast(`Fix ${path} first: ${s.problems[0]}`)
   if (!isPromptSafePath(path)) return void $.ui.toast('Do is off for this plan: its folder name has a backtick or a control character.')
   await $.prompt.submit({
@@ -1296,11 +1311,9 @@ async function doSpec($: EngineInterface) {
   $.ui.toast('Sent to Claude')
 }
 
-// 回合結束：Claude 可能寫了新的計劃、改了打開的那份。Spec 分頁開著就重列，開著計劃就重讀。
+// 回合結束：Claude 可能寫了新的計劃、改了打開的那份。Spec 分頁開著就重讀看得到的那個。
 async function reloadSpecsWhenShown($: EngineInterface) {
-  const [t, s] = await Promise.all([read($, tab), read($, spec)])
-  if (t !== 'spec') return
-  await Promise.all([loadSpecs($), s.open === '' ? undefined : openSpec($, s.open)])
+  if ((await read($, tab)) === 'spec') await reloadSpec($)
 }
 
 // Claude 用 Write／Edit 寫了 .soap/tasks/<feature>/plan.yaml：寫完讀回整份檢查格式，
@@ -1311,11 +1324,7 @@ async function checkPlanWrite($: EngineInterface, path: string) {
   if (problems.length === 0) return undefined
   void $.ui.toast(`plan.yaml has ${problems.length} problem${problems.length === 1 ? '' : 's'}: ${problems[0]}`)
 
-  return [
-    `${path} is not a valid soap-mods plan.yaml. Fix it:`,
-    ...problems.map(p => `- ${p}`),
-    'Required keys: description (non-empty string), goals, constraints, related, verify (lists; [] when empty). Optional: branch, issue-number (strings).',
-  ].join('\n')
+  return planFixNote(path, problems)
 }
 
 // Write／Edit 的結果 ran：寫的是 plan.yaml、寫成功了才檢查。讀不回來就不管，工具結果照原樣給 Claude。
@@ -1356,8 +1365,8 @@ async function selectTab($: EngineInterface, id: TabId) {
   // 掃描要一秒左右，不等它：先切過去畫「掃描中」或舊清單。
   if (id === 'services') void refreshServices($).catch(() => undefined)
   if (id === 'files') void reloadFiles($).catch(() => undefined)
-  else if (id === 'spec') void loadSpecs($).catch(() => undefined)
-  else refreshIfStale($)
+  if (id === 'spec') void reloadSpec($).catch(() => undefined)
+  if (showsGit(id)) refreshIfStale($)
 }
 
 // 換子分頁。log 不在看的時候不讀，換過來才讀。

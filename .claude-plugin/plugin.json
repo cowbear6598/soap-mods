@@ -1,6 +1,6 @@
 {
   "name": "soap-mods",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "description": "Soap Panel：Git（diff、branch、log、解衝突）和 Services（停掉／重跑本機服務）的面板，底部顯示用量",
   "types": "./types/index.d.ts"
 }
