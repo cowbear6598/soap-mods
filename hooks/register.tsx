@@ -1529,9 +1529,9 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // /soap-panel 是 skills/soap-panel 這個檔案寫的指令（desktop app 還沒開始對話就列得出來），
-  // 這裡接下來直接開面板，不交給 Claude。引擎可能用外掛名稱當前綴，兩個名字都接。
-  for (const command of ['soap-panel', 'soap-mods:soap-panel']) {
+  // /soap-mods:open 是 skills/open 這個檔案寫的指令（desktop app 還沒開始對話就列得出來），
+  // 這裡接下來直接開面板，不交給 Claude。引擎可能不帶外掛名稱前綴，兩個名字都接。
+  for (const command of ['soap-mods:open', 'open']) {
     on('command.run', { command }, async $ => {
       await refresh($)
       await $.ui.open(PANE_ARGS)

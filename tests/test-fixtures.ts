@@ -23,9 +23,9 @@ const PANE_PROPS = {
 export const mountPane = ($: TestEngine, surface: 'terminal' | 'desktop' = 'terminal') =>
   $.ui.mount({ plugin: 'soap-mods', surface, component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
 
-// 使用者打 /soap-panel 打開面板。
+// 使用者打 /soap-mods:open 打開面板。
 export const openPanel = ($: TestEngine) =>
-  $.command.run({ command: 'soap-panel', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 120 } })
+  $.command.run({ command: 'soap-mods:open', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 120 } })
 
 // 面板開起來要的引擎回應：開／列／關 pane（打開了就在前面）、session 資料夾、時間、回合結束。now 給 null：測試自己用 mock.clock
 // （clock.now 先登記的算數，兩個都登記的話 mock.clock 推不動時間）。
