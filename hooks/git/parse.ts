@@ -103,7 +103,7 @@ export function filterBranches(branches: GitBranch[], query: string): GitBranch[
   return filterWords(branches, query, b => b.name)
 }
 
-/** What happened to a file as a whole: the diff pane header. */
+/** What happened to a file as a whole: the diff view header. */
 export function fileKind(file: GitFile): FileKind {
   if (isConflict(file)) return 'conflict'
 
@@ -161,6 +161,20 @@ export function groupFiles(files: GitFile[]): Record<FileGroupId, FileEntry[]> {
   return groups
 }
 
+/**
+ * What the diff view's Previous / Next step through for a work tree file: the
+ * diff tab's rows in order, a file listed in two groups once, and no conflicts
+ * (they open in the merge view).
+ */
+export function diffSteps(files: GitFile[]): CommitFile[] {
+  const seen = new Set<string>()
+
+  return Object.values(groupFiles(files))
+    .flat()
+    .filter(e => e.kind !== 'conflict' && !seen.has(e.file.path) && seen.add(e.file.path))
+    .map(e => ({ path: e.file.path, oldPath: '', letter: e.letter }))
+}
+
 /** `dir/sub/name.ts` → `{ name: 'name.ts', dir: 'dir/sub' }`. */
 export function splitPath(path: string): { name: string; dir: string } {
   const slash = path.lastIndexOf('/')
@@ -213,7 +227,7 @@ export function commitRange(commits: GitCommit[]): string[] {
   return newest === oldest ? ['--root', newest.sha] : [EMPTY_TREE, newest.sha]
 }
 
-/** The diff pane's `@` for commits (newest first): the short sha, or `oldest…newest` for several. */
+/** The diff view's `@` for commits (newest first): the short sha, or `oldest…newest` for several. */
 export function commitsLabel(commits: GitCommit[]): string {
   const newest = commits[0]?.shortSha ?? ''
   const oldest = commits.at(-1)?.shortSha ?? ''

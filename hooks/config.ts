@@ -5,11 +5,9 @@ import type { FileGroupId } from './git/parse'
 
 // 面板的 id 在 register.tsx：引擎要在那裡直接看到它們的值。
 export const PANEL_TITLE = 'Soap Panel'
-// 解衝突的三欄面板（左 Ours、中 Result、右 Theirs）。columns 是跟引擎要的寬度，人拖過的寬度優先。
-export const MERGE_COLUMNS = 180
 // 兩邊都一樣的段落，衝突的前後各留幾行，其餘收成「⋯ N unchanged lines」。
 export const MERGE_CONTEXT = 3
-// 合併面板每一欄的寬度；三欄加起來不到 100%，剩下的當欄距。
+// 合併畫面每一欄的寬度；三欄加起來不到 100%，剩下的當欄距。
 export const MERGE_COLUMN_WIDTH = '32%'
 
 // 進行中的操作在 conflict 分頁上的名稱。
@@ -20,7 +18,7 @@ export const OP_LABEL: Record<Exclude<MergeOp, ''>, string> = {
   revert: 'Revert',
 }
 
-// 檔案狀態的名稱和顏色：檔案列的狀態字母、差異面板的標題都用這張表。
+// 檔案狀態的名稱和顏色：檔案列的狀態字母、差異的標題都用這張表。
 export const KIND_STYLE: Record<FileKind, { label: string; theme: string }> = {
   added: { label: 'Added', theme: 'success' },
   modified: { label: 'Modified', theme: 'warning' },

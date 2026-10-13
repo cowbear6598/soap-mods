@@ -88,7 +88,7 @@ export type DiffPaneView = {
   error: string
   /** For a commit file: the commits it was opened from (newest first; the title's `@ sha`), [] for a work tree file. */
   commits: GitCommit[]
-  /** For a commit file: all the files of those commits, which Previous / Next step through; [] for a work tree file. */
+  /** What Previous / Next step through: all the files of those commits, or for a work tree file the diff tab's files (diffSteps). */
   files: CommitFile[]
 }
 

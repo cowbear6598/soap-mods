@@ -10,12 +10,12 @@ CptSoap 的 Claude Code Panel mod。
 
 下面有四個子分頁：
 
-- **diff**：列出目前資料夾的未提交變更（含未追蹤檔案），每一組照狀態排（衝突 → 新增 → 修改 → 改名 → 刪除），點檔案就在下面看它的差異。
+- **diff**：列出目前資料夾的未提交變更（含未追蹤檔案），每一組照狀態排（衝突 → 新增 → 修改 → 改名 → 刪除），點檔案就在 Soap Panel 裡看它的差異（蓋掉分頁，不另開面板，鍵盤一直在 Soap Panel 上）：最上面 **← Back**（`b`）回列表，檔案有好幾個時旁邊有 `3 of 8 files` 和 **↑ Previous**／**↓ Next**（`n`／`m`），照列表的順序換到上一個／下一個檔案（同一個檔案在兩組只算一次，衝突檔案跳過）。
 - **branch**：列出本地與遠端分支（目前分支在最上面、寫全名），點分支名稱可以切換。名稱有 `/` 的照資料夾分組（`feature/x` 放在 `feature/` 底下，`soap/feature/x` 放在 `soap/` → `feature/` 底下；只有一個子資料夾的那層會併成一列，例如 `soap/feature/ · 3`），點資料夾開合，預設收起；那一層只有它一個資料夾時預設打開。只有一個 remote 時不畫 `origin/` 那層（Remote 底下直接是 `feature/`、`main`），有好幾個 remote 才分 `origin/`、`upstream/`。資料夾是天空藍（只有桌面版，終端機的按鈕吃不到顏色）。搜尋時全部打開。每個資料夾直屬的分支最多畫 50 個，超過的在那個資料夾底下寫「… N more」；Local、Remote 各最多畫 50 列（資料夾也算），超過的在最後寫「… N more」。搜尋框右邊有 **Fetch**（`git fetch --all --prune`，抓所有遠端、清掉遠端已刪的分支）和 **Pull**（`git pull --ff-only`，只快轉；跟遠端分岔了會顯示 git 的錯誤，要自己 merge 或 rebase），跑的時候那顆按鈕寫 `Fetching…`／`Pulling…`；需要帳密時 git 不會停下來問，直接失敗（Windows 的認證視窗照常會跳）。搜尋框邊打邊過濾分支名稱（不分大小寫；打好幾個字要全部都有，例如 `login page`），搜尋時 Remote 直接展開。按框旁邊的 **Clear** 或 Enter 清空，換分頁也會清掉。每一列右邊有一顆複製圖示，按了複製分支名稱（遠端的含 `origin/`），圖示變成綠底打勾 2 秒再換回來；旁邊一顆 log 圖示（時鐘），按了跳到 log 分頁看那個分支。
-- **log**：看一個分支的 commit 歷史。預設是目前分支（切分支會跟著換）；在 branch 分頁按某個分支的 log 圖示就固定看那個分支，按目前分支那列的回到跟著目前分支，換 repo 時換成那個 repo 的目前分支。最上面寫正在看的分支和筆數，每筆是 `a9ffcd8  CptSoap  Add Previous/Next…  3d`（短 sha、作者、subject、多久前），作者和時間固定寬、一欄一欄對齊，subject 太長會截斷。先列最近 30 筆，底下按 **Load more** 再多 30 筆。最上面有跟 branch 一樣的搜尋框：搜整條分支的歷史（不只列出來的那些），比對 subject、作者、sha，不分大小寫，打好幾個字要全部都有；符合的一樣先列 30 筆。按 **Clear** 或 Enter 清空，換分頁也會清掉。歷史太長（超過 git 一次給的量，大約兩萬多筆）時只搜最新的那些，會有提示。還沒 push 的 commit 在 sha 前面標黃色 `↑`：有 upstream 的跟 upstream 比；沒有的（還沒 push 過的新分支）不在任何遠端分支上的才標。點 commit 換成它改了哪些檔案（**← Back** 回列表），點檔案在差異面板看它在這個 commit 的差異。merge commit 跟第一個 parent 比，也就是這次 merge 帶進來的東西。搜尋框右邊的 **Select range**：按了之後點一筆當起點（變綠色粗體，再點一次取消），再點一筆當終點，就一起看兩筆之間（含）合起來的變更（最舊那筆之前 → 最新那筆，同一個檔案只列一次、看的是最後的結果）；按 **Cancel** 或 **← Back** 結束。搜尋中選的範圍，中間被搜尋濾掉的 commit 也算進去，畫面會提示。差異面板標題寫 `@ 舊sha…新sha`。看 commit 的檔案時，差異面板標題下面有 `3 of 15 files` 和 **↑ Previous**／**↓ Next**，直接換到上一個／下一個檔案；面板拿著鍵盤時按 `n`／`m` 也行（跟合併面板一樣）。
-- **conflict**：停在 merge／rebase／cherry-pick／revert 時，最上面顯示進行中的操作和 **Abort**（按兩次才會真的 abort）；衝突全部解完後多一顆 **Continue**（merge 直接用預設訊息 commit，其他是 `--continue`，都不開編輯器）。下面列出還沒解的檔案，有衝突時子分頁的圖示變紅。點檔案（diff 分頁裡標 `!` 的也一樣）開合併面板。
+- **log**：看一個分支的 commit 歷史。預設是目前分支（切分支會跟著換）；在 branch 分頁按某個分支的 log 圖示就固定看那個分支，按目前分支那列的回到跟著目前分支，換 repo 時換成那個 repo 的目前分支。最上面寫正在看的分支和筆數，每筆是 `a9ffcd8  CptSoap  Add Previous/Next…  3d`（短 sha、作者、subject、多久前），作者和時間固定寬、一欄一欄對齊，subject 太長會截斷。先列最近 30 筆，底下按 **Load more** 再多 30 筆。最上面有跟 branch 一樣的搜尋框：搜整條分支的歷史（不只列出來的那些），比對 subject、作者、sha，不分大小寫，打好幾個字要全部都有；符合的一樣先列 30 筆。按 **Clear** 或 Enter 清空，換分頁也會清掉。歷史太長（超過 git 一次給的量，大約兩萬多筆）時只搜最新的那些，會有提示。還沒 push 的 commit 在 sha 前面標黃色 `↑`：有 upstream 的跟 upstream 比；沒有的（還沒 push 過的新分支）不在任何遠端分支上的才標。點 commit 換成它改了哪些檔案（**← Back** 回列表），點檔案看它在這個 commit 的差異（跟 diff 分頁一樣畫在 Soap Panel 裡，**← Back** 回檔案列表）。merge commit 跟第一個 parent 比，也就是這次 merge 帶進來的東西。搜尋框右邊的 **Select range**：按了之後點一筆當起點（變綠色粗體，再點一次取消），再點一筆當終點，就一起看兩筆之間（含）合起來的變更（最舊那筆之前 → 最新那筆，同一個檔案只列一次、看的是最後的結果）；按 **Cancel** 或 **← Back** 結束。搜尋中選的範圍，中間被搜尋濾掉的 commit 也算進去，畫面會提示。差異的路徑後面寫 `@ 舊sha…新sha`。看 commit 的檔案時，最上面有 `3 of 15 files` 和 **↑ Previous**／**↓ Next**（`n`／`m`），直接換到上一個／下一個檔案。
+- **conflict**：停在 merge／rebase／cherry-pick／revert 時，最上面顯示進行中的操作和 **Abort**（按兩次才會真的 abort）；衝突全部解完後多一顆 **Continue**（merge 直接用預設訊息 commit，其他是 `--continue`，都不開編輯器）。下面列出還沒解的檔案，有衝突時子分頁的圖示變紅。點檔案（diff 分頁裡標 `!` 的也一樣）開三欄合併。
 
-合併面板跟 JetBrains 的一樣是三欄：左邊 **Ours**、右邊 **Theirs**、中間是結果。面板不是看檔案裡的衝突標記，而是拿 git 留著的三個版本（`:1:` 共同祖先、`:2:` ours、`:3:` theirs）自己做三方比對，所以左右兩欄是兩邊真正的檔案（行號也是），每一段分成三種：
+三欄合併跟 JetBrains 的一樣：左邊 **Ours**、右邊 **Theirs**、中間是結果。跟差異一樣畫在 Soap Panel 裡蓋掉分頁（不另開面板），最上面 **← Back**（`b`）回分頁；三欄需要寬一點，把 Soap Panel 拉寬看。它不是看檔案裡的衝突標記，而是拿 git 留著的三個版本（`:1:` 共同祖先、`:2:` ours、`:3:` theirs）自己做三方比對，所以左右兩欄是兩邊真正的檔案（行號也是），每一段分成三種：
 
 - **沒動過**：兩邊都沒改，三欄一樣。只留改動前後各 3 行，其餘收成 `⋯ N unchanged lines`。
 - **自動合入**（藍框）：只有一邊改（或兩邊改得一模一樣），git 自己就會合進去，不用選。改的那邊標 `changed`，中間寫 `Auto-merged from ours/theirs`；按 **Undo** 可以不要這個改動（結果留原本的樣子），再按 **Apply** 放回來。
@@ -23,7 +23,7 @@ CptSoap 的 Claude Code Panel mod。
 
 兩邊都新增了這個檔案（沒有共同祖先）時，一樣的部分保留，每一處不一樣都算衝突。讀不到 git 的版本時，退回只看檔案裡的衝突標記。
 
-上面有 **↑ Previous** / **↓ Next**（快捷鍵 `n` / `m`，面板拿著鍵盤時能用）跳到上一段／下一段還沒選的衝突，捲到那一段並把焦點放在 **Accept ≫**；全部選好後改成在所有衝突之間跳。下一排是 **All ours** / **All theirs**（每段衝突都選同一邊，自動合入的改動保留）、**Ask Claude**（請 Claude 解這個檔案並 `git add`；檔名有反引號或換行這類控制字元時不送，免得檔名夾帶指令），每段衝突都選好才會出現的 **Apply & mark resolved**（寫回檔案並 `git add`）。面板只放當下用得到的按鈕：衝突還沒選時中間是兩個「兩邊都要」，選好之後換成 **Reset**。rebase 時 ours／theirs 跟直覺相反（ours 是你要接上去的那條分支），面板上會提醒。
+上面有 **↑ Previous** / **↓ Next**（快捷鍵 `n` / `m`）跳到上一段／下一段還沒選的衝突，捲到那一段並把焦點放在 **Accept ≫**；全部選好後改成在所有衝突之間跳。下一排是 **All ours** / **All theirs**（每段衝突都選同一邊，自動合入的改動保留）、**Ask Claude**（請 Claude 解這個檔案並 `git add`；檔名有反引號或換行這類控制字元時不送，免得檔名夾帶指令），每段衝突都選好才會出現的 **Apply & mark resolved**（寫回檔案並 `git add`）。面板只放當下用得到的按鈕：衝突還沒選時中間是兩個「兩邊都要」，選好之後換成 **Reset**。rebase 時 ours／theirs 跟直覺相反（ours 是你要接上去的那條分支），面板上會提醒。
 
 沒有衝突標記可以一段一段選的檔案（一邊刪掉了、二進位檔、標記已經被你手動清掉）改成整個檔案選：**Use ours**、**Use theirs**（那一邊把檔案刪了就 `git rm`）、**Mark resolved as is**（照目前的樣子 `git add`）。
 
@@ -59,7 +59,7 @@ macOS 用 `ps` 和 `lsof` 掃描。重跑的指令是 `ps` 讀到的那行，原
 
 - 加新的 Tab 或子分頁：`hooks/config.ts` 的 `TABS`、`SUB_TABS` 加一筆，`hooks/ui/panel.tsx` 的 `TAB_BODIES`、`SUB_TAB_BODIES` 加它的內容。
 - 用量的標題、顏色：`hooks/config.ts` 的 `USAGE_WINDOWS`、`GOOD` / `WARN` / `DANGER`；門檻在 `hooks/ui/usage.tsx`。
-- 合併面板的寬度、收起段落前後留幾行：`hooks/config.ts` 的 `MERGE_COLUMNS`、`MERGE_CONTEXT`。
+- 三欄合併每欄的寬度、收起段落前後留幾行：`hooks/config.ts` 的 `MERGE_COLUMN_WIDTH`、`MERGE_CONTEXT`。
 - 往上併時不能併進去的程式（終端機、編輯器、IDE）：`hooks/services/scan.ts` 的 `SHELLS`、`HOSTS`；掃描間隔在 `hooks/config.ts` 的 `SERVICES_SCAN_MS`。
 
 ## 安裝（Claude Desktop，Code 分頁，需 v2.1.286 以上）

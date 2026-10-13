@@ -1,7 +1,8 @@
-// 解衝突的三欄面板，像 JetBrains 的合併視窗：左邊 Ours、右邊 Theirs、中間是結果。
+// 解衝突的三欄畫面，像 JetBrains 的合併視窗：左邊 Ours、右邊 Theirs、中間是結果。
+// 畫在 Soap Panel 裡蓋掉分頁（不另開面板，鍵盤一直在 Soap Panel 上），最上面 ← Back（b）回分頁。
 // 每段衝突左邊按「Accept ≫」、右邊按「≪ Accept」把那一邊放進中間，中間也可以兩邊都要或重選；
 // 全部選好才能 Apply（寫回檔案並 git add）。
-// 只畫當下用得到的按鈕。按了之後按鈕被換掉（例如變成 Reset）會丟焦點，由 act 在之後補回來。
+// 只畫當下用得到的按鈕。按了之後按鈕被換掉（Ours + Theirs 變成 Reset）焦點會掉，所以把焦點圈移到換上來的那顆。
 
 import type { RenderChildren } from 'claude-code'
 
@@ -11,13 +12,14 @@ import { choose, chooseAll, chunkResult, takesSide, toggleApplied } from '../mer
 import type { Actions, Press, Ui } from './actions'
 
 // isBusy：正在套用或用某一邊解掉。m.op 是進行中的操作（rebase 時提醒 ours／theirs 是反的）。
-export function renderMergePane(ui: Ui, m: MergeView, isBusy: boolean, a: Actions, press: Press) {
+export function mergeView(ui: Ui, m: MergeView, isBusy: boolean, a: Actions, press: Press) {
   const { Box, Button, Code, Text } = ui
 
-  if (m.path === '') return <Text dimColor>No conflicted file open.</Text>
-
+  // 套用中不能離開：做到一半放掉，結果會不見。
+  const back = isBusy ? null : <Button key="merge:back" label="← Back" hotkey="b" onPress={press(() => a.closeMerge())} />
   const title = (
-    <Box gap={1}>
+    <Box gap={1} flexWrap="wrap" alignItems="center">
+      {back}
       <Text bold color={KIND_STYLE.conflict.theme}>
         {KIND_STYLE.conflict.label}
       </Text>
@@ -184,7 +186,8 @@ export function renderMergePane(ui: Ui, m: MergeView, isBusy: boolean, a: Action
     }
 
     const isOpen = c.choice === 'none'
-    const pick = (choice: MergeChoice) => press(() => a.editChunks(cs => choose(cs, k, choice)))
+    // ringKey：中間的按鈕按了就換掉（兩邊都要 → Reset，Reset → 兩邊都要），焦點圈跟過去。兩邊的 Accept 一直都在。
+    const pick = (choice: MergeChoice, ringKey?: string) => press(() => a.editChunks(cs => choose(cs, k, choice)), ringKey)
     // 還沒選：三格都是紅框。選好了：中間和被選進去的那邊綠框，沒被選的那邊淡掉。
     const side = (which: 'ours' | 'theirs', lines: string[], startLine: number): Cell => {
       const isTaken = takesSide(c.choice, which)
@@ -211,14 +214,14 @@ export function renderMergePane(ui: Ui, m: MergeView, isBusy: boolean, a: Action
             <Text key="state" bold color="error">
               Conflict
             </Text>,
-            <Button key={`merge:both:${k}`} label="Ours + Theirs" onPress={pick('ours-theirs')} />,
-            <Button key={`merge:both-rev:${k}`} label="Theirs + Ours" onPress={pick('theirs-ours')} />,
+            <Button key={`merge:both:${k}`} label="Ours + Theirs" onPress={pick('ours-theirs', `merge:reset:${k}`)} />,
+            <Button key={`merge:both-rev:${k}`} label="Theirs + Ours" onPress={pick('theirs-ours', `merge:reset:${k}`)} />,
           ]
         : [
             <Text key="state" bold color="success">
               Resolved
             </Text>,
-            <Button key={`merge:reset:${k}`} label="Reset" onPress={pick('none')} />,
+            <Button key={`merge:reset:${k}`} label="Reset" onPress={pick('none', `merge:both:${k}`)} />,
           ],
       // 還沒選時中間顯示兩邊改之前的樣子；原本那裡沒有東西，就是兩邊在同一處各自加了內容。
       content: !isOpen ? (
@@ -254,7 +257,7 @@ export function renderMergePane(ui: Ui, m: MergeView, isBusy: boolean, a: Action
       {/* 第二行：進度和上一段／下一段；第三行：整個檔案的動作。 */}
       <Box gap={1} flexWrap="wrap" alignItems="center">
         <Text color={isAllResolved ? 'success' : 'warning'}>{`${done} of ${conflicts.length} conflicts resolved`}</Text>
-        {/* 面板拿著鍵盤時按 n／m 也行，跟 , . 一樣左邊往前、右邊往後；桌面版會在按鈕旁標出快捷鍵。 */}
+        {/* 按 n／m 也行，跟 , . 一樣左邊往前、右邊往後；桌面版會在按鈕旁標出快捷鍵。 */}
         {conflicts.length > 0 && [
           <Button key="merge:prev" label="↑ Previous" hotkey="n" onPress={press(() => a.jumpConflict(-1))} />,
           <Button key="merge:next" label="↓ Next" hotkey="m" onPress={press(() => a.jumpConflict(1))} />,

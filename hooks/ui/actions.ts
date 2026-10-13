@@ -5,6 +5,7 @@ import type { Elements, RenderSurface, SessionUsage } from 'claude-code'
 
 import type {
   CommitFile,
+  DiffPaneView,
   GitBranch,
   GitCommit,
   GitSubTab,
@@ -12,6 +13,7 @@ import type {
   GitView,
   LogView,
   MergeChunk,
+  MergeView,
   Service,
   ServiceAction,
   ServicePending,
@@ -22,8 +24,8 @@ import type {
 // $.ui.resolve(e) 給的元件表。
 export type Ui = Elements[RenderSurface]
 
-// 包住按鈕的動作：做完後丟了焦點會補回來。
-export type Press = (fn: () => unknown) => () => Promise<void>
+// 包住按鈕的動作：做完後丟了焦點會補回來。ringKey：按的按鈕會被換掉時，做完把焦點圈移到換上來的那顆。
+export type Press = (fn: () => unknown, ringKey?: string) => () => Promise<void>
 
 export type UsageReading = SessionUsage['rateLimits'][number]
 
@@ -52,20 +54,22 @@ export type Actions = {
   pickRange: (c: GitCommit) => unknown
   closeCommit: () => unknown
   openCommitDiff: (commits: GitCommit[], f: CommitFile, files: CommitFile[]) => unknown
-  // 差異面板
-  stepCommitFile: (step: 1 | -1) => unknown
+  // 差異（畫在 Soap Panel 裡）
+  stepDiffFile: (step: 1 | -1) => unknown
+  closeDiff: () => unknown
   // conflict
   abortOp: () => unknown
   cancelAbort: () => unknown
   continueOp: () => unknown
   // services
   runServiceAction: (s: Service, action: ServiceAction) => unknown
-  // 合併面板
+  // 合併（畫在 Soap Panel 裡）
   editChunks: (edit: (chunks: MergeChunk[]) => MergeChunk[]) => unknown
   jumpConflict: (step: 1 | -1) => unknown
   takeSide: (side: 'ours' | 'theirs' | 'as-is') => unknown
   applyMerge: () => unknown
   askClaude: () => unknown
+  closeMerge: () => unknown
 }
 
 // Soap Panel 畫一次要的全部資料。
@@ -86,6 +90,11 @@ export type PanelData = {
   servicePending: readonly ServicePending[]
   log: LogView
   logQuery: string
+  // 打開的檔案差異；path 不是 '' 時蓋掉分頁，畫差異。
+  diff: DiffPaneView
+  // 打開的衝突檔案；path 不是 '' 時蓋掉分頁，畫三欄合併。isMergeBusy：正在套用。
+  merge: MergeView
+  isMergeBusy: boolean
   usage: readonly UsageReading[]
   now: number
 }

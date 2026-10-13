@@ -1,10 +1,13 @@
 // Soap Panel 本體：最上面的 Tab、repo 列、子分頁，中間是分頁內容，最底下是用量。
+// 打開了衝突檔案或檔案的差異時，上面整塊換成合併（mergeView）或差異（diffView），Back 回來。
 // 加分頁：config.ts 的 TABS／SUB_TABS 加一筆，這裡的 TAB_BODIES／SUB_TAB_BODIES 加它的內容。
 
 import type { GitSubTab, TabId } from '../../types'
 import { DANGER, SUB_TABS, TABS } from '../config'
 import { isConflict } from '../git/parse'
 import type { Actions, PanelData, Press, Ui } from './actions'
+import { diffView } from './diffView'
+import { mergeView } from './mergeView'
 import { branchTab } from './tabs/branch'
 import { conflictTab } from './tabs/conflict'
 import type { TabBody, TabContext } from './tabs/context'
@@ -70,20 +73,28 @@ export function renderPanel(ui: Ui, d: PanelData, a: Actions, press: Press) {
   const { Box, Text } = w
   const ctx: TabContext = { w, d, a }
   const isGit = d.tab === 'git'
+  // 打開了衝突檔案或檔案的差異：蓋掉分頁。
+  const cover = d.merge.path !== '' ? mergeView(ui, d.merge, d.isMergeBusy, a, press) : d.diff.path !== '' ? diffView(ui, d.diff, a, press) : null
 
   // 整棵樹至少跟面板一樣高、內容區撐滿剩下的高度，用量就會被推到面板最底下；
   // 內容比面板還長時用量跟在後面。面板的高度只有引擎知道（bodyRows），百分比高度量不到。
   return (
     <Box flexDirection="column" minHeight={d.bodyRows}>
-      <Box flexDirection="column" gap={1} flexGrow={1}>
-        <Box flexDirection="column">
-          {w.iconBar('tab', TABS, d.tab, id => a.selectTab(id))}
-          {w.divider}
-          {isGit && gitHeader(ctx)}
+      {cover !== null ? (
+        <Box flexDirection="column" flexGrow={1}>
+          {cover}
         </Box>
-        {isGit && d.view.error !== '' && <Text color="error">{d.view.error}</Text>}
-        {TAB_BODIES[d.tab](ctx)}
-      </Box>
+      ) : (
+        <Box flexDirection="column" gap={1} flexGrow={1}>
+          <Box flexDirection="column">
+            {w.iconBar('tab', TABS, d.tab, id => a.selectTab(id))}
+            {w.divider}
+            {isGit && gitHeader(ctx)}
+          </Box>
+          {isGit && d.view.error !== '' && <Text color="error">{d.view.error}</Text>}
+          {TAB_BODIES[d.tab](ctx)}
+        </Box>
+      )}
       <Box flexDirection="column" marginTop={1}>
         {w.divider}
         {usageBar(w, d.usage, d.now)}

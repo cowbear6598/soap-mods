@@ -3,7 +3,7 @@ import type { FileEntry, FileGroupId } from '../../git/parse'
 import { groupFiles } from '../../git/parse'
 import type { TabBody } from './context'
 
-// diff 分頁：未提交的變更，分 Staged／Unstaged／Untracked。點檔案：衝突的開合併面板，其他開差異面板。
+// diff 分頁：未提交的變更，分 Staged／Unstaged／Untracked。點檔案：衝突的開三欄合併，其他看差異（都畫在 Soap Panel 裡）。
 // 每組最多畫 fileLimit 個，其餘按 Show more 再多畫 FILE_PAGE 個。
 export const diffTab: TabBody = ({ w, d, a }) => {
   const { Box, Button, Text } = w

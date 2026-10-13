@@ -7,7 +7,7 @@
 //   git/           解析 git 輸出（parse）、repo 的參數和解析（repo）
 //   merge/algo.ts  三方合併
 //   services/      找服務（scan）
-//   ui/            畫面：拿到資料和 Actions 畫出樹（panel、tabs/、diffPane、mergePane）
+//   ui/            畫面：拿到資料和 Actions 畫出樹（panel、tabs/、diffView、mergeView）
 
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, PaneOpenArgs, ProcessRunInit, Register, RenderSurface, Timer } from 'claude-code'
@@ -39,7 +39,6 @@ import {
   FILE_PAGE,
   FOCUS_WATCH_MS,
   LOG_PAGE,
-  MERGE_COLUMNS,
   OP_LABEL,
   PANEL_TITLE,
   REFOCUS_AFTER_PRESS_MS,
@@ -56,7 +55,7 @@ import {
   LOG_FORMAT,
   branchRef,
   commitRange,
-  commitsLabel,
+  diffSteps,
   fileKind,
   filterCommits,
   hasQuery,
@@ -68,7 +67,6 @@ import {
   parseCommitFiles,
   parseLog,
   parseStatus,
-  splitPath,
   toHunks,
 } from './git/parse'
 import type { Repo } from './git/repo'
@@ -89,17 +87,13 @@ import {
 } from './services/mac'
 import { KILL_ARGV, LAUNCH_ARGV, SCAN_ARGV, findServices } from './services/scan'
 import type { Actions } from './ui/actions'
-import { renderDiffPane } from './ui/diffPane'
-import { renderMergePane } from './ui/mergePane'
 import { renderPanel } from './ui/panel'
 import { patch } from './patch'
 
 // ───── 面板 id（引擎要在這個檔案裡直接看到值，不能 import）─────
 
+// 只有這一個面板：差異和解衝突都畫在它裡面（另開面板的話，焦點轉不過去，快捷鍵按不到）。
 const PANE = 'soap-panel'
-const DIFF_PANE = 'soap-diff'
-// 解衝突的三欄面板（左 Ours、中 Result、右 Theirs）。
-const MERGE_PANE = 'soap-merge'
 const PANE_ARGS: PaneOpenArgs = { id: PANE, title: PANEL_TITLE }
 
 // ───── 狀態 ─────
@@ -179,54 +173,49 @@ const inRepo = (path: string) => (repos.current === undefined ? path : `${repos.
 
 // ───── 面板與焦點 ─────
 
-// 每個面板 open 時要給的標題和寬度；每次 open 都會重設它們，所以一律從這裡拿。
-async function paneArgs($: EngineInterface, id: string): Promise<PaneOpenArgs> {
-  if (id === MERGE_PANE) return { id, title: `Merge · ${splitPath((await read($, merge)).path).name}`, columns: MERGE_COLUMNS }
-  if (id === DIFF_PANE) {
-    const d = await read($, diffPane)
-
-    return { id, title: d.commits.length === 0 ? d.path : `${d.path} @ ${commitsLabel(d.commits)}` }
-  }
-
-  return PANE_ARGS
-}
-
-// 開（或切到）一個面板並要焦點：已經開著的話先關再開，才會跳到最前面，而不是躲在別的分頁後面。
-async function bringToFront($: EngineInterface, id: string) {
-  const [panes, args] = await Promise.all([$.ui.panes(), paneArgs($, id)])
-  if (panes.some(p => p.id === id)) await $.ui.close({ id })
-  await $.ui.open({ ...args, focus: true })
-}
-
 // 桌面版的面板沒有焦點時，按下滑鼠會先拿焦點、整個面板重畫，按到的按鈕被換掉，那一下就不算。
-// 點分頁標籤切到 Soap Panel 或合併面板時引擎不會通知、也不給焦點，所以定時看一下：
+// 點分頁標籤切到 Soap Panel 時引擎不會通知、也不給焦點，所以定時看一下：
 // 它「剛被切到前面」又沒焦點，就先把焦點給它，第一下點擊才點得到。
 // 只在從看不見變成看得見的那一刻給，平常在輸入框打字不會被搶。
 // 按完按鈕也可能丟焦點（切分支時被點的那列搬位置、abort 後整區消失），
 // 所以每個按鈕的動作做完後的一小段時間內也補（act）。
-// 要補焦點的面板。diff 面板看 commit 的檔案時有 Previous／Next。
-const FOCUS_PANES = [PANE, MERGE_PANE, DIFF_PANE]
 // 上一輪看的時候在不在前面；沒記錄當作在（剛啟動不搶焦點）。
-const wasShown = new Map<string, boolean>()
+let wasShown: boolean | undefined
 let isWatching = false
-// 按完按鈕後，到這個時間點之前丟了焦點就補回來；沒有記錄是沒有要補。
-const refocusUntil = new Map<string, number>()
-
-async function focusPane($: EngineInterface, id: string) {
-  await $.ui.open({ ...(await paneArgs($, id)), focus: true })
-}
+// 按完按鈕後，到這個時間點之前丟了焦點就補回來；undefined 是沒有要補。
+let refocusUntil: number | undefined
 
 async function focusPanel($: EngineInterface) {
-  await focusPane($, PANE)
+  await $.ui.open({ ...PANE_ARGS, focus: true })
+}
+
+// 把 Soap Panel 的焦點圈移到 key 那個按鈕上；Soap Panel 沒拿著鍵盤就算了。
+// 按的按鈕被換掉（整塊換成差異、合併，或換回分頁）時，桌面版的焦點會掉到輸入框，
+// 引擎卻還以為 Soap Panel 拿著鍵盤（focusPanel 補不回來），快捷鍵就跑去輸入框；要移到看得到的按鈕上才行。
+async function ringOn($: EngineInterface, key: string) {
+  await $.ui.focus({ requestId: PANE, key }).catch(() => undefined)
+}
+
+// 回到分頁時焦點圈放的地方：目前子分頁（Git）或分頁的圖示。
+async function ringOnTab($: EngineInterface) {
+  const [t, sub] = await Promise.all([read($, tab), read($, subTab)])
+  await ringOn($, t === 'git' ? `sub:${sub}` : `tab:${t}`)
+}
+
+// 蓋上或換掉差異、合併時，捲回 Soap Panel 最上面從頭看。
+async function scrollTop($: EngineInterface) {
+  await $.ui.scroll({ in: PANE, to: 'start' }).catch(() => undefined)
 }
 
 // 包住面板上按鈕的動作：動作做完（可能要跑 git 很久）才開始算補焦點的那段時間。
-function act($: EngineInterface, id: string, fn: () => unknown) {
+// ringKey：按的按鈕會被換掉時，做完把焦點圈移到換上來的那顆。
+function act($: EngineInterface, fn: () => unknown, ringKey?: string) {
   return async () => {
     try {
       await fn()
+      if (ringKey !== undefined) await ringOn($, ringKey)
     } finally {
-      refocusUntil.set(id, (await $.clock.now()) + REFOCUS_AFTER_PRESS_MS)
+      refocusUntil = (await $.clock.now()) + REFOCUS_AFTER_PRESS_MS
     }
   }
 }
@@ -235,20 +224,16 @@ async function focusWhenShown($: EngineInterface) {
   if (isWatching) return
   isWatching = true
   try {
-    const panes = await $.ui.panes()
-    for (const id of FOCUS_PANES) {
-      const pane = panes.find(p => p.id === id)
-      const isShown = pane?.isShown === true
-      if (isShown && pane?.isFocused === false) {
-        const until = refocusUntil.get(id)
-        const isJustPressed = until !== undefined && (await $.clock.now()) < until
-        if (wasShown.get(id) === false || isJustPressed) {
-          await focusPane($, id)
-          refocusUntil.delete(id)
-        }
+    const pane = (await $.ui.panes()).find(p => p.id === PANE)
+    const isShown = pane?.isShown === true
+    if (isShown && pane?.isFocused === false) {
+      const isJustPressed = refocusUntil !== undefined && (await $.clock.now()) < refocusUntil
+      if (wasShown === false || isJustPressed) {
+        await focusPanel($)
+        refocusUntil = undefined
       }
-      wasShown.set(id, isShown)
     }
+    wasShown = isShown
   } catch {
     // 讀不到就等下一輪。
   } finally {
@@ -349,10 +334,11 @@ async function refresh($: EngineInterface) {
   }
 
   const files = parseStatus(status.stdout)
-  // 差異面板開著工作區的檔案就重讀；那個檔案已經沒有變更了（readDiff 給空的），把面板也關掉。
-  // 開著的是 commit 裡的檔案就不用動，commit 不會變。
+  // 開著工作區檔案的差異就重讀；那個檔案已經沒有變更了，readDiff 給空的，就回到分頁。
+  // 開著的是 commit 裡的檔案就不用動，commit 不會變。內容沒變就不寫，整個 Soap Panel 不會白白重畫。
   const shown = await read($, diffPane)
-  const pane = shown.commits.length === 0 && shown.path !== '' ? await readDiff($, files, shown.path) : shown
+  const reread = shown.commits.length === 0 && shown.path !== '' ? await readDiff($, files, shown.path) : shown
+  const pane = JSON.stringify(reread) === JSON.stringify(shown) ? shown : reread
   if (isStale()) return
   await Promise.all([
     setView($, {
@@ -367,12 +353,11 @@ async function refresh($: EngineInterface) {
     }),
     pane === shown ? undefined : update($, diffPane, () => pane),
   ])
-  if (shown.path !== '' && pane.path === '') await $.ui.close({ id: DIFF_PANE })
   // log 只在看得到時重讀（換到 log 分頁時也會讀）。
   await Promise.all([syncMerge($, files), (await read($, subTab)) === 'log' ? loadLog($) : undefined])
 }
 
-// 換 Git 分頁看的 repo：開著的 diff／合併面板是上一個 repo 的檔案，關掉；合併面板正在寫檔時不換。
+// 換 Git 分頁看的 repo：開著的差異／合併是上一個 repo 的檔案，回到分頁；合併正在寫檔時不換。
 async function selectRepo($: EngineInterface, name: string) {
   const next = repos.list.find(c => c.name === name)
   if (next === undefined || next === repos.current || isMergeBusy) return
@@ -380,11 +365,11 @@ async function selectRepo($: EngineInterface, name: string) {
   dropLogLoads()
   await Promise.all([
     setView($, { repo: name, ...NO_MESSAGES }),
-    update($, diffPane, () => EMPTY_DIFF),
+    clearDiff($),
+    clearMerge($),
     // log 換成新 repo 的目前分支。
     update($, log, () => EMPTY_LOG),
   ])
-  await Promise.all([closeMerge($), $.ui.close({ id: DIFF_PANE })])
   await refresh($)
 }
 
@@ -393,7 +378,7 @@ async function clearGitMessages($: EngineInterface) {
   await setView($, NO_MESSAGES)
 }
 
-// ───── 差異面板 ─────
+// ───── 差異（畫在 Soap Panel 裡） ─────
 
 const DIFF_FLAGS = ['--no-color', '--no-ext-diff', '--no-textconv']
 
@@ -420,7 +405,8 @@ async function runDiff($: EngineInterface, args: string[], fallback?: string[]) 
   return { diff: source, isTruncated, error }
 }
 
-// 讀工作區一個檔案的 diff，給差異面板：已追蹤的對 HEAD，未追蹤的對空檔案。
+// 讀工作區一個檔案的 diff：已追蹤的對 HEAD，未追蹤的對空檔案。
+// Previous／Next 照 diff 分頁的檔案順序走（diffSteps）；每次 refresh 都會重讀，清單跟著更新。
 async function readDiff($: EngineInterface, files: GitFile[], path: string): Promise<DiffPaneView> {
   const file = files.find(f => f.path === path)
   if (file === undefined) return EMPTY_DIFF
@@ -428,22 +414,38 @@ async function readDiff($: EngineInterface, files: GitFile[], path: string): Pro
     ? runDiff($, ['diff', ...DIFF_FLAGS, '--no-index', '--', '/dev/null', path])
     : runDiff($, ['diff', ...DIFF_FLAGS, 'HEAD', '--', path], ['diff', ...DIFF_FLAGS, '--cached', '--', path]))
 
-  return { ...EMPTY_DIFF, path, kind: fileKind(file), ...result }
+  return { ...EMPTY_DIFF, path, kind: fileKind(file), ...result, files: diffSteps(files) }
 }
 
-// 換掉差異面板的內容並切過去。isFront：面板已經在前面（Previous／Next），重新 open 只為了換標題。
-async function showDiff($: EngineInterface, pane: DiffPaneView, isFront = false) {
+// 在 Soap Panel 裡看這個檔案的差異（蓋掉分頁），捲回最上面從頭看。
+// 不另開面板：鍵盤一直在 Soap Panel 上，Back／Previous／Next 的快捷鍵才按得到。
+async function showDiff($: EngineInterface, pane: DiffPaneView) {
+  const wasOpen = (await read($, diffPane)).path !== ''
   await update($, diffPane, () => pane)
-  await (isFront ? focusPane($, DIFF_PANE) : bringToFront($, DIFF_PANE))
+  await scrollTop($)
+  // 按的那列換成差異就不見了，桌面版的焦點會跟著掉到輸入框（引擎還以為 Soap Panel 拿著鍵盤），
+  // 快捷鍵就跑去輸入框；把焦點圈移到 Back 上，按鍵才留在 Soap Panel。Previous／Next 按的按鈕還在，不用移。
+  if (!wasOpen) await ringOn($, 'diff:back')
 }
 
-// 點檔案：一定開一個獨立的 diff 面板並切過去；關掉面板交給面板自己的關閉鈕。
+// Back：回到分頁。Back 按鈕跟著不見，焦點圈移到分頁的圖示上。
+async function closeDiff($: EngineInterface) {
+  await clearDiff($)
+  await ringOnTab($)
+}
+
+// 沒開著差異就不寫，免得白白重畫。
+async function clearDiff($: EngineInterface) {
+  await update($, diffPane, d => (d.path === '' ? d : EMPTY_DIFF))
+}
+
+// 點檔案：在 Soap Panel 裡看它的差異；Back 回分頁。
 async function openDiff($: EngineInterface, path: string) {
   await showDiff($, await readDiff($, (await read($, view)).files, path))
 }
 
 // 讀 commit 裡一個檔案在這（幾）個 commit 的差異。改名的檔案兩個路徑都要給，git 才認得出是改名。
-// files 是同一批的全部檔案，差異面板的 Previous／Next 照它走。
+// files 是同一批的全部檔案，Previous／Next 照它走。
 async function readCommitDiff($: EngineInterface, commits: GitCommit[], f: CommitFile, files: CommitFile[]): Promise<DiffPaneView> {
   const paths = f.oldPath === '' ? [f.path] : [f.oldPath, f.path]
   const result = await runDiff($, ['diff-tree', '-p', '-M', ...DIFF_FLAGS, '--no-commit-id', ...commitRange(commits), '--', ...paths])
@@ -451,17 +453,18 @@ async function readCommitDiff($: EngineInterface, commits: GitCommit[], f: Commi
   return { path: f.path, kind: letterKind(f.letter), ...result, commits, files }
 }
 
-// 點 commit 裡的檔案：在 diff 面板看它的差異。
+// 點 commit 裡的檔案：看它在這（幾）個 commit 的差異。
 async function openCommitDiff($: EngineInterface, commits: GitCommit[], f: CommitFile, files: CommitFile[]) {
   await showDiff($, await readCommitDiff($, commits, f, files))
 }
 
-// 差異面板的 Previous／Next：換成同一批 commit 的上一個／下一個檔案。
-async function stepCommitFile($: EngineInterface, step: 1 | -1) {
+// 差異的 Previous／Next：換成上一個／下一個檔案。
+async function stepDiffFile($: EngineInterface, step: 1 | -1) {
   const d = await read($, diffPane)
   const next = d.files[d.files.findIndex(f => f.path === d.path) + step]
   if (next === undefined) return
-  await showDiff($, await readCommitDiff($, d.commits, next, d.files), true)
+  const isWorkTree = d.commits.length === 0
+  await showDiff($, await (isWorkTree ? readDiff($, (await read($, view)).files, next.path) : readCommitDiff($, d.commits, next, d.files)))
 }
 
 // ───── branch 分頁 ─────
@@ -677,7 +680,7 @@ async function pickRange($: EngineInterface, c: GitCommit) {
   await openCommits($, l.commits.slice(Math.min(start, end), Math.max(start, end) + 1))
 }
 
-// ───── 解衝突（合併面板） ─────
+// ───── 解衝突（合併） ─────
 
 async function editChunks($: EngineInterface, edit: (chunks: MergeChunk[]) => MergeChunk[]) {
   await update($, merge, m => ({ ...m, chunks: edit(m.chunks) }))
@@ -738,7 +741,7 @@ async function loadMerge($: EngineInterface, path: string) {
   await update($, merge, () => next)
 }
 
-// 上一次跳到的衝突（合併面板上 chunks 的位置）；換了檔案就從頭算。
+// 上一次跳到的衝突（chunks 的位置）；換了檔案就從頭算。
 let conflictCursor = { path: '', at: -1 }
 
 // 跳到下一段（step 1）或上一段（-1）衝突：捲到那一列的頂端，焦點放在 ours 的 Accept 上。
@@ -748,14 +751,15 @@ async function jumpConflict($: EngineInterface, step: 1 | -1) {
   const at = nextConflict(m.chunks, conflictCursor.path === m.path ? conflictCursor.at : -1, step)
   if (at === null) return
   conflictCursor = { path: m.path, at }
-  await $.ui.scroll({ in: MERGE_PANE, to: { key: `conflict:${at}` }, block: 'start' }).catch(() => undefined)
-  await $.ui.focus({ requestId: MERGE_PANE, key: `merge:ours:${at}` }).catch(() => undefined)
+  await $.ui.scroll({ in: PANE, to: { key: `conflict:${at}` }, block: 'start' }).catch(() => undefined)
+  await ringOn($, `merge:ours:${at}`)
 }
 
-// 點衝突的檔案：開（或切到）三欄的合併面板。
+// 點衝突的檔案：在 Soap Panel 裡蓋掉分頁，畫三欄合併，從最上面開始看。按的那列不見了，焦點圈放到 Back 上。
 async function openMerge($: EngineInterface, path: string) {
-  await loadMerge($, path)
-  await bringToFront($, MERGE_PANE)
+  await Promise.all([loadMerge($, path), clearDiff($)])
+  await scrollTop($)
+  await ringOn($, 'merge:back')
 }
 
 // 放掉選到一半的結果（檔案沒動過，下次打開從頭選）。
@@ -765,12 +769,13 @@ async function clearMerge($: EngineInterface) {
   await update($, merge, () => EMPTY_MERGE)
 }
 
+// 回到分頁（Back、解掉了、不再是衝突）：合併畫面整塊不見，焦點圈移到分頁的圖示上。
 async function closeMerge($: EngineInterface) {
   await clearMerge($)
-  await $.ui.close({ id: MERGE_PANE })
+  await ringOnTab($)
 }
 
-// refresh 之後：合併面板的檔案已經不是衝突了（解掉了、abort 了）就關掉，否則重讀一次（檔案可能被改過）。
+// refresh 之後：合併的檔案已經不是衝突了（解掉了、abort 了）就回到分頁，否則重讀一次（檔案可能被改過）。
 async function syncMerge($: EngineInterface, files: GitFile[]) {
   if (isMergeBusy) return
   const m = await read($, merge)
@@ -784,8 +789,8 @@ async function syncMerge($: EngineInterface, files: GitFile[]) {
   await loadMerge($, m.path)
 }
 
-// 合併面板正在套用或用某一邊解掉。跟 syncing 一樣放模組變數不放 atom，免得被熱重載中斷後一直卡著；
-// 卡著的話不能再解檔案、也不能換 repo。關掉合併面板時歸零。
+// 正在套用合併或用某一邊解掉。跟 syncing 一樣放模組變數不放 atom，免得被熱重載中斷後一直卡著；
+// 卡著的話不能再解檔案、也不能換 repo。離開合併時歸零。
 let isMergeBusy = false
 
 function setMergeBusy($: EngineInterface, isBusy: boolean) {
@@ -794,8 +799,8 @@ function setMergeBusy($: EngineInterface, isBusy: boolean) {
   $.ui.invalidate('ui.render')
 }
 
-// 解掉合併面板上的檔案：做事的期間面板顯示處理中；失敗把錯誤留在面板上，
-// 成功就關掉合併面板、重讀狀態，焦點交回 Soap Panel。
+// 解掉合併畫面上的檔案：做事的期間顯示處理中；失敗把錯誤留在畫面上，
+// 成功就回到分頁、重讀狀態。
 async function resolveFile($: EngineInterface, what: string, work: (path: string) => Promise<unknown>) {
   if (isMergeBusy) return
   const m = await read($, merge)
@@ -812,7 +817,6 @@ async function resolveFile($: EngineInterface, what: string, work: (path: string
   }
   await closeMerge($)
   await refresh($)
-  await focusPanel($)
   $.ui.toast(`Resolved ${m.path}`)
 }
 
@@ -1106,7 +1110,8 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     pickRange: c => pickRange($, c),
     closeCommit: () => setLog($, NO_COMMIT),
     openCommitDiff: (commits, f, files) => openCommitDiff($, commits, f, files),
-    stepCommitFile: step => stepCommitFile($, step),
+    stepDiffFile: step => stepDiffFile($, step),
+    closeDiff: () => closeDiff($),
     abortOp: () => abortOp($),
     cancelAbort: () => setView($, { isAbortArmed: false }),
     continueOp: () => continueOp($),
@@ -1117,6 +1122,7 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     takeSide: side => takeSide($, side),
     applyMerge: () => applyMerge($),
     askClaude: () => askClaude($),
+    closeMerge: () => closeMerge($),
   }
 }
 
@@ -1130,6 +1136,9 @@ export const register: Register = on => {
     })
     // 先開面板（畫「讀取中…」），git 在背景讀，不擋住 session 開始。
     void $.ui.open(PANE_ARGS)
+    // 舊版另開的差異、合併面板（現在都畫在 Soap Panel 裡），熱重載後還開著就關掉。
+    void $.ui.close({ id: 'soap-diff' }).catch(() => undefined)
+    void $.ui.close({ id: 'soap-merge' }).catch(() => undefined)
     void refresh($).catch(() => undefined)
     $.clock.every(FOCUS_WATCH_MS, () => void focusWhenShown($))
     // 用量直接跟引擎拿（不花錢），這裡只負責讓重置倒數每分鐘重畫一次。
@@ -1160,22 +1169,9 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // 自己按掉 diff 面板時：清掉選中的檔案，並把焦點交回 Soap Panel。
-  // 桌面版的面板沒有焦點時，按下滑鼠會先拿焦點、整個面板重畫，按到的按鈕被換掉，那一下就不算；
-  // 先把焦點給它，回來的第一下才點得到。
-  on('ui.close', async ($, e, next) => {
-    const result = await next(e)
-    if (e.origin.kind !== 'person' || (e.id !== DIFF_PANE && e.id !== MERGE_PANE)) return result
-    // 合併面板被按掉：放掉選到一半的結果（檔案沒動過，下次打開從頭選）。
-    await (e.id === DIFF_PANE ? update($, diffPane, () => EMPTY_DIFF) : clearMerge($))
-    await focusPanel($)
-
-    return result
-  }).catch(($, e, next) => next(e)) // 清不掉就算了，絕不能擋住關面板。
-
   // 畫面：這裡讀狀態，交給 ui/ 的純函式畫。
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const [activeTab, activeSub, v, isRemoteOpen, bf, bq, fl, sv, lg, lq, usage, now] = await Promise.all([
+    const [activeTab, activeSub, v, isRemoteOpen, bf, bq, fl, sv, lg, lq, df, mg, usage, now] = await Promise.all([
       read($, tab),
       read($, subTab),
       read($, view),
@@ -1186,6 +1182,8 @@ export const register: Register = on => {
       read($, services),
       read($, log),
       read($, logQuery),
+      read($, diffPane),
+      read($, merge),
       // 讀不到用量就當作還沒有讀數，不要讓整個面板畫不出來。
       $.session.usage().catch(() => undefined),
       $.clock.now(),
@@ -1208,21 +1206,14 @@ export const register: Register = on => {
         servicePending,
         log: lg,
         logQuery: lq,
+        diff: df,
+        merge: mg,
+        isMergeBusy,
         usage: usage?.rateLimits ?? [],
         now,
       },
       actionsFor($, e.surface),
-      fn => act($, PANE, fn),
+      (fn, ringKey) => act($, fn, ringKey),
     )
-  })
-
-  // 選中檔案的差異，開在自己的面板裡。
-  on('ui.render', { component: 'Pane', requestId: DIFF_PANE }, async ($, e) =>
-    renderDiffPane($.ui.resolve(e), await read($, diffPane), actionsFor($, e.surface), fn => act($, DIFF_PANE, fn)),
-  )
-
-  // 解衝突的三欄面板。按了之後按鈕被換掉會丟焦點，由 act 在之後補回來。
-  on('ui.render', { component: 'Pane', requestId: MERGE_PANE }, async ($, e) => {
-    return renderMergePane($.ui.resolve(e), await read($, merge), isMergeBusy, actionsFor($, e.surface), fn => act($, MERGE_PANE, fn))
   })
 }

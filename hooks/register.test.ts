@@ -75,12 +75,8 @@ const ok = (stdout: string) => ({
 const SWITCH_FAILED = "fatal: a branch named 'main' already exists"
 
 test('the pane lists changes, shows a diff and the branches, and switches sub tabs', async ($, on) => {
-  const diffOpens: string[] = []
-  on('ui.open', (_$, e) => {
-    if (e.id === 'soap-diff') diffOpens.push(e.title ?? '')
-
-    return { value: { isPlaced: true } }
-  })
+  const diffArgs: string[][] = []
+  on('ui.open', () => ({ value: { isPlaced: true } }))
   on('ui.panes', () => ({ value: [] }))
   on('ui.close', () => ({ value: undefined }))
   on('clock.now', () => ({ value: 0 }))
@@ -89,7 +85,8 @@ test('the pane lists changes, shows a diff and the branches, and switches sub ta
     const cmd = e.argv.slice(3)
     if (cmd[0] === 'rev-parse') return ok('/repo\n/repo/.git\n')
     if (cmd[0] === 'switch') return { value: { ...ok('').value, exitCode: 128, stderr: SWITCH_FAILED } }
-    if (cmd[0] === 'status') return ok('## main...origin/main [ahead 1]\0 M a.ts\0')
+    if (cmd[0] === 'status') return ok('## main...origin/main [ahead 1]\0 M a.ts\0?? b.ts\0')
+    if (cmd[0] === 'diff') diffArgs.push(cmd)
     if (cmd[0] === 'diff') return ok('diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@\n-a\n+b\n')
     if (cmd[0] === 'for-each-ref') {
       return ok(
@@ -120,19 +117,25 @@ test('the pane lists changes, shows a diff and the branches, and switches sub ta
   })
   expect(await ui.find({ key: 'file:unstaged:a.ts' })).toBeDefined()
 
-  // 沒點之前不顯示差異；點了才在自己的面板裡看。
+  // 沒點之前不顯示差異；點了在 Soap Panel 裡蓋掉分頁看，Back 回來。
+  expect(await ui.find({ type: 'Code' })).toBeUndefined()
   await ui.press({ key: 'file:unstaged:a.ts' })
-  const diff = await $.ui.mount({
-    plugin: 'soap-mods',
-    surface: 'terminal',
-    component: 'Pane',
-    requestId: 'soap-diff',
-    props: PANE_PROPS,
-  })
-  expect(await diff.find({ type: 'Code' })).toBeDefined()
-  await diff.unmount()
+  expect(await ui.find({ type: 'Code' })).toBeDefined()
+  expect(await ui.find({ key: 'tab:git' })).toBeUndefined()
+  // Previous／Next 照 diff 分頁的順序走：a.ts → b.ts（未追蹤的對空檔案），到頭了不動。
+  expect(await ui.find({ type: 'Text', text: '1 of 2 files' })).toBeDefined()
+  await ui.press({ key: 'diff:next' })
+  expect(await ui.find({ type: 'Text', text: '2 of 2 files' })).toBeDefined()
+  expect(diffArgs.at(-1)).toContain('--no-index')
+  const reads = diffArgs.length
+  await ui.press({ key: 'diff:next' })
+  expect(diffArgs).toHaveLength(reads)
+  await ui.press({ key: 'diff:prev' })
+  expect(await ui.find({ type: 'Text', text: '1 of 2 files' })).toBeDefined()
+  await ui.press({ key: 'diff:back' })
+  expect(await ui.find({ type: 'Code' })).toBeUndefined()
 
-  // 桌面版整行都是按鈕：同一個 key 疊在整行上面，按下去一樣開差異面板。
+  // 桌面版整行都是按鈕：同一個 key 疊在整行上面，按下去一樣看差異。
   const desk = await $.ui.mount({
     plugin: 'soap-mods',
     surface: 'desktop',
@@ -142,9 +145,9 @@ test('the pane lists changes, shows a diff and the branches, and switches sub ta
   })
   expect(await desk.find({ type: 'Text', text: 'a.ts' })).toBeDefined()
   await desk.press({ key: 'file:unstaged:a.ts' })
+  expect(await desk.find({ type: 'Code' })).toBeDefined()
+  await desk.press({ key: 'diff:back' })
   await desk.unmount()
-  // 同一個檔案點兩次，兩次都是打開（不會變成收起來）。
-  expect(diffOpens).toEqual(['a.ts', 'a.ts'])
 
   await ui.press({ key: 'sub:branch' })
   // 目前分支也算在 Local 裡，跟其他分支一樣是一列按鈕（點了不會被換掉，面板才不會丟焦點）。
@@ -473,13 +476,8 @@ test('the log tab lists the branch commits, marks unpushed ones, loads more, and
   const short = (i: number) => String(i).padStart(7, '0')
   const logArgs: string[][] = []
   const revListArgs: string[][] = []
-  const diffOpens: string[] = []
   const diffTreeArgs: string[][] = []
-  on('ui.open', (_$, e) => {
-    if (e.id === 'soap-diff') diffOpens.push(e.title ?? '')
-
-    return { value: { isPlaced: true } }
-  })
+  on('ui.open', () => ({ value: { isPlaced: true } }))
   on('ui.panes', () => ({ value: [] }))
   on('ui.close', () => ({ value: undefined }))
   on('clock.now', () => ({ value: now }))
@@ -543,16 +541,17 @@ test('the log tab lists the branch commits, marks unpushed ones, loads more, and
   expect(await ui.find({ type: 'Text', text: 'main · 40' })).toBeDefined()
   expect(await ui.find({ key: 'log:more' })).toBeUndefined()
 
-  // 點 commit：列表換成它改了哪些檔案；點檔案在 diff 面板看它在這個 commit 的差異，改名兩個路徑都給。
+  // 點 commit：列表換成它改了哪些檔案；點檔案在 Soap Panel 裡看它在這個 commit 的差異，改名兩個路徑都給。
   await ui.press({ key: `commit:${sha(0)}` })
   expect(await ui.find({ type: 'Text', text: 'Files · 2' })).toBeDefined()
   expect(await ui.find({ key: `commit:${sha(1)}` })).toBeUndefined()
   await ui.press({ key: 'commit-file:src/a.ts' })
-  expect(diffOpens).toEqual([`src/a.ts @ ${short(0)}`])
-  const diff = await $.ui.mount({ plugin: 'soap-mods', surface: 'terminal', component: 'Pane', requestId: 'soap-diff', props: PANE_PROPS })
-  expect(await diff.find({ type: 'Code' })).toBeDefined()
-  expect(await diff.find({ type: 'Text', text: `@ ${short(0)}` })).toBeDefined()
-  await diff.unmount()
+  expect(await ui.find({ type: 'Code' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'src/a.ts' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: `@ ${short(0)}` })).toBeDefined()
+  // Back 回到 commit 的檔案列表。
+  await ui.press({ key: 'diff:back' })
+  expect(await ui.find({ type: 'Text', text: 'Files · 2' })).toBeDefined()
   await ui.press({ key: 'log:back' })
   expect(await ui.find({ key: `commit:${sha(1)}` })).toBeDefined()
 
@@ -570,21 +569,20 @@ test('the log tab lists the branch commits, marks unpushed ones, loads more, and
   expect(await ui.find({ type: 'Text', text: 'Files · 2' })).toBeDefined()
   await ui.press({ key: 'commit-file:src/a.ts' })
   expect(diffTreeArgs.at(-1)).toContain(sha(3))
-  expect(diffOpens.at(-1)).toBe(`src/a.ts @ ${short(2)}…${short(0)}`)
-  // 差異面板的 Previous／Next（n／m）：換成同一批的上一個／下一個檔案，到頭了不動。
-  const steps = await $.ui.mount({ plugin: 'soap-mods', surface: 'terminal', component: 'Pane', requestId: 'soap-diff', props: PANE_PROPS })
-  expect(await steps.find({ type: 'Text', text: '1 of 2 files' })).toBeDefined()
-  await steps.press({ key: 'diff:next' })
-  expect(diffOpens.at(-1)).toBe(`new.ts @ ${short(2)}…${short(0)}`)
+  expect(await ui.find({ type: 'Text', text: `@ ${short(2)}…${short(0)}` })).toBeDefined()
+  // 差異的 Previous／Next（n／m）：換成同一批的上一個／下一個檔案，到頭了不動。
+  expect(await ui.find({ type: 'Text', text: '1 of 2 files' })).toBeDefined()
+  await ui.press({ key: 'diff:next' })
+  expect(await ui.find({ type: 'Text', text: 'new.ts' })).toBeDefined()
   expect(diffTreeArgs.at(-1)?.slice(-2)).toEqual(['old.ts', 'new.ts'])
-  expect(await steps.find({ type: 'Text', text: '2 of 2 files' })).toBeDefined()
-  const opens = diffOpens.length
-  await steps.press({ key: 'diff:next' })
-  expect(diffOpens).toHaveLength(opens)
-  await steps.press({ key: 'diff:prev' })
-  expect(await steps.find({ type: 'Text', text: '1 of 2 files' })).toBeDefined()
-  await steps.unmount()
-  // Back 回列表，選範圍結束：點 commit 又是打開那一筆。
+  expect(await ui.find({ type: 'Text', text: '2 of 2 files' })).toBeDefined()
+  const reads = diffTreeArgs.length
+  await ui.press({ key: 'diff:next' })
+  expect(diffTreeArgs).toHaveLength(reads)
+  await ui.press({ key: 'diff:prev' })
+  expect(await ui.find({ type: 'Text', text: '1 of 2 files' })).toBeDefined()
+  // Back 回檔案列表，再 Back 回 commit 列表，選範圍結束：點 commit 又是打開那一筆。
+  await ui.press({ key: 'diff:back' })
   await ui.press({ key: 'log:back' })
   expect(await ui.find({ type: 'Text', text: 'Press the first commit of the range.' })).toBeUndefined()
   // Cancel 也結束。
@@ -844,7 +842,7 @@ const openPanel = ($: TestEngine) =>
     presentation: { isFullscreen: true, columns: 120 },
   })
 
-test('the conflict tab lists conflicted files, and the merge pane resolves one, git adds it, then continues', async ($, on) => {
+test('the conflict tab lists conflicted files, and the merge view resolves one, git adds it, then continues', async ($, on) => {
   const { calls, writes } = conflictRepo(on)
   await openPanel($)
 
@@ -857,10 +855,12 @@ test('the conflict tab lists conflicted files, and the merge pane resolves one, 
   // 還有衝突時不能 continue。
   expect(await ui.find({ key: 'op:continue' })).toBeUndefined()
   await ui.press({ key: 'conflict:src/a.ts' })
+  // 三欄畫在 Soap Panel 裡，蓋掉分頁。
+  expect(await ui.find({ key: 'sub:conflict' })).toBeUndefined()
 
   // 三欄在兩種畫面上都畫得出來。
   for (const surface of ['terminal', 'desktop'] as const) {
-    const pane = await $.ui.mount({ plugin: 'soap-mods', surface, component: 'Pane', requestId: 'soap-merge', props: PANE_PROPS })
+    const pane = surface === 'terminal' ? ui : await $.ui.mount({ plugin: 'soap-mods', surface, component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
     expect(await pane.find({ type: 'Text', text: '0 of 1 conflicts resolved' })).toBeDefined()
     expect(await pane.find({ key: 'merge:ours:1' })).toBeDefined()
     expect(await pane.find({ key: 'merge:theirs:1' })).toBeDefined()
@@ -870,10 +870,10 @@ test('the conflict tab lists conflicted files, and the merge pane resolves one, 
     // 只畫用得到的按鈕：還沒選時沒有 Reset，還有衝突時沒有 Apply。
     expect(await pane.find({ key: 'merge:reset:1' })).toBeUndefined()
     expect(await pane.find({ key: 'merge:apply' })).toBeUndefined()
-    await pane.unmount()
+    if (pane !== ui) await pane.unmount()
   }
 
-  const pane = await $.ui.mount({ plugin: 'soap-mods', surface: 'desktop', component: 'Pane', requestId: 'soap-merge', props: PANE_PROPS })
+  const pane = await $.ui.mount({ plugin: 'soap-mods', surface: 'desktop', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
   await pane.press({ key: 'merge:ours:1' })
   expect(await pane.find({ type: 'Text', text: '1 of 1 conflicts resolved' })).toBeDefined()
   // 選好之後中間只剩 Reset，Apply 出現。
@@ -912,12 +912,13 @@ test('abort asks once more before running, and Ask Claude sends the file to the 
   expect(await ui.find({ key: 'op:abort-cancel' })).toBeUndefined()
 
   await ui.press({ key: 'conflict:src/a.ts' })
-  const pane = await $.ui.mount({ plugin: 'soap-mods', surface: 'desktop', component: 'Pane', requestId: 'soap-merge', props: PANE_PROPS })
-  await pane.press({ key: 'merge:claude' })
+  await ui.press({ key: 'merge:claude' })
   expect(prompts.length).toBe(1)
   // 給 Claude 的是完整路徑：session 資料夾不是 repo 時，相對路徑會找不到檔案。
   expect(prompts[0]).toContain('`/repo/src/a.ts`')
-  await pane.unmount()
+  // Back 回 conflict 分頁。
+  await ui.press({ key: 'merge:back' })
+  expect(await ui.find({ key: 'op:abort' })).toBeDefined()
 
   await ui.press({ key: 'op:abort' })
   await ui.press({ key: 'op:abort' })
@@ -925,10 +926,10 @@ test('abort asks once more before running, and Ask Claude sends the file to the 
   await ui.unmount()
 })
 
-test('a pane brought to the front, or one whose pressed button was swapped out, gets the keyboard back', async ($, on) => {
+test('Soap Panel brought to the front, or whose pressed button was swapped out, gets the keyboard back', async ($, on) => {
   const clock = mock.clock(on)
-  const pane = (id: string, isShown: boolean, isFocused: boolean) => ({ id, title: id, isShown, isFocused, isPlaced: true })
-  let panes = [pane('soap-panel', true, false)]
+  const pane = (isShown: boolean, isFocused: boolean) => [{ id: 'soap-panel', title: 'Soap Panel', isShown, isFocused, isPlaced: true }]
+  let panes = pane(true, false)
   const focused: string[] = []
   on('ui.panes', () => ({ value: panes }))
   on('ui.open', (_$, e) => {
@@ -936,6 +937,7 @@ test('a pane brought to the front, or one whose pressed button was swapped out, 
 
     return { value: { isPlaced: true } }
   })
+  on('ui.scroll', () => ({}))
   on('ui.close', () => ({ value: undefined }))
   on('ui.toast', () => ({ value: undefined }))
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
@@ -957,33 +959,39 @@ test('a pane brought to the front, or one whose pressed button was swapped out, 
   await clock.advance(200)
   expect(focused).toEqual([])
 
+  // 切到別的分頁再切回來、沒拿到焦點：補給它。
+  panes = pane(false, false)
+  await clock.advance(200)
+  panes = pane(true, false)
+  await clock.advance(200)
+  expect(focused).toEqual(['soap-panel'])
+  focused.length = 0
+
+  // 點衝突檔案：按的那列被整塊換成三欄合併，焦點圈移到 Back；中間的按鈕按了被換掉，焦點圈跟過去；
+  // Back 回分頁，移到子分頁圖示。（焦點圈要真的拿著鍵盤才移得動，測試裡看不到，這裡只確認按得下去。）
+  panes = pane(true, true)
   const ui = await $.ui.mount({ plugin: 'soap-mods', surface: 'desktop', component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
   await ui.press({ key: 'sub:conflict' })
   await ui.press({ key: 'conflict:src/a.ts' })
-  await ui.unmount()
-  focused.length = 0
+  await ui.press({ key: 'merge:both:1' })
+  await ui.press({ key: 'merge:reset:1' })
+  await ui.press({ key: 'merge:next' })
+  expect(await ui.find({ key: 'merge:both:1' })).toBeDefined()
+  await ui.press({ key: 'merge:back' })
+  expect(await ui.find({ key: 'op:abort' })).toBeDefined()
 
-  // 合併面板被切到前面、沒拿到焦點：補給它。
-  panes = [pane('soap-panel', false, false), pane('soap-merge', true, false)]
+  // 按完按鈕丟了焦點：剛按完的一小段時間內補回來。
+  await ui.press({ key: 'sub:diff' })
+  panes = pane(true, false)
   await clock.advance(200)
-  expect(focused).toEqual(['soap-merge'])
-  focused.length = 0
-
-  // 按了 Accept，被按的按鈕被換掉而丟了焦點：剛按完的一小段時間內補回來。
-  panes = [pane('soap-panel', false, false), pane('soap-merge', true, true)]
-  const merge = await $.ui.mount({ plugin: 'soap-mods', surface: 'desktop', component: 'Pane', requestId: 'soap-merge', props: PANE_PROPS })
-  await merge.press({ key: 'merge:ours:1' })
-  panes = [pane('soap-panel', false, false), pane('soap-merge', true, false)]
-  await clock.advance(200)
-  expect(focused).toEqual(['soap-merge'])
+  expect(focused).toEqual(['soap-panel'])
   focused.length = 0
 
   // 過了那段時間才丟焦點（人自己點去輸入框）：不搶回來。
+  panes = pane(true, true)
   await clock.advance(1000)
-  panes = [pane('soap-panel', false, false), pane('soap-merge', true, true)]
-  await clock.advance(200)
-  panes = [pane('soap-panel', false, false), pane('soap-merge', true, false)]
+  panes = pane(true, false)
   await clock.advance(200)
   expect(focused).toEqual([])
-  await merge.unmount()
+  await ui.unmount()
 })
