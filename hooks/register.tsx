@@ -1647,9 +1647,10 @@ async function reloadFilesWhenShown($: EngineInterface) {
 
 // ───── 換分頁 ─────
 
-// 換分頁（上層 Tab 或子分頁）時清掉的東西：錯誤訊息、待確認的 abort、branch 和 log 的搜尋。
+// 換分頁（上層 Tab 或子分頁）時清掉的東西：錯誤訊息、待確認的 abort、branch 和 log 的搜尋、
+// log 點開的 commit（回來時是整個 commit 列表）。
 async function leaveTab($: EngineInterface) {
-  await Promise.all([clearGitMessages($), update($, branchQuery, () => ''), clearLogQuery($)])
+  await Promise.all([clearGitMessages($), update($, branchQuery, () => ''), clearLogQuery($), setLog($, NO_COMMIT)])
 }
 
 async function selectTab($: EngineInterface, id: TabId) {
