@@ -1508,10 +1508,6 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    await $.command.register({
-      name: 'soap-panel',
-      description: 'Open Soap Panel (Git panel)',
-    })
     // 先開面板（畫「讀取中…」），git 在背景讀，不擋住 session 開始。
     void $.ui.open(PANE_ARGS)
     // 舊版另開的差異、合併面板（現在都畫在 Soap Panel 裡），熱重載後還開著就關掉。
@@ -1533,12 +1529,16 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: 'soap-panel' }, async $ => {
-    await refresh($)
-    await $.ui.open(PANE_ARGS)
+  // /soap-panel 是 skills/soap-panel 這個檔案寫的指令（desktop app 還沒開始對話就列得出來），
+  // 這裡接下來直接開面板，不交給 Claude。引擎可能用外掛名稱當前綴，兩個名字都接。
+  for (const command of ['soap-panel', 'soap-mods:soap-panel']) {
+    on('command.run', { command }, async $ => {
+      await refresh($)
+      await $.ui.open(PANE_ARGS)
 
-    return { text: 'Soap Panel opened.' }
-  })
+      return { text: 'Soap Panel opened.' }
+    })
+  }
 
   // 每個回合結束後，檔案可能已經變了，看得到的就順手更新。不等它讀完，免得擋住回合結束；讀不到就維持舊畫面。
   on('turn.complete', ($, e, next) => {

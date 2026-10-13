@@ -1374,7 +1374,6 @@ test('Soap Panel brought to the front, or just pressed, gets the keyboard back',
   on('ui.toast', () => ({ value: undefined }))
   on('session.start', (_$, e) => ({ cwd: e.cwd }))
   on('session.root', () => ({ value: '/repo' }))
-  on('command.register', (_$, e) => ({ value: { command: e.name } }))
   gitRepo(on, { status: '## main\0' })
   await $.session.start({ cwd: '/repo', surface: 'desktop', isInteractive: true })
 
