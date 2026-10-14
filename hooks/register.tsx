@@ -55,6 +55,7 @@ import {
   FILES_WALK_SKIP,
   FILE_VIEW_MAX_BYTES,
   FOCUS_WATCH_MS,
+  GIT_REFRESH_MS,
   LOG_PAGE,
   OP_LABEL,
   PANEL_TITLE,
@@ -350,7 +351,7 @@ async function focusWhenShown($: EngineInterface) {
         refocusUntil = undefined
       }
     }
-    if (isShown && wasShown === false) refreshIfStale($)
+    if (isShown && wasShown === false) void refreshWhenShown($).catch(() => undefined)
     wasShown = isShown
   } catch {
     // 讀不到就等下一輪。
@@ -416,25 +417,16 @@ const parseActiveBranches = parseOnce(parseBranches)
 const gitReads = coalesce()
 
 function refresh($: EngineInterface): Promise<void> {
-  isGitStale = false
-
   return gitReads.run(() => readGit($))
 }
-
-// 回合結束時 git 狀態看不到（停在 Files、Spec 分頁、Soap Panel 不在前面）就不讀，只記著；
-// 換到 Git、Services 分頁（照那排 repo 分組），或 Soap Panel 被切到前面時再讀。
-let isGitStale = false
 
 // 畫得到 git 狀態的分頁：Git，和照 repo 分組的 Services。新分頁預設不讀 git。
 const showsGit = (t: TabId) => t === 'git' || t === 'services'
 
+// 回合結束、每 GIT_REFRESH_MS、換到 Git／Services 分頁、Soap Panel 被切到前面時呼叫；
+// git 狀態看不到（停在 Files、Spec 分頁、Soap Panel 不在前面）就不讀。
 async function refreshWhenShown($: EngineInterface) {
   if (showsGit(await read($, tab)) && (await isPaneShown($))) await refresh($)
-  else isGitStale = true
-}
-
-function refreshIfStale($: EngineInterface) {
-  if (isGitStale) void refresh($).catch(() => undefined)
 }
 
 // 選中的 repo 的狀態、分支、.git 裡的檔案，和其他 repo 的摘要，一起讀。
@@ -1657,7 +1649,7 @@ async function selectTab($: EngineInterface, id: TabId) {
   if (id === 'files') void reloadFiles($).catch(() => undefined)
   if (id === 'spec') void reloadSpec($).catch(() => undefined)
   if (id === 'db') void loadDbConnections($).catch(() => undefined)
-  if (showsGit(id)) refreshIfStale($)
+  if (showsGit(id)) void refresh($).catch(() => undefined)
 }
 
 // 換子分頁。log 不在看的時候不讀，換過來才讀。
@@ -1750,6 +1742,7 @@ export const register: Register = on => {
     // 用量直接跟引擎拿（不花錢），這裡只負責讓重置倒數每分鐘重畫一次。
     $.clock.every(USAGE_TICK_MS, () => $.ui.invalidate('ui.render'))
     $.clock.every(SERVICES_SCAN_MS, () => void scanWhenShown($).catch(() => undefined))
+    $.clock.every(GIT_REFRESH_MS, () => void refreshWhenShown($).catch(() => undefined))
 
     return next(e)
   })

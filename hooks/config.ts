@@ -167,6 +167,8 @@ export const USAGE_BAR_CELLS = 10
 
 // Services 分頁開著時多久重新掃一次程序（掃一次大約 1 秒）。
 export const SERVICES_SCAN_MS = 5_000
+// Git、Services 分頁開著時多久重讀一次 git 狀態（外面改的檔案、回合進行中改的也看得到）。
+export const GIT_REFRESH_MS = 5_000
 // 重跑：停掉之後等多久再開（讓 port 放出來）；開完之後在這些時間點檢查新程序還在不在（同時重掃，
 // 服務要一點時間才會 LISTEN）。這段時間內掛掉就算重跑失敗，在面板上提示。
 export const RESTART_GAP_MS = 500
