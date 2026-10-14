@@ -68,7 +68,7 @@ import {
   USAGE_TICK_MS,
 } from './config'
 import { NO_COVER, coverData, patchCover, showCover } from './cover'
-import { EMPTY, EMPTY_DB, EMPTY_DIFF, EMPTY_FILE_VIEW, EMPTY_FILES, EMPTY_LOG, EMPTY_MERGE, EMPTY_PLAN, EMPTY_SERVICES, EMPTY_SPEC, NO_COMMIT, NO_DB_CONNECTION, NO_MESSAGES } from './defaults'
+import { EMPTY, EMPTY_DB, EMPTY_DIFF, EMPTY_FILE_VIEW, EMPTY_FILES, EMPTY_LOG, EMPTY_MERGE, EMPTY_PLAN, EMPTY_SERVICES, EMPTY_SPEC, NO_COMMIT, NO_DB_CONNECTION, NO_FILE_MENU, NO_MESSAGES } from './defaults'
 import { absPath, byName, childPath, fileSteps, formatSize, matchPaths, sortEntries, viewText } from './files/list'
 import { errorText, failure, isMissingCommand } from './errors'
 import {
@@ -87,6 +87,7 @@ import {
   parseCommitFiles,
   parseLog,
   parseStatus,
+  splitPath,
   toHunks,
 } from './git/parse'
 import type { Repo } from './git/repo'
@@ -202,8 +203,13 @@ async function readFiles($: EngineInterface): Promise<FilesView> {
   return { ...EMPTY_FILES, ...(await read($, files)) }
 }
 
+// 換資料夾、改搜尋字時 ⋯ 選單收起來；回合結束重列同一個資料夾、重找同樣的字不收。
 async function setFiles($: EngineInterface, change: Partial<FilesView>) {
-  await update($, files, f => patch(f, change))
+  await update($, files, f => {
+    const isMoved = (change.dir !== undefined && change.dir !== f.dir) || (change.query !== undefined && change.query !== f.query)
+
+    return patch(f, isMoved ? { ...NO_FILE_MENU, ...change } : change)
+  })
 }
 
 async function setSpec($: EngineInterface, change: Partial<SpecView>) {
@@ -212,6 +218,14 @@ async function setSpec($: EngineInterface, change: Partial<SpecView>) {
 
 async function setDb($: EngineInterface, change: Partial<DbView>) {
   await update($, db, v => patch(v, change))
+}
+
+// 待確認的按鈕（打勾、紅字）DELETE_ARM_MS 後收回（disarm）。一種一個 slot：再計時、或做了、按了別的就先停掉舊的。
+type ArmSlot = { timer?: Timer }
+
+function disarmLater($: EngineInterface, slot: ArmSlot, disarm: () => unknown) {
+  slot.timer?.cancel()
+  slot.timer = $.clock.after(DELETE_ARM_MS, () => void disarm())
 }
 
 // ───── 跑 git ─────
@@ -610,7 +624,7 @@ async function switchBranch($: EngineInterface, name: string, isRemote: boolean)
 
     return
   }
-  disarmTimer?.cancel()
+  gitArm.timer?.cancel()
   await setView($, { switchArmed: '' })
   try {
     await gitOk($, isRemote ? ['switch', '--track', name] : ['switch', name])
@@ -625,13 +639,12 @@ async function switchBranch($: EngineInterface, name: string, isRemote: boolean)
   await refresh($)
 }
 
-// 待確認的刪除（打勾）、切換（再按一次）一次只有一個，DELETE_ARM_MS 後收回去；再按（做了或按了別列）就先停掉舊的計時。
-let disarmTimer: Timer | undefined
+// 待確認的刪除（打勾）、切換（再按一次）一次只有一個。
+const gitArm: ArmSlot = {}
 
 async function arm($: EngineInterface, armed: Partial<GitView>) {
-  disarmTimer?.cancel()
+  disarmLater($, gitArm, () => setView($, { deleteArmed: null, switchArmed: '' }))
   await setView($, { ...NO_MESSAGES, ...armed })
-  disarmTimer = $.clock.after(DELETE_ARM_MS, () => void setView($, { deleteArmed: null, switchArmed: '' }))
 }
 
 const armDelete = ($: EngineInterface, name: string, isForce: boolean) => arm($, { deleteArmed: { name, isForce } })
@@ -645,7 +658,7 @@ async function deleteBranch($: EngineInterface, name: string) {
 
     return
   }
-  disarmTimer?.cancel()
+  gitArm.timer?.cancel()
   try {
     await gitOk($, ['branch', armed.isForce ? '-D' : '-d', name])
   } catch (err) {
@@ -675,7 +688,7 @@ function setSyncing($: EngineInterface, kind: GitSync | '') {
 async function syncBranches($: EngineInterface, kind: GitSync) {
   if (syncing !== '') return
   setSyncing($, kind)
-  disarmTimer?.cancel()
+  gitArm.timer?.cancel()
   await setView($, NO_MESSAGES)
   try {
     const r = await gitOk($, SYNC_ARGS[kind], { env: { GIT_TERMINAL_PROMPT: '0' }, timeoutMs: SYNC_TIMEOUT_MS })
@@ -1237,7 +1250,62 @@ async function searchFiles($: EngineInterface, text: string) {
 async function clearFilesQuery($: EngineInterface) {
   walked = undefined
   fileSearches.drop()
-  await setFiles($, { query: '', found: null })
+  await setFiles($, { ...NO_FILE_MENU, query: '', found: null })
+}
+
+// ⋯ 選單一次只開一列的，換列、離開分頁、開檔案都收起來（換資料夾、搜尋見 setFiles）。
+const fileArm: ArmSlot = {}
+
+async function toggleFileMenu($: EngineInterface, path: string) {
+  fileArm.timer?.cancel()
+  await update($, files, f => patch(f, { ...NO_FILE_MENU, menu: f.menu === path ? '' : path }))
+}
+
+// Windows：直接跑 explorer 會照引擎隱藏子程式視窗的設定，開成看不見的視窗；改由 Start-Process 用一般視窗開。
+// 路徑從環境變數給，不拼進指令。
+const REVEAL_ARGV = powershellArgv(
+  "$ErrorActionPreference = 'Stop'; Start-Process -FilePath explorer.exe -WindowStyle Normal -ArgumentList ('/select,\"' + $env:SOAP_PATH + '\"')",
+)
+
+// 在檔案總管裡選起它（資料夾也是在上一層選起來）；macOS 用 open -R。
+async function revealFile($: EngineInterface, path: string) {
+  const abs = absPath(await $.session.root(), path)
+  try {
+    if (await isWindows($)) await runOk($, REVEAL_ARGV, 'Explorer', { env: { SOAP_PATH: abs.replace(/\//g, '\\') } })
+    else await runOk($, ['open', '-R', abs], 'open')
+  } catch (err) {
+    await setFiles($, { menuError: `Couldn't show ${splitPath(path).name}: ${errorText(err)}` })
+
+    return
+  }
+  await setFiles($, NO_FILE_MENU)
+}
+
+// 刪檔案或整個資料夾要按兩次：Delete 按了換成紅字，DELETE_ARM_MS 內再按才刪，不經過資源回收筒。
+// path 是列出來的，不會是 session 資料夾本身或含 ..；還是擋一下，免得刪到外面。
+async function deleteFile($: EngineInterface, path: string) {
+  const f = await readFiles($)
+  fileArm.timer?.cancel()
+  if (!f.isDeleteArmed) {
+    disarmLater($, fileArm, () => setFiles($, { isDeleteArmed: false }))
+    await setFiles($, { isDeleteArmed: true, menuError: '' })
+
+    return
+  }
+  const { name } = splitPath(path)
+  try {
+    if (path === '' || path.split('/').includes('..')) throw new Error('outside the session folder')
+    await removePath($, absPath(await $.session.root(), path))
+  } catch (err) {
+    await setFiles($, { isDeleteArmed: false, menuError: `Couldn't delete ${name}: ${errorText(err)}` })
+
+    return
+  }
+  $.ui.toast(`Deleted ${name}`)
+  // 搜尋用的檔案清單只濾掉刪掉的，不重走整個 session 資料夾。
+  walked = walked?.then(w => ({ ...w, paths: w.paths.filter(p => p !== path && !p.startsWith(`${path}/`)) }))
+  await setFiles($, NO_FILE_MENU)
+  await Promise.all([reloadFiles($), findFiles($, f.query)])
 }
 
 // 連按 Next、或讀到一半按了 Back，晚到的舊內容不寫。
@@ -1356,33 +1424,36 @@ async function doSpec($: EngineInterface) {
   $.ui.toast('Sent to Claude')
 }
 
-// 刪整個 feature 資料夾（含 assets）：macOS 用 rm -rf，Windows 用 PowerShell 的 Remove-Item；路徑從環境變數給，不拼進指令。
-const REMOVE_DIR_ARGV = powershellArgv("$ErrorActionPreference = 'Stop'; Remove-Item -LiteralPath $env:SOAP_DIR -Recurse -Force")
+// 刪檔案或整個資料夾（Spec 的 feature 資料夾、Files 分頁的一列）：macOS 用 rm -rf，Windows 用 PowerShell 的 Remove-Item；
+// 路徑從環境變數給，不拼進指令。
+const REMOVE_ARGV = powershellArgv("$ErrorActionPreference = 'Stop'; Remove-Item -LiteralPath $env:SOAP_PATH -Recurse -Force")
 
-let specDisarmTimer: Timer | undefined
+async function removePath($: EngineInterface, abs: string) {
+  if (await isWindows($)) await runOk($, REMOVE_ARGV, 'Remove-Item', { env: { SOAP_PATH: abs } })
+  else await runOk($, ['rm', '-rf', '--', abs], 'rm')
+}
+
+const specArm: ArmSlot = {}
 
 // 刪 Spec 要按兩次：垃圾桶按了換成打勾，DELETE_ARM_MS 內再按才刪掉整個 .soap/tasks/<feature>/；按別的垃圾桶，原本的就收回。
 // 名稱是 fs.list 列出來的資料夾名稱；空的、. 或 ..、含斜線的不刪（會刪到 .soap/tasks 外面）。
 async function deleteSpec($: EngineInterface, name: string) {
   const s = await read($, spec)
   if (s.deleteArmed !== name) {
-    specDisarmTimer?.cancel()
+    disarmLater($, specArm, () => setSpec($, { deleteArmed: '' }))
     await setSpec($, { deleteArmed: name, deleteError: '' })
-    specDisarmTimer = $.clock.after(DELETE_ARM_MS, () => void setSpec($, { deleteArmed: '' }))
 
     return
   }
-  specDisarmTimer?.cancel()
+  specArm.timer?.cancel()
   await setSpec($, { deleteArmed: '' })
   if (name === '' || name === '.' || name === '..' || /[\\/]/.test(name)) {
     await setSpec($, { deleteError: `Couldn't delete ${name}: not a feature folder name.` })
 
     return
   }
-  const dir = `${await $.session.root()}/${SPEC_DIR}/${name}`
   try {
-    if (await isWindows($)) await runOk($, REMOVE_DIR_ARGV, 'Remove-Item', { env: { SOAP_DIR: dir } })
-    else await runOk($, ['rm', '-rf', '--', dir], 'rm')
+    await removePath($, `${await $.session.root()}/${SPEC_DIR}/${name}`)
   } catch (err) {
     await setSpec($, { deleteError: `Couldn't delete ${name}: ${errorText(err)}` })
     await loadSpecs($)
@@ -1516,14 +1587,14 @@ async function addDbConnection($: EngineInterface, text: string) {
   }
 }
 
-let dbDisarmTimer: Timer | undefined
+const dbArm: ArmSlot = {}
 
 // 刪連線要按兩次，跟 Spec 一樣；刪的時候密碼一起刪。
 async function deleteDbConnection($: EngineInterface, id: string) {
-  dbDisarmTimer?.cancel()
+  dbArm.timer?.cancel()
   if ((await read($, db)).deleteArmed !== id) {
+    disarmLater($, dbArm, () => setDb($, { deleteArmed: '' }))
     await setDb($, { deleteArmed: id, error: '' })
-    dbDisarmTimer = $.clock.after(DELETE_ARM_MS, () => void setDb($, { deleteArmed: '' }))
 
     return
   }
@@ -1709,9 +1780,12 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     // 不等它做完：停掉、重跑要好幾秒，按鈕先換成「Stopping…」。
     runServiceAction: (s, action) => void runServiceAction($, s, action),
     openDir: dir => loadFiles($, dir),
-    openFile: path => showFile($, path),
+    openFile: path => Promise.all([setFiles($, NO_FILE_MENU), showFile($, path)]),
     stepFile: step => stepFile($, step),
     searchFiles: text => searchFiles($, text),
+    toggleFileMenu: path => toggleFileMenu($, path),
+    revealFile: path => revealFile($, path),
+    deleteFile: path => deleteFile($, path),
     openSpec: name => openSpec($, name),
     closeSpec: () => closeSpec($),
     doSpec: () => doSpec($),
@@ -1813,6 +1887,8 @@ export const register: Register = on => {
         syncing,
         services: sv,
         files: fileList,
+        // 只有 Files 的 ⋯ 選單用得到，開著才問（問一次就記著）。
+        isWindows: fileList.menu !== '' && (await isWindows($)),
         spec: specs,
         db: dbView,
         dbBusy,

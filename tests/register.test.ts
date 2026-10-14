@@ -782,6 +782,69 @@ test('pressing a file in the Files tab shows its text over the tabs, steps with 
   await ui.unmount()
 })
 
+test('the ⋯ of a Files row opens a menu: Show in Explorer selects it in Explorer, Delete asks once more and then deletes it', async ($, on) => {
+  const entries = [fsEntry('src', 'dir'), fsEntry('a.ts', 'file', 12)]
+  const runs: { argv: string[]; path?: string }[] = []
+  let isFailing = false
+  stubPanel(on, { root: 'C:/proj' })
+  on('env.get', (_$, e) => ({ value: e.name === 'OS' ? 'Windows_NT' : undefined }))
+  on('fs.list', (_$, e) => ({ value: posix(e.path) === '/proj' ? entries : [] }))
+  on('process.run', (_$, e) => {
+    // Show in Explorer 給反斜線路徑、Delete 給原本的 / 路徑，都經過 PowerShell。
+    const path = e.init?.env?.SOAP_PATH
+    if (path === undefined) return ok('')
+    runs.push({ argv: [...e.argv], path })
+    if (path.includes('\\')) return ok('')
+    if (isFailing) return fail('Access denied', 1)
+    entries.splice(entries.findIndex(x => `C:/proj/${x.name}` === e.init?.env?.SOAP_PATH), 1)
+
+    return ok('')
+  })
+  on('ui.toast', () => ({ value: undefined }))
+
+  const ui = await mountPane($, 'desktop')
+  await ui.press({ key: 'tab:files' })
+  expect(await ui.find({ key: 'files:reveal:src' })).toBeUndefined()
+
+  // 按 ⋯ 展開那列的選單，按另一列的 ⋯ 換過去，再按一次收起來。
+  await ui.press({ key: 'files:more:src' })
+  // 選單是浮在 src 那列下面的卡片，不推動底下的列。
+  expect((await ui.find({ key: 'files:menu' }))?.props).toMatchObject({ position: 'absolute', top: 1, right: 0 })
+  expect(await ui.find({ key: 'files:reveal:src' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Show in Explorer' })).toBeDefined()
+  await ui.press({ key: 'files:more:a.ts' })
+  expect(await ui.find({ key: 'files:reveal:src' })).toBeUndefined()
+  await ui.press({ key: 'files:more:a.ts' })
+  expect(await ui.find({ key: 'files:reveal:a.ts' })).toBeUndefined()
+
+  // Show in Explorer：PowerShell 用一般視窗開 explorer /select,（反斜線路徑），選單收起來。
+  await ui.press({ key: 'files:more:src' })
+  await ui.press({ key: 'files:reveal:src' })
+  expect(runs.map(r => [r.argv[0], r.path])).toEqual([['powershell', 'C:\\proj\\src']])
+  expect(await ui.find({ key: 'files:reveal:src' })).toBeUndefined()
+
+  // Delete 按一次只換成紅字；刪不掉寫原因，那列還在。
+  runs.length = 0
+  await ui.press({ key: 'files:more:a.ts' })
+  await ui.press({ key: 'files:delete:a.ts' })
+  expect(runs).toEqual([])
+  expect(await ui.find({ type: 'Text', text: 'Press again to delete' })).toBeDefined()
+  isFailing = true
+  await ui.press({ key: 'files:delete:a.ts' })
+  expect(await ui.find({ type: 'Text', text: /^Couldn't delete a\.ts: .*Access denied/ })).toBeDefined()
+
+  // 再按兩次：刪掉，那列和選單都不見了。
+  isFailing = false
+  await ui.press({ key: 'files:delete:a.ts' })
+  await ui.press({ key: 'files:delete:a.ts' })
+  expect(runs.at(-1)?.argv[0]).toBe('powershell')
+  expect(runs.at(-1)?.path).toBe('C:/proj/a.ts')
+  expect(await ui.find({ key: 'files:file:a.ts' })).toBeUndefined()
+  expect(await ui.find({ key: 'files:delete:a.ts' })).toBeUndefined()
+  expect(await ui.find({ key: 'files:dir:src' })).toBeDefined()
+  await ui.unmount()
+})
+
 test('in the Files tab Previous steps back through the files, and inside a folder Previous/Next stay on its files', async ($, on) => {
   const reads: string[] = []
   stubPanel(on, { root: '/proj' })

@@ -270,6 +270,12 @@ export type FilesView = {
   query: string
   /** Files of the whole session folder matching the search, null when not searching or still walking. */
   found: FoundFiles | null
+  /** The entry whose ⋯ menu is open, relative to the session folder; '' when none. */
+  menu: string
+  /** Delete in the open menu was pressed once and waits for the second press. */
+  isDeleteArmed: boolean
+  /** Why the open menu's action failed, '' when none. */
+  menuError: string
 }
 
 export type FoundFiles = {

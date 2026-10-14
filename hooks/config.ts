@@ -54,6 +54,7 @@ export const ICONS = {
     '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>',
   check: '<path d="M20 6 9 17l-5-5"/>',
   db: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5V19A9 3 0 0 0 21 19V5"/><path d="M3 12A9 3 0 0 0 21 12"/>',
+  more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
   copy: '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
 }
 export type IconName = keyof typeof ICONS
@@ -67,6 +68,9 @@ export const LOG_AUTHOR_WIDTH = 10
 export const LOG_AGO_WIDTH = 4
 // 選中的 tab 恆亮的底色。
 export const ACTIVE_BG = '#3a3a3a'
+// Files 分頁 ⋯ 選單的底色（不透明，蓋住底下的列）和寬度（字數，放得下 Press again to delete）。
+export const MENU_BG = '#262626'
+export const MENU_WIDTH = 26
 // 圖示按鈕的寬度：這串空白撐出按鈕，底色、hover、圖示都對齊這塊區域。
 // 用不換行空白（ ），一般空白會被吃掉。
 export const ICON_BUTTON_LABEL = ' '.repeat(10)

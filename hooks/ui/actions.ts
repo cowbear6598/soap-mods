@@ -76,6 +76,12 @@ export type Actions = {
   stepFile: (step: 1 | -1) => unknown
   // 從 session 資料夾往下找檔名。
   searchFiles: (text: string) => unknown
+  // 一列最右邊的 ⋯：打開那列的選單，再按收起來；path 相對 session 資料夾。
+  toggleFileMenu: (path: string) => unknown
+  // 在檔案總管（macOS 是 Finder）裡選起它。
+  revealFile: (path: string) => unknown
+  // 刪掉檔案或整個資料夾：按第一次只是待確認，再按才刪。
+  deleteFile: (path: string) => unknown
   // spec：name 是 .soap/tasks 底下的 feature 資料夾。
   openSpec: (name: string) => unknown
   closeSpec: () => unknown
@@ -119,6 +125,8 @@ export type PanelData = {
   syncing: GitSync | ''
   services: ServicesView
   files: FilesView
+  // Files 的選單寫 Show in Explorer 還是 Show in Finder；選單沒開時沒問，一律 false。
+  isWindows: boolean
   spec: SpecView
   db: DbView
   dbBusy: DbBusy

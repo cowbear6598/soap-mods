@@ -24,6 +24,8 @@ type Row = {
   key: string
   label: string
   onPress: () => unknown
+  // 按了這列會不見時，焦點圈移到這顆（Press 的 ringKey）。
+  ringKey?: string
   isDim?: boolean
   isBold?: boolean
   isTruncated?: boolean
@@ -84,7 +86,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
       return (
         <Box key={`${row.key}:row`} gap={1} paddingLeft={row.indent ?? 2} hover={{ backgroundColor: ACTIVE_BG }}>
           {row.lead}
-          <Button key={row.key} label={row.label} plain dimColor={row.isDim} onPress={press(row.onPress)} />
+          <Button key={row.key} label={row.label} plain dimColor={row.isDim} onPress={press(row.onPress, row.ringKey)} />
           {row.rest}
           {row.trailing}
         </Box>
@@ -111,7 +113,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
         </Box>
         <Box position="absolute" top={0} left={0} right={0} bottom={0} overflow="hidden">
           <Box width={ROW_OVERLAY_WIDTH} flexShrink={0}>
-            <Button key={row.key} label={ROW_BUTTON_LABEL} plain onPress={press(row.onPress)} />
+            <Button key={row.key} label={ROW_BUTTON_LABEL} plain onPress={press(row.onPress, row.ringKey)} />
           </Box>
         </Box>
       </Box>
