@@ -715,6 +715,43 @@ test('the Files tab lists the session folder, folders first, opens a folder and 
   await ui.unmount()
 })
 
+test('the Files search finds file names in every folder below the session folder, skips node_modules, opens a match, and Clear goes back', async ($, on) => {
+  const tree: Record<string, ReturnType<typeof fsEntry>[]> = {
+    '/proj': [fsEntry('src', 'dir'), fsEntry('node_modules', 'dir'), fsEntry('Login.md')],
+    '/proj/src': [fsEntry('login', 'dir'), fsEntry('app.ts')],
+    '/proj/src/login': [fsEntry('form.tsx')],
+    '/proj/node_modules': [fsEntry('login.js')],
+  }
+  on('clock.now', () => ({ value: 0 }))
+  on('session.root', () => ({ value: '/proj' }))
+  on('fs.list', (_$, e) => ({ value: tree[posix(e.path) ?? ''] ?? [] }))
+  on('fs.stat', () => ({ value: { kind: 'file', size: 4, mtimeMs: 0, isLink: false } }))
+  on('fs.read', () => ({ value: 'form' }))
+  on('process.run', () => ok(''))
+
+  const ui = await mountPane($, 'desktop')
+  await ui.press({ key: 'tab:files' })
+  await ui.input({ key: 'files:search', text: 'LOGIN', kind: 'change' })
+  // 檔名符合的排前面，資料夾符合的在後；node_modules 不找；搜尋時不列資料夾內容。
+  expect(await waitFor(() => ui.find({ key: 'files:found:src/login/form.tsx' }))).toBeDefined()
+  expect(await ui.find({ key: 'files:found:Login.md' })).toBeDefined()
+  expect(await ui.find({ key: 'files:found:node_modules/login.js' })).toBeUndefined()
+  expect(await ui.find({ key: 'files:dir:src' })).toBeUndefined()
+
+  await ui.input({ key: 'files:search', text: 'nope', kind: 'change' })
+  expect(await ui.find({ type: 'Text', text: 'No files match.' })).toBeDefined()
+
+  await ui.input({ key: 'files:search', text: 'form', kind: 'change' })
+  await ui.press({ key: 'files:found:src/login/form.tsx' })
+  expect((await ui.find({ type: 'Code' }))?.props).toMatchObject({ path: 'src/login/form.tsx' })
+  await ui.press({ key: 'fileview:back' })
+
+  await ui.input({ key: 'files:search', text: 'form' })
+  expect(await ui.find({ key: 'files:dir:src' })).toBeDefined()
+  expect(await ui.find({ key: 'files:found:src/login/form.tsx' })).toBeUndefined()
+  await ui.unmount()
+})
+
 test('pressing a file in the Files tab shows its text over the tabs, steps with Next, and Back returns', async ($, on) => {
   const texts: Record<string, string> = { '/proj/a.ts': 'const a = 1\r\n', '/proj/b.png': 'PNG\0\0' }
   on('clock.now', () => ({ value: 0 }))

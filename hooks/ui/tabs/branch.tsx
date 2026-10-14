@@ -1,6 +1,7 @@
 import type { GitBranch } from '../../../types'
 import { BRANCH_ROW_LIMIT, BRANCH_TREE_LIMIT, COPIED_TINT, FOLDER_COLOR, SWITCH_ARMED_HINT } from '../../config'
-import { filterBranches, hasQuery } from '../../git/parse'
+import { filterBranches } from '../../git/parse'
+import { hasQuery } from '../../search'
 import { branchTree, treeRows } from '../../git/tree'
 import type { TabBody } from './context'
 

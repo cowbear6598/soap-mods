@@ -1,6 +1,7 @@
 import type { CommitFile, GitCommit, LogView } from '../../../types'
 import { LOG_AGO_WIDTH, LOG_AUTHOR_WIDTH, LOG_SHA_WIDTH } from '../../config'
-import { commitsLabel, formatAgo, hasQuery, letterKind, logBranch } from '../../git/parse'
+import { commitsLabel, formatAgo, letterKind, logBranch } from '../../git/parse'
+import { hasQuery } from '../../search'
 import { backButton } from '../stepBar'
 import type { TabBody, TabContext } from './context'
 

@@ -74,6 +74,8 @@ export type Actions = {
   // 看檔案內容（畫在 Soap Panel 裡）；path 一樣相對 session 資料夾。
   openFile: (path: string) => unknown
   stepFile: (step: 1 | -1) => unknown
+  // 從 session 資料夾往下找檔名。
+  searchFiles: (text: string) => unknown
   // spec：name 是 .soap/tasks 底下的 feature 資料夾。
   openSpec: (name: string) => unknown
   closeSpec: () => unknown

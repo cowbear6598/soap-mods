@@ -50,6 +50,9 @@ import {
   DELETE_ARM_MS,
   FILE_PAGE,
   FILES_ROW_LIMIT,
+  FILES_WALK_BATCH,
+  FILES_WALK_LIMIT,
+  FILES_WALK_SKIP,
   FILE_VIEW_MAX_BYTES,
   FOCUS_WATCH_MS,
   LOG_PAGE,
@@ -65,7 +68,7 @@ import {
 } from './config'
 import { NO_COVER, coverData, patchCover, showCover } from './cover'
 import { EMPTY, EMPTY_DB, EMPTY_DIFF, EMPTY_FILE_VIEW, EMPTY_FILES, EMPTY_LOG, EMPTY_MERGE, EMPTY_PLAN, EMPTY_SERVICES, EMPTY_SPEC, NO_COMMIT, NO_DB_CONNECTION, NO_MESSAGES } from './defaults'
-import { fileSteps, formatSize, sortEntries, viewText } from './files/list'
+import { absPath, byName, childPath, fileSteps, formatSize, matchPaths, sortEntries, viewText } from './files/list'
 import { errorText, failure, isMissingCommand } from './errors'
 import {
   BRANCH_FORMAT,
@@ -75,7 +78,6 @@ import {
   diffSteps,
   fileKind,
   filterCommits,
-  hasQuery,
   isConflict,
   isPromptSafePath,
   letterKind,
@@ -131,6 +133,7 @@ import { renderPanel } from './ui/panel'
 import { coalesce, latestOnly } from './latest'
 import { neighbour } from './neighbour'
 import { patch } from './patch'
+import { hasQuery } from './search'
 
 // ───── 面板 id（引擎要在這個檔案裡直接看到值，不能 import）─────
 
@@ -191,6 +194,11 @@ async function readFileCover($: EngineInterface) {
 
 async function setServices($: EngineInterface, change: Partial<ServicesView>) {
   await update($, services, s => patch(s, change))
+}
+
+// 面板重新載入時 atom 留著舊版存的樣子，後來加的欄位（query、found）會沒有：補上預設值。
+async function readFiles($: EngineInterface): Promise<FilesView> {
+  return { ...EMPTY_FILES, ...(await read($, files)) }
 }
 
 async function setFiles($: EngineInterface, change: Partial<FilesView>) {
@@ -1181,7 +1189,7 @@ const folderLoads = latestOnly()
 async function loadFiles($: EngineInterface, dir: string) {
   const isStale = folderLoads.start()
   const root = await $.session.root()
-  const listed = await $.fs.list(dir === '' ? root : `${root}/${dir}`).then(
+  const listed = await $.fs.list(absPath(root, dir)).then(
     list => ({ entries: sortEntries(list), error: '' }),
     (err: unknown) => ({ entries: [], error: `Couldn't list ./${dir}: ${errorText(err)}` }),
   )
@@ -1190,7 +1198,54 @@ async function loadFiles($: EngineInterface, dir: string) {
 }
 
 async function reloadFiles($: EngineInterface) {
-  await loadFiles($, (await read($, files)).dir)
+  await loadFiles($, (await readFiles($)).dir)
+}
+
+type Walk = { paths: string[]; isCapped: boolean }
+
+// 搜尋用的 session 資料夾底下所有檔案，第一次搜的時候才走一遍，之後打字只重新過濾；換分頁、回合結束丟掉。
+let walked: Promise<Walk> | undefined
+// 打字很快時，晚算完的舊搜尋不寫。
+const fileSearches = latestOnly()
+
+// 由上往下走，一次讀 FILES_WALK_BATCH 個資料夾；跳過 FILES_WALK_SKIP，讀不到的資料夾略過。收滿 FILES_WALK_LIMIT 個檔案就停。
+// 走完照 byName 排好，之後每次打字只要依序挑出符合的，不用再排。
+async function walkFiles($: EngineInterface): Promise<Walk> {
+  const root = await $.session.root()
+  const paths: string[] = []
+  const queue = ['']
+  while (queue.length > 0 && paths.length < FILES_WALK_LIMIT) {
+    const batch = queue.splice(0, FILES_WALK_BATCH)
+    const lists = await Promise.all(batch.map(async dir => ({ dir, list: await $.fs.list(absPath(root, dir)).catch(() => []) })))
+    for (const { dir, list } of lists) {
+      for (const e of list) {
+        if (e.kind !== 'dir') paths.push(childPath(dir, e.name))
+        else if (!FILES_WALK_SKIP.includes(e.name)) queue.push(childPath(dir, e.name))
+      }
+    }
+  }
+
+  return { paths: paths.slice(0, FILES_WALK_LIMIT).sort(byName), isCapped: paths.length > FILES_WALK_LIMIT || queue.length > 0 }
+}
+
+// 搜尋框有字就從整個 session 資料夾挑出符合的檔案（存前 FILES_ROW_LIMIT 筆）；沒字就回到資料夾列表。
+async function findFiles($: EngineInterface, query: string) {
+  const isStale = fileSearches.start()
+  if (!hasQuery(query)) return setFiles($, { found: null })
+  const all = await (walked ??= walkFiles($))
+  if (isStale()) return
+  await setFiles($, { found: { ...matchPaths(all.paths, query, FILES_ROW_LIMIT), isCapped: all.isCapped } })
+}
+
+async function searchFiles($: EngineInterface, text: string) {
+  await setFiles($, { query: text })
+  await findFiles($, text)
+}
+
+async function clearFilesQuery($: EngineInterface) {
+  walked = undefined
+  fileSearches.drop()
+  await setFiles($, { query: '', found: null })
 }
 
 // 連按 Next、或讀到一半按了 Back，晚到的舊內容不寫。
@@ -1227,7 +1282,7 @@ async function showFile($: EngineInterface, path: string) {
 }
 
 async function stepFile($: EngineInterface, step: 1 | -1) {
-  const [shown, list] = await Promise.all([readFileCover($), read($, files)])
+  const [shown, list] = await Promise.all([readFileCover($), readFiles($)])
   const next = neighbour(fileSteps(list), p => p === shown.path, step)
   if (next !== undefined) await showFile($, next)
 }
@@ -1579,19 +1634,20 @@ async function closeCover($: EngineInterface) {
   await update($, cover, c => (c.kind === 'none' ? c : NO_COVER))
 }
 
-// 回合結束：Claude 可能改了檔案。Files 分頁開著就重列，開著檔案內容就重讀。
+// 回合結束：Claude 可能改了檔案。Files 分頁開著就重列（有搜尋就重新走一遍再找），開著檔案內容就重讀。
 async function reloadFilesWhenShown($: EngineInterface) {
-  const [t, shown] = await Promise.all([read($, tab), readFileCover($)])
+  const [t, shown, list] = await Promise.all([read($, tab), readFileCover($), readFiles($)])
   if (t !== 'files') return
-  await Promise.all([reloadFiles($), shown.path === '' ? undefined : showFile($, shown.path)])
+  walked = undefined
+  await Promise.all([reloadFiles($), findFiles($, list.query), shown.path === '' ? undefined : showFile($, shown.path)])
 }
 
 // ───── 換分頁 ─────
 
-// 換分頁（上層 Tab 或子分頁）時清掉的東西：錯誤訊息、待確認的 abort、branch 和 log 的搜尋、
+// 換分頁（上層 Tab 或子分頁）時清掉的東西：錯誤訊息、待確認的 abort、branch、log 和 Files 的搜尋、
 // log 點開的 commit（回來時是整個 commit 列表）。
 async function leaveTab($: EngineInterface) {
-  await Promise.all([setView($, NO_MESSAGES), update($, branchQuery, () => ''), clearLogQuery($), setLog($, NO_COMMIT)])
+  await Promise.all([setView($, NO_MESSAGES), update($, branchQuery, () => ''), clearLogQuery($), clearFilesQuery($), setLog($, NO_COMMIT)])
 }
 
 async function selectTab($: EngineInterface, id: TabId) {
@@ -1663,6 +1719,7 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     openDir: dir => loadFiles($, dir),
     openFile: path => showFile($, path),
     stepFile: step => stepFile($, step),
+    searchFiles: text => searchFiles($, text),
     openSpec: name => openSpec($, name),
     closeSpec: () => closeSpec($),
     doSpec: () => doSpec($),
@@ -1737,7 +1794,7 @@ export const register: Register = on => {
       read($, branchQuery),
       read($, fileLimit),
       read($, services),
-      read($, files),
+      readFiles($),
       read($, spec),
       read($, db),
       read($, log),

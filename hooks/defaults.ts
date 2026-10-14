@@ -22,7 +22,7 @@ export const EMPTY: GitView = {
 
 export const EMPTY_SERVICES: ServicesView = { isLoaded: false, items: [], error: '', actionError: '' }
 
-export const EMPTY_FILES: FilesView = { dir: '', isLoaded: false, entries: [], total: 0, error: '' }
+export const EMPTY_FILES: FilesView = { dir: '', isLoaded: false, entries: [], total: 0, error: '', query: '', found: null }
 
 export const EMPTY_FILE_VIEW: FileView = { path: '', text: '', isTruncated: false, note: '', error: '', stamp: '' }
 

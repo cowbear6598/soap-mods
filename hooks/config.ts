@@ -128,6 +128,10 @@ export const FILE_PAGE = 50
 
 // Files 分頁一個資料夾最多畫幾列（node_modules 這種上千個的，全畫會卡）。
 export const FILES_ROW_LIMIT = 200
+// Files 分頁搜尋：整個 session 資料夾最多收幾個檔案來比對、一次同時讀幾個資料夾；這些資料夾不往下找。
+export const FILES_WALK_LIMIT = 20_000
+export const FILES_WALK_BATCH = 32
+export const FILES_WALK_SKIP: readonly string[] = ['.git', 'node_modules']
 // 點檔案看內容：比這大的不讀（bytes）。
 export const FILE_VIEW_MAX_BYTES = 1_000_000
 // Spec 分頁：plan skill 把每個 feature 的計劃寫在這個資料夾（相對 session 資料夾）底下的 <feature>/plan.yaml。

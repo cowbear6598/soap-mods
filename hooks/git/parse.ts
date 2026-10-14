@@ -1,5 +1,6 @@
 import type { CommitFile, FileKind, GitBranch, GitCommit, GitFile, GitView, LogView } from '../../types'
 import { cutAtLineEnd } from '../text'
+import { filterWords } from '../search'
 
 /** `git status --porcelain=v1 -b -z` output → changed files; the `## branch` line is skipped. */
 export function parseStatus(out: string): GitFile[] {
@@ -62,28 +63,8 @@ export function parseBranches(out: string): GitBranch[] {
   })
 }
 
-/** The lowercased words of a search; none when it is blank. */
-function searchWords(query: string): string[] {
-  return query.toLowerCase().split(/\s+/).filter(w => w !== '')
-}
-
 /** Whether a path can go into a prompt as is: no backtick, line break or other control character to smuggle text in. */
 export const isPromptSafePath = (path: string) => !/[`\u0000-\u001f\u007f]/.test(path)
-
-/** Whether a search box holds anything to search for. */
-export const hasQuery = (query: string) => searchWords(query).length > 0
-
-/** Items whose `text` holds every word of `query`, ignoring case; all of them when it is blank. */
-function filterWords<T>(items: T[], query: string, text: (item: T) => string): T[] {
-  const words = searchWords(query)
-  if (words.length === 0) return items
-
-  return items.filter(item => {
-    const haystack = text(item).toLowerCase()
-
-    return words.every(w => haystack.includes(w))
-  })
-}
 
 /** A branch's full ref: a local and a remote branch can share a name. */
 export const branchRef = (b: GitBranch) => `refs/${b.isRemote ? 'remotes' : 'heads'}/${b.name}`

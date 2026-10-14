@@ -3,6 +3,7 @@
 import type { FsEntry } from 'claude-code'
 
 import type { FilesView, FolderEntry } from '../../types'
+import { hasWords, searchWords } from '../search'
 import { cutAtLineEnd } from '../text'
 
 // node_modules 這種上千個的也要排；共用一個 Collator 比每次 localeCompare 快很多。不分大小寫，file2 排在 file10 前面。
@@ -18,8 +19,30 @@ export function sortEntries(list: readonly FsEntry[]): FolderEntry[] {
 /** `dir` (relative, '' is the top) with `name` added. */
 export const childPath = (dir: string, name: string) => (dir === '' ? name : `${dir}/${name}`)
 
-/** The listed files (not folders) of `files`, as paths: what a file view's Previous / Next step through. */
-export const fileSteps = (files: FilesView) => files.entries.filter(e => e.kind !== 'dir').map(e => childPath(files.dir, e.name))
+/** `dir` (relative, '' is the top) under the session folder `root`. */
+export const absPath = (root: string, dir: string) => (dir === '' ? root : `${root}/${dir}`)
+
+/** The listed files (not folders) of `files`, or the search's, as paths: what a file view's Previous / Next step through. */
+export const fileSteps = (files: FilesView) =>
+  files.found?.paths ?? files.entries.filter(e => e.kind !== 'dir').map(e => childPath(files.dir, e.name))
+
+/**
+ * The first `limit` of `paths` (already sorted by byName) holding every word of `query`, ignoring case:
+ * those whose file name matches first, each group kept in order; `total` counts them all.
+ */
+export function matchPaths(paths: readonly string[], query: string, limit: number): { paths: string[]; total: number } {
+  const words = searchWords(query)
+  const byFileName: string[] = []
+  const byFolder: string[] = []
+  for (const path of paths) {
+    const lower = path.toLowerCase()
+    if (!hasWords(lower, words)) continue
+    if (hasWords(lower.slice(lower.lastIndexOf('/') + 1), words)) byFileName.push(path)
+    else byFolder.push(path)
+  }
+
+  return { paths: [...byFileName, ...byFolder].slice(0, limit), total: byFileName.length + byFolder.length }
+}
 
 /**
  * A file's text as `Code` takes it: CRLF to LF, no control characters but tab and newline,

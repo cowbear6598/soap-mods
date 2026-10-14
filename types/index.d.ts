@@ -266,6 +266,19 @@ export type FilesView = {
   total: number
   /** Why listing the folder failed, '' when none. */
   error: string
+  /** Text in the search field, '' when not searching. */
+  query: string
+  /** Files of the whole session folder matching the search, null when not searching or still walking. */
+  found: FoundFiles | null
+}
+
+export type FoundFiles = {
+  /** Relative to the session folder with `/`; only the first FILES_ROW_LIMIT. */
+  paths: string[]
+  /** How many matched, drawn or not. */
+  total: number
+  /** The walk stopped at FILES_WALK_LIMIT files: some were not searched. */
+  isCapped: boolean
 }
 
 /** A file of the Files tab opened to read, drawn over the tabs. */
