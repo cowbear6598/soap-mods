@@ -23,7 +23,7 @@ export const branchTab: TabBody = ({ w, d, a }) => {
   const indentAt = (depth: number) => 2 + depth * 2
 
   // 目前分支的 ● 落在縮排的空位裡，名稱跟其他分支對齊；點它不做事。
-  // 右邊的複製圖示按了複製分支名稱（遠端的含 origin/），變成綠底打勾一下再換回來；log 圖示按了到 log 分頁看這個分支；不是目前分支的本地分支前面多一個垃圾桶，按了換成打勾。
+  // 右邊的複製圖示按了複製分支名稱（遠端的含 origin/），變成綠底打勾一下再換回來；log 圖示按了到 log 分頁看這個分支；不是目前分支的都多一個垃圾桶（遠端的會刪掉遠端上的分支），按了換成打勾。
   const branchRow = (b: GitBranch, label = b.name, depth = 0) => {
     const id = `${b.isRemote ? 'r' : 'l'}:${b.name}`
     const isCopied = v.copied === b.name
@@ -36,10 +36,10 @@ export const branchTab: TabBody = ({ w, d, a }) => {
       isCopied ? COPIED_TINT : undefined,
     )
     const logButton = w.iconButton(`log:${id}`, 'log', 'Log', false, () => a.viewLog(b))
-    const canDelete = !b.isRemote && !b.isCurrent
-    const armed = canDelete && v.deleteArmed?.name === b.name ? v.deleteArmed : null
+    const armed = v.deleteArmed?.name === b.name && v.deleteArmed.isRemote === b.isRemote ? v.deleteArmed : null
     const deleteButton =
-      canDelete && w.deleteButton(`delete:${id}`, armed !== null, () => a.deleteBranch(b.name), armed?.isForce === true ? 'Force delete' : 'Confirm')
+      !b.isCurrent &&
+      w.deleteButton(`delete:${id}`, armed !== null, () => a.deleteBranch(b.name, b.isRemote), armed?.isForce === true ? 'Force delete' : 'Confirm')
 
     const isSwitchArmed = !b.isCurrent && v.switchArmed === id
 
@@ -116,6 +116,7 @@ export const branchTab: TabBody = ({ w, d, a }) => {
       {v.deleteArmed?.isForce === true && (
         <Text color="error">{`${v.deleteArmed.name} has unmerged commits; press again to force delete and lose them.`}</Text>
       )}
+      {v.deleteArmed?.isRemote === true && <Text color="warning">{`Press again to delete ${v.deleteArmed.name} on the remote.`}</Text>}
       {isSearching && shown.length === 0 && <Text dimColor>No matching branches.</Text>}
       {(!isSearching || locals.length > 0) && (
         <Box flexDirection="column">

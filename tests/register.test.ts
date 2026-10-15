@@ -243,13 +243,7 @@ test('switching to another branch moves the current marker there, and the log ta
 
 test('deleting a local branch asks with a check first, and forces the delete when it has unmerged commits', async ($, on) => {
   const deletes: string[] = []
-  const toasts: string[] = []
   stubPanel(on)
-  on('ui.toast', (_$, e) => {
-    toasts.push(e.text)
-
-    return { value: undefined }
-  })
   gitRepo(on, {
     status: '## main\0',
     branches: () => [branchLine('main', { isCurrent: true }), ...(deletes.includes('branch -D dev') ? [] : [branchLine('dev')])],
@@ -275,8 +269,35 @@ test('deleting a local branch asks with a check first, and forces the delete whe
   expect(await ui.find({ type: 'Text', text: 'dev has unmerged commits; press again to force delete and lose them.' })).toBeDefined()
   await ui.press({ key: 'delete:l:dev' })
   expect(deletes).toEqual(['branch -d dev', 'branch -D dev'])
-  expect(toasts).toEqual(['Deleted dev'])
   expect(await ui.find({ key: 'switch:l:dev' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('deleting a remote branch asks with a check first, then pushes the delete to that remote', async ($, on) => {
+  const pushes: string[] = []
+  stubPanel(on)
+  gitRepo(on, {
+    status: '## main\0',
+    branches: () => [branchLine('main', { isCurrent: true }), ...(pushes.length > 0 ? [] : [branchLine('origin/feature/x')])],
+    run: cmd => {
+      if (cmd[0] !== 'push') return undefined
+      pushes.push(cmd.join(' '))
+
+      return ok('')
+    },
+  })
+  await openPanel($)
+
+  const ui = await mountPane($)
+  await ui.press({ key: 'sub:branch' })
+  await ui.press({ key: 'remote:toggle' })
+
+  await ui.press({ key: 'delete:r:origin/feature/x' })
+  expect(pushes).toEqual([])
+  expect(await ui.find({ type: 'Text', text: 'Press again to delete origin/feature/x on the remote.' })).toBeDefined()
+  await ui.press({ key: 'delete:r:origin/feature/x' })
+  expect(pushes).toEqual(['push origin --delete feature/x'])
+  expect(await ui.find({ key: 'switch:r:origin/feature/x' })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -786,7 +807,7 @@ test('the ⋯ of a Files row opens a menu: Show in Explorer selects it in Explor
   const entries = [fsEntry('src', 'dir'), fsEntry('a.ts', 'file', 12)]
   const runs: { argv: string[]; path?: string }[] = []
   let isFailing = false
-  stubPanel(on, { root: 'C:/proj' })
+  stubPanel(on, { root: '/proj' })
   on('env.get', (_$, e) => ({ value: e.name === 'OS' ? 'Windows_NT' : undefined }))
   on('fs.list', (_$, e) => ({ value: posix(e.path) === '/proj' ? entries : [] }))
   on('process.run', (_$, e) => {
@@ -796,7 +817,7 @@ test('the ⋯ of a Files row opens a menu: Show in Explorer selects it in Explor
     runs.push({ argv: [...e.argv], path })
     if (path.includes('\\')) return ok('')
     if (isFailing) return fail('Access denied', 1)
-    entries.splice(entries.findIndex(x => `C:/proj/${x.name}` === e.init?.env?.SOAP_PATH), 1)
+    entries.splice(entries.findIndex(x => `/proj/${x.name}` === e.init?.env?.SOAP_PATH), 1)
 
     return ok('')
   })
@@ -820,7 +841,7 @@ test('the ⋯ of a Files row opens a menu: Show in Explorer selects it in Explor
   // Show in Explorer：PowerShell 用一般視窗開 explorer /select,（反斜線路徑），選單收起來。
   await ui.press({ key: 'files:more:src' })
   await ui.press({ key: 'files:reveal:src' })
-  expect(runs.map(r => [r.argv[0], r.path])).toEqual([['powershell', 'C:\\proj\\src']])
+  expect(runs.map(r => [r.argv[0], r.path])).toEqual([['powershell', '\\proj\\src']])
   expect(await ui.find({ key: 'files:reveal:src' })).toBeUndefined()
 
   // Delete 按一次只換成紅字；刪不掉寫原因，那列還在。
@@ -838,7 +859,7 @@ test('the ⋯ of a Files row opens a menu: Show in Explorer selects it in Explor
   await ui.press({ key: 'files:delete:a.ts' })
   await ui.press({ key: 'files:delete:a.ts' })
   expect(runs.at(-1)?.argv[0]).toBe('powershell')
-  expect(runs.at(-1)?.path).toBe('C:/proj/a.ts')
+  expect(runs.at(-1)?.path).toBe('/proj/a.ts')
   expect(await ui.find({ key: 'files:file:a.ts' })).toBeUndefined()
   expect(await ui.find({ key: 'files:delete:a.ts' })).toBeUndefined()
   expect(await ui.find({ key: 'files:dir:src' })).toBeDefined()

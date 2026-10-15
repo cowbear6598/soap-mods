@@ -130,7 +130,7 @@ import {
 import { MAC_SAVE_ARGV, WIN_PROTECT_ARGV, WIN_UNPROTECT_ARGV, fromHex, macCheckArgv, macDeleteArgv, macReadArgv, macSaveInput, toHex } from './db/secret'
 import { isPlanPath, planFixNote, planPath, readPlan, sortSpecs } from './spec/parse'
 import type { Actions, DbBusy } from './ui/actions'
-import { buttonKeys, ringAnchor, tabIconKey } from './ui/keys'
+import { buttonKeys, neighbourKey, ringAnchor, tabIconKey } from './ui/keys'
 import { renderPanel } from './ui/panel'
 import { coalesce, latestOnly } from './latest'
 import { neighbour } from './neighbour'
@@ -323,9 +323,13 @@ function act($: EngineInterface, fn: () => unknown, ringKey?: string) {
   }
 }
 
+// 上一次畫的樹：leaveRow 從這裡找按的那顆的下一列。
+let drawnTree: RenderChildren
+
 // 每次畫完：剛按的那顆不在畫面上了，就把焦點圈移到 ringAnchor（換上來的那顆、Back、分頁圖示）。
 // 還沒有落點可移（套用中，Back 藏起來了）就等下一次畫。畫的 hook 裡不能等自己畫出來的東西，所以等畫完再移。
 function checkPressed($: EngineInterface, tree: RenderChildren, now: number, t: string, sub: string) {
+  drawnTree = tree
   const p = pressed
   if (p?.key === undefined || now >= p.until) return
   const keys = buttonKeys(tree)
@@ -339,6 +343,21 @@ function checkPressed($: EngineInterface, tree: RenderChildren, now: number, t: 
   if (anchor === undefined) return
   p.key = undefined
   $.clock.after(0, () => void ringOn($, anchor))
+}
+
+// 按的那顆跟著那列要被刪掉了（分支、Spec、DB 連線、Files 選單）：刪之前先把焦點圈移到下一列同一種按鈕（沒有就上一列、再沒有就分頁圖示）。
+// rowKey：用那列的這顆找鄰居（Files 是在選單裡按 Delete，鄰居是下一列的 ⋯）；沒給就用按的那顆。
+// 等它不見才移就晚了：桌面版的焦點已經掉出 Soap Panel，下一次點只會拿回焦點、按不到東西。
+async function leaveRow($: EngineInterface, rowKey?: string) {
+  const p = pressed
+  const key = p?.key
+  if (p === undefined || key === undefined) return
+  p.key = undefined
+  const from = rowKey ?? key
+  const before = [...buttonKeys(drawnTree)]
+  const left = new Set(before.filter(k => k !== key && k !== from))
+  const to = neighbourKey(before, from, left) ?? ringAnchor(left, ...(await Promise.all([read($, tab), read($, subTab)])))
+  if (to !== undefined) await ringOn($, to)
 }
 
 // 上一次畫的蓋版畫面。沒按按鈕它自己不見了（回合結束發現衝突解掉了、差異的檔案沒有變更了），
@@ -647,29 +666,37 @@ async function arm($: EngineInterface, armed: Partial<GitView>) {
   await setView($, { ...NO_MESSAGES, ...armed })
 }
 
-const armDelete = ($: EngineInterface, name: string, isForce: boolean) => arm($, { deleteArmed: { name, isForce } })
+const armDelete = ($: EngineInterface, name: string, isRemote: boolean, isForce: boolean) =>
+  arm($, { deleteArmed: { name, isRemote, isForce } })
 
-// 刪本地分支要按兩次：垃圾桶按了換成打勾，DELETE_ARM_MS 內再按才真的刪；按別的垃圾桶，原本的就收回。
-// 用 -d，有沒合併的 commit 時 git 不肯刪，換成強制刪除的打勾（-D），讓人決定要不要連那些 commit 一起丟掉。
-async function deleteBranch($: EngineInterface, name: string) {
+// 刪分支要按兩次：垃圾桶按了換成打勾，DELETE_ARM_MS 內再按才真的刪；按別的垃圾桶，原本的就收回。
+// 本地用 -d，有沒合併的 commit 時 git 不肯刪，換成強制刪除的打勾（-D），讓人決定要不要連那些 commit 一起丟掉。
+// 遠端的（origin/feature/x）push --delete 到第一個「/」前的遠端；跟 Fetch 一樣不讓 git 停下來問帳密。
+async function deleteBranch($: EngineInterface, name: string, isRemote: boolean) {
   const armed = (await read($, view)).deleteArmed
-  if (armed?.name !== name) {
-    await armDelete($, name, false)
+  if (armed?.name !== name || armed.isRemote !== isRemote) {
+    await armDelete($, name, isRemote, false)
 
     return
   }
   gitArm.timer?.cancel()
   try {
-    await gitOk($, ['branch', armed.isForce ? '-D' : '-d', name])
+    if (isRemote) {
+      const slash = name.indexOf('/')
+      await gitOk($, ['push', name.slice(0, slash), '--delete', name.slice(slash + 1)], NO_PROMPT)
+    } else {
+      await gitOk($, ['branch', armed.isForce ? '-D' : '-d', name])
+    }
   } catch (err) {
-    const message = errorText(err)
-    if (!armed.isForce && message.includes('not fully merged')) await armDelete($, name, true)
+    const message = gitErrorText(err)
+    if (!isRemote && !armed.isForce && message.includes('not fully merged')) await armDelete($, name, false, true)
     else await setView($, { ...NO_MESSAGES, branchError: message })
 
     return
   }
 
-  $.ui.toast(`Deleted ${name}`)
+  // 刪除都不跳 toast：那列不見就是刪掉了，toast 還會把焦點搶出 Soap Panel。
+  await leaveRow($)
   await setView($, NO_MESSAGES)
   await refresh($)
 }
@@ -683,15 +710,18 @@ function setSyncing($: EngineInterface, kind: GitSync | '') {
   $.ui.invalidate('ui.render')
 }
 
+// 連遠端的 git（Fetch、Pull、刪遠端分支）：要帳密時 git 不能停下來問（沒有地方打字），GIT_TERMINAL_PROMPT=0 讓它直接失敗；
+// Windows 的認證視窗照常會跳。
+const NO_PROMPT: GitInit = { env: { GIT_TERMINAL_PROMPT: '0' }, timeoutMs: SYNC_TIMEOUT_MS }
+
 // branch 分頁上方的 Fetch／Pull，按了才跑。跑的時候那顆按鈕寫「Pulling…」、再按不理，跑完重讀分支（ahead／behind 跟著更新）。
-// 要帳密時 git 不能停下來問（沒有地方打字），GIT_TERMINAL_PROMPT=0 讓它直接失敗；Windows 的認證視窗照常會跳。
 async function syncBranches($: EngineInterface, kind: GitSync) {
   if (syncing !== '') return
   setSyncing($, kind)
   gitArm.timer?.cancel()
   await setView($, NO_MESSAGES)
   try {
-    const r = await gitOk($, SYNC_ARGS[kind], { env: { GIT_TERMINAL_PROMPT: '0' }, timeoutMs: SYNC_TIMEOUT_MS })
+    const r = await gitOk($, SYNC_ARGS[kind], NO_PROMPT)
     $.ui.toast(kind === 'fetch' ? 'Fetched' : r.stdout.includes('Already up to date') ? 'Already up to date' : 'Pulled')
   } catch (err) {
     await setView($, { branchError: gitErrorText(err) })
@@ -1301,7 +1331,7 @@ async function deleteFile($: EngineInterface, path: string) {
 
     return
   }
-  $.ui.toast(`Deleted ${name}`)
+  await leaveRow($, `files:more:${path}`)
   // 搜尋用的檔案清單只濾掉刪掉的，不重走整個 session 資料夾。
   walked = walked?.then(w => ({ ...w, paths: w.paths.filter(p => p !== path && !p.startsWith(`${path}/`)) }))
   await setFiles($, NO_FILE_MENU)
@@ -1460,7 +1490,7 @@ async function deleteSpec($: EngineInterface, name: string) {
 
     return
   }
-  $.ui.toast(`Deleted ${name}`)
+  await leaveRow($)
   await setSpec($, { deleteError: '' })
   await loadSpecs($)
 }
@@ -1601,11 +1631,11 @@ async function deleteDbConnection($: EngineInterface, id: string) {
   try {
     const saved = await readSaved($)
     const gone = saved.find(c => c.id === id)
+    await leaveRow($)
     await writeSaved($, saved.filter(c => c.id !== id), { deleteArmed: '' })
     if (gone === undefined) return
     if (opened?.c.id === id) opened = undefined
     await deleteSecret($, gone)
-    $.ui.toast(`Deleted ${connectionName(gone)}`)
   } catch (err) {
     await setDb($, { deleteArmed: '', error: `Couldn't delete the connection: ${errorText(err)}` })
   }
@@ -1761,7 +1791,7 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     toggleRemote: () => update($, showRemote, open => !open),
     toggleBranchFolder: (key, isOpen) => update($, branchFolders, folders => ({ ...folders, [key]: isOpen })),
     switchBranch: (name, isRemote) => switchBranch($, name, isRemote),
-    deleteBranch: name => deleteBranch($, name),
+    deleteBranch: (name, isRemote) => deleteBranch($, name, isRemote),
     syncBranches: kind => syncBranches($, kind),
     viewLog: b => viewLog($, b),
     copyBranchName: name => copyBranchName($, name, surface),

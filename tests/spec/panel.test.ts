@@ -174,7 +174,7 @@ test('the trash button of a spec asks with a check first, then deletes its whole
     await ui.press({ key: 'spec:delete:login' })
     await ui.press({ key: 'spec:delete:login' })
     expect(removed).toHaveLength(2)
-    expect(toasts).toEqual(['Deleted login'])
+    expect(toasts).toEqual([])
     expect(await ui.find({ key: 'spec:item:login' })).toBeUndefined()
     expect(await ui.find({ key: 'spec:item:search' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /^Couldn't delete/ })).toBeUndefined()

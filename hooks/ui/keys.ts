@@ -3,6 +3,8 @@
 
 import type { RenderChildren } from 'claude-code'
 
+import { neighbour } from '../neighbour'
+
 type Node = { type?: unknown; props?: { key?: unknown }; children?: RenderChildren }
 
 /** Every Button key drawn in `tree`. */
@@ -42,4 +44,17 @@ export function ringAnchor(keys: Set<string>, tab: string, subTab: string, prefe
   const back = [...keys].find(k => k.endsWith(':back'))
 
   return [prefer, back, tabIconKey(tab, subTab)].find(k => k !== undefined && keys.has(k))
+}
+
+/**
+ * The button of the same kind as `key` (same key up to its last `:`, `delete:l:dev` → `delete:l:`) next to it in
+ * `before`, the keys drawn before it went, that is still in `keys`: the one after it, else the one before.
+ */
+export function neighbourKey(before: string[], key: string, keys: Set<string>): string | undefined {
+  const kind = key.slice(0, key.lastIndexOf(':') + 1)
+  if (kind === '') return undefined
+  const row = before.filter(k => k === key || (k.startsWith(kind) && !k.slice(kind.length).includes(':') && keys.has(k)))
+  const isKey = (k: string) => k === key
+
+  return neighbour(row, isKey, 1) ?? neighbour(row, isKey, -1)
 }

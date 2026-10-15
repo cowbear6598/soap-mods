@@ -32,10 +32,10 @@ export type GitView = {
   /** Why the last branch switch or delete failed, '' when none; cleared on any tab change. */
   branchError: string
   /**
-   * Local branch whose delete button was pressed once and now asks to confirm, null when none;
-   * isForce: the plain delete failed for unmerged commits and the next press forces it.
+   * Branch whose delete button was pressed once and now asks to confirm, null when none;
+   * isForce: the plain delete of a local branch failed for unmerged commits and the next press forces it.
    */
-  deleteArmed: { name: string; isForce: boolean } | null
+  deleteArmed: { name: string; isRemote: boolean; isForce: boolean } | null
   /** Branch row pressed once and now asks to press again to switch, as `l:<name>` / `r:<name>`; '' when none. */
   switchArmed: string
   /** Branch whose copy button was just pressed and shows a check for COPIED_MS, '' when none. */
