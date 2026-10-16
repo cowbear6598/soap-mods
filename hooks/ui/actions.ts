@@ -11,6 +11,7 @@ import type {
   FilesView,
   GitBranch,
   GitCommit,
+  GitFile,
   GitSync,
   GitView,
   LogView,
@@ -45,6 +46,7 @@ export type Actions = {
   openDiff: (path: string) => unknown
   openMerge: (path: string) => unknown
   showMoreFiles: () => unknown
+  discardFile: (file: GitFile) => unknown
   // branch
   searchBranches: (text: string) => unknown
   toggleRemote: () => unknown

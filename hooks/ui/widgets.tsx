@@ -130,7 +130,14 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
   }
 
   // 一個檔案一列：彩色狀態字母、檔名、淡色的說明和資料夾。diff、log、conflict 分頁共用。
-  const pathRow = (key: string, path: string, letter: string, kind: FileKind, onPress: () => unknown, note = '') => {
+  const pathRow = (
+    key: string,
+    path: string,
+    letter: string,
+    kind: FileKind,
+    onPress: () => unknown,
+    { note = '', trailing }: { note?: string; trailing?: RenderChildren } = {},
+  ) => {
     const { name, dir } = splitPath(path)
     const detail = [note, dir].filter(s => s !== '').join(' · ')
 
@@ -149,6 +156,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
             {detail}
           </Text>
         ),
+      trailing,
     })
   }
 

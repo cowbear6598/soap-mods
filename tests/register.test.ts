@@ -140,6 +140,46 @@ test('pressing a changed file shows its diff over the tabs, Next/Previous step t
   await ui.unmount()
 })
 
+test('the trash of a diff tab row asks with a check first: an untracked file is deleted, a tracked one goes back to HEAD', async ($, on) => {
+  const runs: string[] = []
+  stubPanel(on)
+  // 不是 Windows：用 rm -rf 刪。
+  on('env.get', () => ({ value: undefined }))
+  gitRepo(on, {
+    status: () =>
+      ['## main', 'R  new.ts\0old.ts', ...(runs.some(r => r.startsWith('git')) ? [] : [' M a.ts']), ...(runs.some(r => r.startsWith('rm')) ? [] : ['?? b.ts']), ''].join('\0'),
+    run: (cmd, e) => {
+      if (e.argv[0] === 'rm') {
+        runs.push(e.argv.join(' '))
+
+        return ok('')
+      }
+      if (cmd[0] !== 'restore') return undefined
+      runs.push(`git ${cmd.join(' ')}`)
+
+      return ok('')
+    },
+  })
+  await openPanel($)
+
+  const ui = await mountPane($)
+  // 改名的沒有垃圾桶。
+  expect(await ui.find({ key: 'discard:staged:new.ts' })).toBeUndefined()
+
+  // 按一下只換成打勾，再按才刪。
+  await ui.press({ key: 'discard:untracked:b.ts' })
+  expect(runs).toEqual([])
+  await ui.press({ key: 'discard:untracked:b.ts' })
+  expect(runs).toEqual(['rm -rf -- /repo/b.ts'])
+  expect(await ui.find({ key: 'file:untracked:b.ts' })).toBeUndefined()
+
+  await ui.press({ key: 'discard:unstaged:a.ts' })
+  await ui.press({ key: 'discard:unstaged:a.ts' })
+  expect(runs.at(-1)).toBe('git restore --source=HEAD --staged --worktree -- a.ts')
+  expect(await ui.find({ key: 'file:unstaged:a.ts' })).toBeUndefined()
+  await ui.unmount()
+})
+
 const SWITCH_FAILED = "fatal: a branch named 'main' already exists"
 
 test('the branch tab lists the branches, opens Remote, shows why a switch failed, and searches by name', async ($, on) => {

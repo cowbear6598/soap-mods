@@ -16,6 +16,8 @@ export const EMPTY: GitView = {
   op: '',
   opError: '',
   isAbortArmed: false,
+  fileArmed: '',
+  fileError: '',
   repos: [],
   repo: '',
 }
@@ -96,4 +98,7 @@ export const EMPTY_DIFF: DiffPaneView = {
 export const NO_COMMIT: Partial<LogView> = { opened: [], files: null, commitError: '', isPicking: false, rangeStart: '' }
 
 // 切換／刪除分支、abort／continue 失敗的訊息和待確認的切換、刪除、abort：換分頁、換 repo 時清掉。
-export const NO_MESSAGES = { branchError: '', deleteArmed: null, switchArmed: '', opError: '', isAbortArmed: false } as const
+// 待確認的刪除、切換、捨棄：DELETE_ARM_MS 後收回。
+export const NO_ARMED = { deleteArmed: null, switchArmed: '', fileArmed: '' } as const
+
+export const NO_MESSAGES = { ...NO_ARMED, branchError: '', opError: '', isAbortArmed: false, fileError: '' } as const

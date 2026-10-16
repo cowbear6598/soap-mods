@@ -96,6 +96,7 @@ import {
   NO_COMMIT,
   NO_DB_CONNECTION,
   NO_FILE_MENU,
+  NO_ARMED,
   NO_MESSAGES,
   NO_WIKI_OPEN,
   NO_WIKI_SENT,
@@ -227,6 +228,11 @@ const cover = atom({ plugin: 'soap-mods', key: 'cover' } as const, NO_COVER)
 
 // 改一個物件 atom 的其中幾個欄位；改的欄位內容都沒變就不寫（patch），面板不會白白重畫。
 // 引擎要看得出改的是哪個 atom，所以每個 atom 一個，不能寫成通用的。
+// 舊版存的 view 沒有後來加的欄位（fileArmed、fileError）：補上預設值。
+async function readView($: EngineInterface): Promise<GitView> {
+  return { ...EMPTY, ...(await read($, view)) }
+}
+
 async function setView($: EngineInterface, change: Partial<GitView>) {
   await update($, view, v => patch(v, change))
 }
@@ -672,6 +678,31 @@ async function showDiff($: EngineInterface, pane: DiffPaneView) {
   await scrollTop($)
 }
 
+// diff 分頁的垃圾桶要按兩次：按了換成打勾，DELETE_ARM_MS 內再按同一個檔案才做（Staged、Unstaged 都列著的兩列一起打勾，做的事一樣）。
+// 未追蹤的檔案直接刪掉（-uall 列的都是檔案，不會是資料夾）；有追蹤的把 index 和工作區都還原成 HEAD 的樣子，
+// 新加的檔案（HEAD 沒有）就從 index 和工作區拿掉。不經過資源回收筒，也沒有 undo。
+async function discardFile($: EngineInterface, file: GitFile) {
+  if ((await read($, view)).fileArmed !== file.path) {
+    await arm($, { fileArmed: file.path })
+
+    return
+  }
+  gitArm.timer?.cancel()
+  try {
+    if (file.x === '?') await removePath($, inRepo(file.path))
+    else await gitOk($, ['restore', '--source=HEAD', '--staged', '--worktree', '--', file.path])
+  } catch (err) {
+    await setView($, { ...NO_MESSAGES, fileError: `Couldn't discard ${file.path}: ${gitErrorText(err)}` })
+
+    return
+  }
+
+  // 不跳 toast：那列不見就是刪掉了。
+  await leaveRow($)
+  await setView($, NO_MESSAGES)
+  await refresh($)
+}
+
 async function openDiff($: EngineInterface, path: string) {
   await showDiff($, await readDiff($, (await read($, view)).files, path))
 }
@@ -722,11 +753,11 @@ async function switchBranch($: EngineInterface, name: string, isRemote: boolean)
   await refresh($)
 }
 
-// 待確認的刪除（打勾）、切換（再按一次）一次只有一個。
+// 待確認的刪除、捨棄（打勾）、切換（再按一次）一次只有一個。
 const gitArm: ArmSlot = {}
 
 async function arm($: EngineInterface, armed: Partial<GitView>) {
-  disarmLater($, gitArm, () => setView($, { deleteArmed: null, switchArmed: '' }))
+  disarmLater($, gitArm, () => setView($, NO_ARMED))
   await setView($, { ...NO_MESSAGES, ...armed })
 }
 
@@ -2157,6 +2188,7 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     openDiff: path => openDiff($, path),
     openMerge: path => openMerge($, path),
     showMoreFiles: () => update($, fileLimit, n => n + FILE_PAGE),
+    discardFile: file => discardFile($, file),
     searchBranches: text => update($, branchQuery, () => text),
     toggleRemote: () => update($, showRemote, open => !open),
     toggleBranchFolder: (key, isOpen) => update($, branchFolders, folders => ({ ...folders, [key]: isOpen })),
@@ -2266,7 +2298,7 @@ export const register: Register = on => {
     const [activeTab, subs, v, isRemoteOpen, bf, bq, fl, sv, fileList, specs, wikiView, dbView, lg, lq, shown, usage, now] = await Promise.all([
       read($, tab),
       read($, subTabs),
-      read($, view),
+      readView($),
       read($, showRemote),
       read($, branchFolders),
       read($, branchQuery),

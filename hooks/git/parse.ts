@@ -100,6 +100,9 @@ export function isConflict(file: GitFile): boolean {
   return file.x === 'U' || file.y === 'U' || (file.x === 'A' && file.y === 'A') || (file.x === 'D' && file.y === 'D')
 }
 
+/** Whether the diff tab's trash can take back a file's changes: not a conflict, nor a rename or copy (its source path is not kept). */
+export const canDiscard = (file: GitFile) => !isConflict(file) && letterKind(file.x) !== 'renamed' && letterKind(file.y) !== 'renamed'
+
 export function letterKind(letter: string): FileKind {
   if (letter === 'A' || letter === '?') return 'added'
   if (letter === 'D') return 'deleted'

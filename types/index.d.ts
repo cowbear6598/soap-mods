@@ -50,6 +50,10 @@ export type GitView = {
   opError: string
   /** The abort button was pressed once and now asks to confirm. */
   isAbortArmed: boolean
+  /** Path of the diff tab file whose trash button was pressed once and now asks to confirm, '' when none. */
+  fileArmed: string
+  /** Why the last discard of a file's changes failed, '' when none; cleared on any tab change. */
+  fileError: string
   /**
    * The repo bar: just the session folder's repo when it is one; else the repos one level down
    * (`company/a`, `company/b`), by name. [] when there is none.
