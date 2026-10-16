@@ -1,5 +1,9 @@
 export type TabId = 'git' | 'files' | 'services' | 'spec' | 'db'
 export type GitSubTab = 'diff' | 'branch' | 'log' | 'conflict'
+/** The Spec tab's sub tabs: the plans under `.soap/tasks`, and the wiki pages under `.soap/wiki`. */
+export type SpecSubTab = 'spec' | 'wiki'
+/** The tabs that have sub tabs, and the sub tab each one shows. */
+export type SubTabs = { git: GitSubTab; spec: SpecSubTab }
 /** The branch tab's Fetch / Pull buttons. */
 export type GitSync = 'fetch' | 'pull'
 
@@ -341,6 +345,59 @@ export type SpecView = {
   stamp: string
 }
 
+/** Which model family Summary Conversation asks; the one the conversation runs on reads the conversation's own cache. */
+export type WikiModel = 'opus' | 'sonnet' | 'haiku'
+
+/** One draft Distill wrote to `.soap/wiki/.drafts`, waiting to be accepted or discarded. */
+export type WikiDraft = {
+  /** The draft's file name under `.soap/wiki/.drafts`. */
+  id: string
+  /** The page it becomes, relative to `.soap/wiki`. */
+  target: string
+  /** No page is at `target` yet: accepting creates it rather than replacing one. */
+  isNew: boolean
+}
+
+export type WikiView = {
+  /** False before the first listing finishes. */
+  isLoaded: boolean
+  /** Page paths relative to `.soap/wiki` with `/`, `.md` included; by path. */
+  pages: string[]
+  /** Paths of the checked pages that exist, as `.soap/wiki/checked.txt` lists them. */
+  checked: string[]
+  /** Oldest first. */
+  drafts: WikiDraft[]
+  /** Why listing `.soap/wiki` or writing the checked list failed, '' when none (a missing folder is no pages, not an error). */
+  error: string
+  /** Page whose trash button was pressed once and now asks to confirm, '' when none. */
+  deleteArmed: string
+  /** Why the last delete, accept or discard failed, '' when none. */
+  deleteError: string
+  /** The page opened, '' when none. */
+  open: string
+  /** The draft opened (its id), '' when none. */
+  draft: string
+  /** The opened page's Markdown, or the opened draft's. */
+  text: string
+  /** For an opened draft that changes a page: the page's lines against the draft's, as diff hunks; '' otherwise. */
+  diff: string
+  /** `text` or `diff` was cut to fit. */
+  isTruncated: boolean
+  /** Why reading the opened page or draft failed, '' when none. */
+  readError: string
+  /** The model Summary Conversation asks, as picked in the tab (kept in the mod's store); '' before one is picked: the conversation's own. */
+  model: WikiModel | ''
+  /** What the last Distill came to when it made no drafts (nothing to keep, nothing to read yet, an API error); '' otherwise. */
+  distillNote: string
+}
+
+/** Which checked pages the current conversation already carries, so each reaches Claude once. */
+export type WikiSent = {
+  /** The session id the pages went to; '' before any did. */
+  conversation: string
+  pages: string[]
+}
+
 /** A saved SQL Server connection, as the DB tab lists it; the password is not here (Keychain or DPAPI). */
 export type DbConnection = {
   id: string
@@ -397,7 +454,8 @@ declare module 'claude-code' {
   interface PluginState {
     'soap-mods': {
       tab: TabId
-      subTab: GitSubTab
+      /** The sub tab each tab with sub tabs shows. */
+      subTabs: SubTabs
       view: GitView
       /** Whether the remote branches section is expanded. */
       showRemote: boolean
@@ -412,6 +470,8 @@ declare module 'claude-code' {
       services: ServicesView
       files: FilesView
       spec: SpecView
+      wiki: WikiView
+      wikiSent: WikiSent
       db: DbView
       log: LogView
       cover: Cover

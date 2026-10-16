@@ -1,6 +1,6 @@
 // ───── 想改面板標題、分頁、顏色、時間，改這個檔案 ─────
 
-import type { FileKind, GitSubTab, MergeOp, TabId } from '../types'
+import type { FileKind, MergeOp, SubTabs, TabId, WikiModel } from '../types'
 import type { FileGroupId } from './git/parse'
 
 // 面板的 id 在 register.tsx：引擎要在那裡直接看到它們的值。
@@ -47,6 +47,10 @@ export const ICONS = {
     '<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>',
   services:
     '<rect width="20" height="8" x="2" y="2" rx="2" ry="2"/><rect width="20" height="8" x="2" y="14" rx="2" ry="2"/><line x1="6" x2="6.01" y1="6" y2="6"/><line x1="6" x2="6.01" y1="18" y2="18"/>',
+  book: '<path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/>',
+  library: '<path d="m16 6 4 14"/><path d="M12 6v14"/><path d="M8 8v12"/><path d="M4 4v16"/>',
+  box: '<rect width="18" height="18" x="3" y="3" rx="2"/>',
+  boxChecked: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 12 2 2 4-4"/>',
   spec: '<rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/>',
   restart: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
   stop: '<rect width="14" height="14" x="5" y="5" rx="2"/>',
@@ -106,17 +110,25 @@ export const TABS: { id: TabId; label: string; icon: IconName }[] = [
   { id: 'files', label: 'Files', icon: 'files' },
   { id: 'git', label: 'Git', icon: 'git' },
   { id: 'services', label: 'Services', icon: 'services' },
-  { id: 'spec', label: 'Spec', icon: 'spec' },
+  { id: 'spec', label: 'Spec', icon: 'book' },
   { id: 'db', label: 'DB', icon: 'db' },
 ]
 
-// Git Tab 的子分頁；內容在 ui/panel.tsx 的 SUB_TAB_BODIES。
-export const SUB_TABS: { id: GitSubTab; label: string; icon: IconName }[] = [
-  { id: 'diff', label: 'diff', icon: 'diff' },
-  { id: 'branch', label: 'branch', icon: 'branch' },
-  { id: 'log', label: 'log', icon: 'log' },
-  { id: 'conflict', label: 'conflict', icon: 'conflict' },
-]
+// 有子分頁的 Tab 和它的子分頁。內容：Git 在 ui/panel.tsx 的 GIT_SUB_TAB_BODIES，Spec（計劃和 wiki）在 ui/tabs/spec.tsx 的 SPEC_SUB_TAB_BODIES。
+export const SUB_TABS: { [T in keyof SubTabs]: { id: SubTabs[T]; label: string; icon: IconName }[] } = {
+  git: [
+    { id: 'diff', label: 'diff', icon: 'diff' },
+    { id: 'branch', label: 'branch', icon: 'branch' },
+    { id: 'log', label: 'log', icon: 'log' },
+    { id: 'conflict', label: 'conflict', icon: 'conflict' },
+  ],
+  spec: [
+    { id: 'spec', label: 'Spec', icon: 'spec' },
+    { id: 'wiki', label: 'Wiki', icon: 'library' },
+  ],
+}
+
+export const hasSubTabs = (tab: TabId): tab is keyof SubTabs => tab in SUB_TABS
 
 // log 分頁一次列幾筆 commit；Load more 再多列這麼多筆。
 export const LOG_PAGE = 30
@@ -141,6 +153,26 @@ export const FILE_VIEW_MAX_BYTES = 1_000_000
 // Spec 分頁：plan skill 把每個 feature 的計劃寫在這個資料夾（相對 session 資料夾）底下的 <feature>/plan.yaml。
 export const SPEC_DIR = '.soap/tasks'
 export const PLAN_FILE = 'plan.yaml'
+// Wiki 子分頁：頁面是這個資料夾（相對 session 資料夾）底下的 .md；勾了哪幾頁記在 CHECKED_FILE（一行一頁），
+// Distill 的草稿放在 DRAFTS_DIR（. 開頭的資料夾不算頁面）。頁面最多列幾頁。
+export const WIKI_DIR = '.soap/wiki'
+export const WIKI_CHECKED_FILE = 'checked.txt'
+export const WIKI_DRAFTS_DIR = '.drafts'
+export const WIKI_PAGE_LIMIT = 500
+// Distill 時一起給 Claude 看的既有頁面最多幾 byte（照檔案大小算，超過的只給路徑、不讀），免得整個 wiki 塞爆一次請求。
+export const WIKI_DISTILL_MAX_BYTES = 100_000
+// Summary Conversation 可選的模型：跟對話同一種（還沒選過就是它）從快取接著問；
+// 其他的把對話轉成文字（最多 WIKI_TRANSCRIPT_MAX_CHARS 字，太長留最新的）另外問，選了存在 $.store 的 WIKI_MODEL_KEY。
+export const WIKI_MODELS: { id: WikiModel; label: string }[] = [
+  { id: 'opus', label: 'Opus' },
+  { id: 'sonnet', label: 'Sonnet' },
+  { id: 'haiku', label: 'Haiku' },
+]
+export const WIKI_MODEL_KEY = 'wiki.model'
+export const WIKI_TRANSCRIPT_MAX_CHARS = 300_000
+// 另外問時：回覆最多幾個 token、最多等多久。
+export const WIKI_DISTILL_MAX_TOKENS = 8_000
+export const WIKI_DISTILL_TIMEOUT_MS = 180_000
 
 // DB 分頁（SQL Server，經過 sqlcmd）：存連線的 $.store key、macOS Keychain 項目的 service 名稱。
 export const DB_STORE_KEY = 'db.connections'

@@ -1,9 +1,9 @@
-// Soap Panel 本體：最上面的 Tab、repo 列、子分頁，中間是分頁內容，最底下是用量。
+// Soap Panel 本體：最上面的 Tab、repo 列（Git）、子分頁（SUB_TABS 有列的 Tab），中間是分頁內容，最底下是用量。
 // 打開了衝突檔案、檔案的差異或 Files 分頁的檔案時，上面整塊換成合併（mergeView）、差異（diffView）或內容（fileView），Back 回來。
-// 加分頁：config.ts 的 TABS／SUB_TABS 加一筆，這裡的 TAB_BODIES／SUB_TAB_BODIES 加它的內容。
+// 加分頁：config.ts 的 TABS 加一筆，這裡的 TAB_BODIES 加它的內容；加子分頁：config.ts 的 SUB_TABS 加一筆，那個 Tab 的 *_SUB_TAB_BODIES 加內容。
 
-import type { GitSubTab, TabId } from '../../types'
-import { DANGER, SUB_TABS, TABS } from '../config'
+import type { GitSubTab, SubTabs, TabId } from '../../types'
+import { DANGER, SUB_TABS, TABS, type Tint, hasSubTabs } from '../config'
 import { isConflict } from '../git/parse'
 import type { Actions, PanelData, Press, Ui } from './actions'
 import { diffView } from './diffView'
@@ -22,7 +22,7 @@ import { specTab } from './tabs/spec'
 import { usageBar } from './usage'
 import { type Widgets, makeWidgets } from './widgets'
 
-const SUB_TAB_BODIES: Record<GitSubTab, TabBody> = {
+const GIT_SUB_TAB_BODIES: Record<GitSubTab, TabBody> = {
   diff: diffTab,
   branch: branchTab,
   log: logTab,
@@ -35,7 +35,7 @@ const gitTab: TabBody = ctx => {
   if (!ctx.d.view.isLoaded) return <Text dimColor>Loading…</Text>
   if (!ctx.d.view.isRepo) return <Text dimColor>This folder is not a git repo.</Text>
 
-  return SUB_TAB_BODIES[ctx.d.subTab](ctx)
+  return GIT_SUB_TAB_BODIES[ctx.d.subTabs.git](ctx)
 }
 
 const TAB_BODIES: Record<TabId, TabBody> = {
@@ -46,14 +46,15 @@ const TAB_BODIES: Record<TabId, TabBody> = {
   db: dbTab,
 }
 
-// Git Tab 的上半部：那排 repo、子分頁圖示（有衝突時 conflict 變紅）。
-// repo 排成一排：「a*」是有未提交的變更，「!」是有衝突。session 資料夾本身是 repo 時只有它一個；
+// Git Tab 的那排 repo：「a*」是有未提交的變更，「!」是有衝突。session 資料夾本身是 repo 時只有它一個；
 // 不是的話是下一層的 repo，點了換 Git 分頁看的 repo；面板不會自己換。
-function gitHeader({ w, d, a }: TabContext) {
+function repoBar({ w, d, a }: TabContext) {
   const { Box, Button } = w
   const v = d.view
-  const repoBar =
-    v.repos.length === 0 ? null : (
+  if (v.repos.length === 0) return null
+
+  return (
+    <Box flexDirection="column">
       <Box gap={1} flexWrap="wrap" justifyContent="center" width="100%">
         {v.repos.map(r => (
           <Button
@@ -64,13 +65,18 @@ function gitHeader({ w, d, a }: TabContext) {
           />
         ))}
       </Box>
-    )
+      {w.divider}
+    </Box>
+  )
+}
+
+// 子分頁圖示列；tints 是要上色的子分頁。
+function subTabBar<T extends keyof SubTabs>({ w, d, a }: TabContext, tab: T, tints: Partial<Record<SubTabs[T], Tint>> = {}) {
+  const { Box } = w
 
   return (
     <Box flexDirection="column">
-      {repoBar}
-      {repoBar !== null && w.divider}
-      {w.iconBar('sub', SUB_TABS, d.subTab, id => a.selectSubTab(id), v.files.some(isConflict) ? { conflict: DANGER } : {})}
+      {w.iconBar<SubTabs[T]>('sub', SUB_TABS[tab], d.subTabs[tab], id => a.selectSubTab(tab, id), tints)}
       {w.divider}
     </Box>
   )
@@ -111,7 +117,9 @@ export function renderPanel(drawUi: Ui, d: PanelData, a: Actions, press: Press) 
         <Box flexDirection="column">
           {w.iconBar('tab', TABS, d.tab, id => a.selectTab(id))}
           {w.divider}
-          {isGit && gitHeader(ctx)}
+          {isGit && repoBar(ctx)}
+          {/* Git 有衝突時 conflict 變紅。 */}
+          {isGit ? subTabBar(ctx, 'git', d.view.files.some(isConflict) ? { conflict: DANGER } : {}) : hasSubTabs(d.tab) && subTabBar(ctx, d.tab)}
         </Box>
         {isGit && d.view.error !== '' && <Text color="error">{d.view.error}</Text>}
         {TAB_BODIES[d.tab](ctx)}

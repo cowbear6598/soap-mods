@@ -11,7 +11,6 @@ import type {
   FilesView,
   GitBranch,
   GitCommit,
-  GitSubTab,
   GitSync,
   GitView,
   LogView,
@@ -20,8 +19,11 @@ import type {
   ServiceAction,
   ServicePending,
   ServicesView,
+  SubTabs,
   SpecView,
   TabId,
+  WikiModel,
+  WikiView,
 } from '../../types'
 
 // $.ui.resolve(e) 給的元件表。
@@ -37,7 +39,7 @@ export type UsageReading = SessionUsage['rateLimits'][number]
 
 export type Actions = {
   selectTab: (id: TabId) => unknown
-  selectSubTab: (id: GitSubTab) => unknown
+  selectSubTab: <T extends keyof SubTabs>(tab: T, id: SubTabs[T]) => unknown
   selectRepo: (name: string) => unknown
   // diff
   openDiff: (path: string) => unknown
@@ -89,6 +91,24 @@ export type Actions = {
   doSpec: () => unknown
   // 刪掉整個 feature 資料夾：按第一次只是待確認（打勾），再按才刪。
   deleteSpec: (name: string) => unknown
+  // wiki：path 是 .soap/wiki 底下的頁面，id 是 .soap/wiki/.drafts 底下的草稿檔名。
+  // 勾選框：選要 Send 的頁面（記在 checked.txt，下次開還勾著）。
+  toggleWikiPage: (path: string) => unknown
+  openWikiPage: (path: string) => unknown
+  // 關掉打開的頁面或草稿，回清單。
+  closeWiki: () => unknown
+  // 刪頁面：按第一次只是待確認（打勾），再按才刪，也從勾選清單拿掉。
+  deleteWikiPage: (path: string) => unknown
+  openWikiDraft: (id: string) => unknown
+  // 把打開的草稿寫進 wiki（新頁面或取代原頁面）並刪掉草稿；捨棄只刪草稿。
+  acceptWikiDraft: () => unknown
+  discardWikiDraft: () => unknown
+  // 請 Claude 把這段對話值得留下的整理成草稿。
+  distillWiki: () => unknown
+  // 把勾了的頁面送給 Claude（加進這段對話）。
+  sendWikiPages: () => unknown
+  // Summary Conversation 問哪個模型。
+  selectWikiModel: (model: WikiModel) => unknown
   // services
   runServiceAction: (s: Service, action: ServiceAction) => unknown
   // db：text 是貼上的連線字串、輸入的查詢；id 是存著的連線。
@@ -115,7 +135,8 @@ export type PanelData = {
   surface: RenderSurface
   bodyRows: number
   tab: TabId
-  subTab: GitSubTab
+  // 有子分頁的 Tab 各自看的子分頁。
+  subTabs: SubTabs
   view: GitView
   showRemote: boolean
   branchFolders: Readonly<Record<string, boolean>>
@@ -128,6 +149,13 @@ export type PanelData = {
   // Files 的選單寫 Show in Explorer 還是 Show in Finder；選單沒開時沒問，一律 false。
   isWindows: boolean
   spec: SpecView
+  wiki: WikiView
+  // 對話目前用的模型種類；讀不到是 ''。
+  currentModel: WikiModel | ''
+  // 這段對話已經送過的 wiki 頁面。
+  wikiSent: readonly string[]
+  /** Distill is waiting on Claude. */
+  isDistilling: boolean
   db: DbView
   dbBusy: DbBusy
   // 正在停掉／重跑的服務。

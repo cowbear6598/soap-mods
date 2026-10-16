@@ -1,14 +1,21 @@
+import type { SpecSubTab } from '../../../types'
 import { PLAN_FILE } from '../../config'
 import { planPath } from '../../spec/parse'
 import { backButton } from '../stepBar'
 import type { Widgets } from '../widgets'
 import type { TabBody, TabContext } from './context'
+import { wikiTab } from './wiki'
 
-// Spec 分頁：plan skill 在 .soap/tasks/<feature>/plan.yaml 寫的計劃，一個 feature 一列，最新改的在上面。
+// Spec 分頁有兩個子分頁：Spec 和 Wiki（ui/tabs/wiki.tsx）。Spec 子分頁是 plan skill 在 .soap/tasks/<feature>/plan.yaml 寫的計劃，一個 feature 一列，最新改的在上面。
 // 每列最右邊一個垃圾桶：按了換成紅底打勾，幾秒內再按才刪掉整個 feature 資料夾；刪不掉的原因寫在清單上面。
 // 點了在分頁裡看它的 Description／Goals／Related／Verify，最上面 ← Back（b）回清單，最底下正中間 Do（d）叫 Claude 照它做。
 // plan.yaml 格式不對時先列出哪裡不對（紅字），讀得到的部分照樣畫。
-export const specTab: TabBody = ctx => (ctx.d.spec.open === '' ? specList(ctx) : planView(ctx))
+const SPEC_SUB_TAB_BODIES: Record<SpecSubTab, TabBody> = {
+  spec: ctx => (ctx.d.spec.open === '' ? specList(ctx) : planView(ctx)),
+  wiki: wikiTab,
+}
+
+export const specTab: TabBody = ctx => SPEC_SUB_TAB_BODIES[ctx.d.subTabs.spec](ctx)
 
 function specList({ w, d, a }: TabContext) {
   const { Box, Text } = w

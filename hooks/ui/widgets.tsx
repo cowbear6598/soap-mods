@@ -38,7 +38,7 @@ type Row = {
 
 // press：這個面板上的按鈕都經過它，動作做完後丟了焦點會補回來。
 export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
-  const { Box, Button, Markdown, Text } = ui
+  const { Box, Button, Code, Markdown, Text } = ui
   // 終端機畫不出 Svg（元素表裡有這個 key，但畫成空的），那邊退回文字按鈕。
   const Svg = !isTerminal && 'Svg' in ui ? ui.Svg : undefined
 
@@ -171,6 +171,10 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
     ) : null
   }
 
+  // 下拉選單（Wiki 的模型）；手機版沒有 Select，是 null。
+  const select = (key: string, props: { label: string; value: string; options: { value: string; label: string }[]; onSelect: (value: string) => unknown }) =>
+    'Select' in ui ? <ui.Select key={key} label={props.label} value={props.value} options={props.options} onSelect={value => void props.onSelect(value)} /> : null
+
   // branch、log 分頁最上面的搜尋框。手機版沒有 Input，就不畫。邊打邊過濾；桌面版拔不掉框旁邊的 submit 按鈕，
   // 就讓它（和 Enter）清空搜尋（onInput('')）。框不能設寬度、撐不滿，所以整組水平置中。
   // trailing：同一行最右邊的按鈕（branch 的 Fetch／Pull），搜尋框靠左、中間一條直線隔開 Clear；沒有搜尋框時只剩它，靠右。
@@ -235,7 +239,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
       stretched(DIVIDER_SVG, 'Divider', 1)
     )
 
-  return { Box, Button, Markdown, Text, hasSvg: Svg !== undefined, press, iconButton, deleteButton, pressRow, pathRow, searchField, field, iconBar, stretched, divider }
+  return { Box, Button, Code, Markdown, Text, hasSvg: Svg !== undefined, press, iconButton, deleteButton, pressRow, pathRow, searchField, field, select, iconBar, stretched, divider }
 }
 
 export type Widgets = ReturnType<typeof makeWidgets>

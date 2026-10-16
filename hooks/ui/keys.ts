@@ -30,9 +30,9 @@ export function unboundHotkeys(bound: ReadonlySet<string>): string[] {
   return HOTKEYS.filter(k => !bound.has(k))
 }
 
-/** The icon of the tab in view: the sub tab's under Git, else the tab's (keys as panel.tsx's iconBar draws them). */
-export function tabIconKey(tab: string, subTab: string): string {
-  return tab === 'git' ? `sub:${subTab}` : `tab:${tab}`
+/** The icon of the tab in view: its sub tab's when it has sub tabs (`sub` is the one shown), else the tab's (keys as panel.tsx's iconBar draws them). */
+export function tabIconKey(tab: string, sub: string | undefined): string {
+  return sub === undefined ? `tab:${tab}` : `sub:${sub}`
 }
 
 /**
@@ -40,10 +40,10 @@ export function tabIconKey(tab: string, subTab: string): string {
  * button a press swaps in), the drawn `*:back` (diff, merge, commit, folder; one at a time), else the tab
  * icon. The first of these that is drawn; undefined when none is.
  */
-export function ringAnchor(keys: Set<string>, tab: string, subTab: string, prefer?: string): string | undefined {
+export function ringAnchor(keys: Set<string>, tab: string, sub: string | undefined, prefer?: string): string | undefined {
   const back = [...keys].find(k => k.endsWith(':back'))
 
-  return [prefer, back, tabIconKey(tab, subTab)].find(k => k !== undefined && keys.has(k))
+  return [prefer, back, tabIconKey(tab, sub)].find(k => k !== undefined && keys.has(k))
 }
 
 /**

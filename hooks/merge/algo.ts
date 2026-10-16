@@ -1,4 +1,5 @@
 import type { GitFile, MergeChoice, MergeChunk, MergeOp, MergeText } from '../../types'
+import { cutAtLineEnd } from '../text'
 
 const OURS_MARK = '<<<<<<<'
 const BASE_MARK = '|||||||'
@@ -170,6 +171,40 @@ function diffLines(a: string[], b: string[]): DiffHunk[] {
   }
 
   return hunks
+}
+
+/** `before` → `after` as unified diff hunks (`@@ -a,n +b,m @@`, `context` lines around each change), cut to fit. */
+export function unifiedDiff(before: string, after: string, context = 3): { source: string; isTruncated: boolean } {
+  const a = splitLines(before)
+  const b = splitLines(after)
+  const hunks = diffLines(a, b)
+  const out: string[] = []
+  let i = 0
+  while (i < hunks.length) {
+    // 兩段變更之間隔不到 2 * context 行，就併成同一個 hunk。
+    let j = i
+    while (j + 1 < hunks.length && (hunks[j + 1]?.aStart ?? 0) - (hunks[j]?.aEnd ?? 0) <= 2 * context) j += 1
+    const first = hunks[i]
+    const last = hunks[j]
+    if (first === undefined || last === undefined) break
+    const aFrom = Math.max(0, first.aStart - context)
+    const bFrom = first.bStart - (first.aStart - aFrom)
+    const aTo = Math.min(a.length, last.aEnd + context)
+    const bTo = last.bEnd + (aTo - last.aEnd)
+    out.push(`@@ -${aFrom + 1},${aTo - aFrom} +${bFrom + 1},${bTo - bFrom} @@`)
+    let at = aFrom
+    for (const h of hunks.slice(i, j + 1)) {
+      for (; at < h.aStart; at += 1) out.push(` ${a[at]}`)
+      for (let k = h.aStart; k < h.aEnd; k += 1) out.push(`-${a[k]}`)
+      for (let k = h.bStart; k < h.bEnd; k += 1) out.push(`+${b[k]}`)
+      at = h.aEnd
+    }
+    for (; at < aTo; at += 1) out.push(` ${a[at]}`)
+    i = j + 1
+  }
+  const { text, isTruncated } = cutAtLineEnd(out.join('\n'))
+
+  return { source: text, isTruncated }
 }
 
 type SideChange = { side: 'ours' | 'theirs'; baseStart: number; baseEnd: number; lines: string[] }

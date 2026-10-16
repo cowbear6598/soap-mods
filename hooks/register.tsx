@@ -5,6 +5,8 @@
 import { atom, read, update } from 'claude-code'
 import type {
   EngineInterface,
+  FsEntry,
+  ModelForkResult,
   PaneOpenArgs,
   ProcessRunInit,
   Register,
@@ -26,7 +28,6 @@ import type {
   GitCommit,
   GitBranch,
   GitFile,
-  GitSubTab,
   GitSync,
   GitView,
   LogView,
@@ -40,8 +41,12 @@ import type {
   ServicePending,
   ServicesView,
   SpecEntry,
+  SubTabs,
   SpecView,
   TabId,
+  WikiDraft,
+  WikiModel,
+  WikiView,
 } from '../types'
 import {
   COPIED_MS,
@@ -66,9 +71,35 @@ import {
   SPEC_DIR,
   SYNC_TIMEOUT_MS,
   USAGE_TICK_MS,
+  WIKI_DIR,
+  WIKI_DISTILL_MAX_BYTES,
+  WIKI_DISTILL_MAX_TOKENS,
+  WIKI_DISTILL_TIMEOUT_MS,
+  WIKI_MODEL_KEY,
+  WIKI_PAGE_LIMIT,
+  WIKI_TRANSCRIPT_MAX_CHARS,
+  hasSubTabs,
 } from './config'
 import { NO_COVER, coverData, patchCover, showCover } from './cover'
-import { EMPTY, EMPTY_DB, EMPTY_DIFF, EMPTY_FILE_VIEW, EMPTY_FILES, EMPTY_LOG, EMPTY_MERGE, EMPTY_PLAN, EMPTY_SERVICES, EMPTY_SPEC, NO_COMMIT, NO_DB_CONNECTION, NO_FILE_MENU, NO_MESSAGES } from './defaults'
+import {
+  EMPTY,
+  EMPTY_DB,
+  EMPTY_DIFF,
+  EMPTY_FILE_VIEW,
+  EMPTY_FILES,
+  EMPTY_LOG,
+  EMPTY_MERGE,
+  EMPTY_PLAN,
+  EMPTY_SERVICES,
+  EMPTY_SPEC,
+  EMPTY_WIKI,
+  NO_COMMIT,
+  NO_DB_CONNECTION,
+  NO_FILE_MENU,
+  NO_MESSAGES,
+  NO_WIKI_OPEN,
+  NO_WIKI_SENT,
+} from './defaults'
 import { absPath, byName, childPath, fileSteps, formatSize, matchPaths, sortEntries, viewText } from './files/list'
 import { errorText, failure, isMissingCommand } from './errors'
 import {
@@ -92,7 +123,7 @@ import {
 } from './git/parse'
 import type { Repo } from './git/repo'
 import { GIT_ENV, REPO_ARGS, STATUS_ARGS, SUMMARY_ARGS, SYNC_ARGS, gitErrorText, isNotRepo, parseRepo, toSummary } from './git/repo'
-import { buildResult, detectOp, isResolved, keepChoices, merge3, nextConflict, parseConflicts, splitLines } from './merge/algo'
+import { buildResult, detectOp, isResolved, keepChoices, merge3, nextConflict, parseConflicts, splitLines, unifiedDiff } from './merge/algo'
 import {
   MAC_ENV,
   MAC_LAUNCH_ARGV,
@@ -136,6 +167,26 @@ import { coalesce, latestOnly } from './latest'
 import { neighbour } from './neighbour'
 import { patch } from './patch'
 import { hasQuery } from './search'
+import { cutAtLineEnd } from './text'
+import {
+  type PageText,
+  CHECKED_PATH,
+  DRAFTS_PATH,
+  distillPrompt,
+  draftText,
+  formatChecked,
+  isPagePath,
+  pagesContext,
+  parseChecked,
+  parseDistill,
+  parseDraft,
+  pickPages,
+  toggled,
+  transcriptText,
+  wikiModelLabel,
+  wikiModelOf,
+  wikiPath,
+} from './wiki/parse'
 
 // ───── 面板 id（引擎要在這個檔案裡直接看到值，不能 import）─────
 
@@ -146,7 +197,8 @@ const PANE_ARGS: PaneOpenArgs = { id: PANE, title: PANEL_TITLE }
 // ───── 狀態 ─────
 
 const tab = atom({ plugin: 'soap-mods', key: 'tab' } as const, 'git')
-const subTab = atom({ plugin: 'soap-mods', key: 'subTab' } as const, 'diff')
+// 有子分頁的 Tab 各自看的子分頁。
+const subTabs = atom({ plugin: 'soap-mods', key: 'subTabs' } as const, { git: 'diff', spec: 'spec' })
 const view = atom({ plugin: 'soap-mods', key: 'view' } as const, EMPTY)
 const showRemote = atom({ plugin: 'soap-mods', key: 'showRemote' } as const, false)
 // branch 分頁資料夾的開合，key 是「l:路徑」或「r:路徑」；沒有的照預設。
@@ -160,6 +212,13 @@ const services = atom({ plugin: 'soap-mods', key: 'services' } as const, EMPTY_S
 const files = atom({ plugin: 'soap-mods', key: 'files' } as const, EMPTY_FILES)
 // Spec 分頁：.soap/tasks 底下的 feature 清單，和點開的那份 plan.yaml。
 const spec = atom({ plugin: 'soap-mods', key: 'spec' } as const, EMPTY_SPEC)
+
+// 看得到的 Tab 的子分頁；沒有子分頁的 Tab 是 undefined。
+const shownSub = (t: TabId, subs: SubTabs) => (hasSubTabs(t) ? subs[t] : undefined)
+// Wiki 子分頁：.soap/wiki 的頁面、勾了哪幾頁、Distill 的草稿，和打開的那頁或那份草稿。
+const wiki = atom({ plugin: 'soap-mods', key: 'wiki' } as const, EMPTY_WIKI)
+// 這段對話已經帶給 Claude 的頁面：每頁一段對話只送一次。
+const wikiSent = atom({ plugin: 'soap-mods', key: 'wikiSent' } as const, NO_WIKI_SENT)
 const log = atom({ plugin: 'soap-mods', key: 'log' } as const, EMPTY_LOG)
 // DB 分頁：存著的連線（不含密碼）、打開的那個的資料表、查詢和結果。
 const db = atom({ plugin: 'soap-mods', key: 'db' } as const, EMPTY_DB)
@@ -214,6 +273,10 @@ async function setFiles($: EngineInterface, change: Partial<FilesView>) {
 
 async function setSpec($: EngineInterface, change: Partial<SpecView>) {
   await update($, spec, s => patch(s, change))
+}
+
+async function setWiki($: EngineInterface, change: Partial<WikiView>) {
+  await update($, wiki, w => patch(w, change))
 }
 
 async function setDb($: EngineInterface, change: Partial<DbView>) {
@@ -328,7 +391,7 @@ let drawnTree: RenderChildren
 
 // 每次畫完：剛按的那顆不在畫面上了，就把焦點圈移到 ringAnchor（換上來的那顆、Back、分頁圖示）。
 // 還沒有落點可移（套用中，Back 藏起來了）就等下一次畫。畫的 hook 裡不能等自己畫出來的東西，所以等畫完再移。
-function checkPressed($: EngineInterface, tree: RenderChildren, now: number, t: string, sub: string) {
+function checkPressed($: EngineInterface, tree: RenderChildren, now: number, t: string, sub: string | undefined) {
   drawnTree = tree
   const p = pressed
   if (p?.key === undefined || now >= p.until) return
@@ -356,7 +419,8 @@ async function leaveRow($: EngineInterface, rowKey?: string) {
   const from = rowKey ?? key
   const before = [...buttonKeys(drawnTree)]
   const left = new Set(before.filter(k => k !== key && k !== from))
-  const to = neighbourKey(before, from, left) ?? ringAnchor(left, ...(await Promise.all([read($, tab), read($, subTab)])))
+  const [t, subs] = await Promise.all([read($, tab), read($, subTabs)])
+  const to = neighbourKey(before, from, left) ?? ringAnchor(left, t, shownSub(t, subs))
   if (to !== undefined) await ringOn($, to)
 }
 
@@ -364,7 +428,7 @@ async function leaveRow($: EngineInterface, rowKey?: string) {
 // checkPressed 管不到：畫面整塊換回分頁，焦點圈移到分頁圖示。
 let drawnCover: Cover['kind'] = 'none'
 
-function checkCover($: EngineInterface, kind: Cover['kind'], now: number, t: string, sub: string) {
+function checkCover($: EngineInterface, kind: Cover['kind'], now: number, t: string, sub: string | undefined) {
   const wasCovered = drawnCover !== 'none'
   drawnCover = kind
   const isPressing = pressed !== undefined && now < pressed.until
@@ -545,7 +609,7 @@ async function readGit($: EngineInterface) {
         }),
   ])
   // log 只在看得到時重讀（換到 log 分頁時也會讀）。
-  await Promise.all([syncMerge($, changes), (await read($, subTab)) === 'log' ? loadLog($) : undefined])
+  await Promise.all([syncMerge($, changes), (await read($, subTabs)).git === 'log' ? loadLog($) : undefined])
 }
 
 // 換 Git 分頁看的 repo：開著的差異／合併是上一個 repo 的檔案，回到分頁；合併正在寫檔時不換。
@@ -1237,30 +1301,43 @@ async function reloadFiles($: EngineInterface) {
 }
 
 type Walk = { paths: string[]; isCapped: boolean }
+type Found = { path: string; size: number }
+type WalkRule = { limit: number; skipDir: (name: string) => boolean; keep: (path: string, e: FsEntry) => boolean }
 
 // 搜尋用的 session 資料夾底下所有檔案，第一次搜的時候才走一遍，之後打字只重新過濾；換分頁、回合結束丟掉。
 let walked: Promise<Walk> | undefined
 // 打字很快時，晚算完的舊搜尋不寫。
 const fileSearches = latestOnly()
 
-// 由上往下走，一次讀 FILES_WALK_BATCH 個資料夾；跳過 FILES_WALK_SKIP，讀不到的資料夾略過。收滿 FILES_WALK_LIMIT 個檔案就停。
-// 走完照 byName 排好，之後每次打字只要依序挑出符合的，不用再排。
-async function walkFiles($: EngineInterface): Promise<Walk> {
-  const root = await $.session.root()
-  const paths: string[] = []
+// 由上往下走 base 底下，一次讀 FILES_WALK_BATCH 個資料夾；skipDir 的資料夾不進去，keep 的才收，收滿 limit 個就停。
+// base 本身列不出來就丟出去，底下的資料夾讀不到就略過。走完照 byName 排好。
+async function walkTree($: EngineInterface, base: string, { limit, skipDir, keep }: WalkRule): Promise<{ found: Found[]; isCapped: boolean }> {
+  const found: Found[] = []
   const queue = ['']
-  while (queue.length > 0 && paths.length < FILES_WALK_LIMIT) {
+  while (queue.length > 0 && found.length < limit) {
     const batch = queue.splice(0, FILES_WALK_BATCH)
-    const lists = await Promise.all(batch.map(async dir => ({ dir, list: await $.fs.list(absPath(root, dir)).catch(() => []) })))
+    const lists = await Promise.all(
+      batch.map(async dir => ({ dir, list: dir === '' ? await $.fs.list(base) : await $.fs.list(absPath(base, dir)).catch(() => []) })),
+    )
     for (const { dir, list } of lists) {
       for (const e of list) {
-        if (e.kind !== 'dir') paths.push(childPath(dir, e.name))
-        else if (!FILES_WALK_SKIP.includes(e.name)) queue.push(childPath(dir, e.name))
+        const path = childPath(dir, e.name)
+        if (e.kind !== 'dir') {
+          if (keep(path, e)) found.push({ path, size: e.size })
+        } else if (!skipDir(e.name)) queue.push(path)
       }
     }
   }
 
-  return { paths: paths.slice(0, FILES_WALK_LIMIT).sort(byName), isCapped: paths.length > FILES_WALK_LIMIT || queue.length > 0 }
+  return { found: found.slice(0, limit).sort((a, b) => byName(a.path, b.path)), isCapped: found.length > limit || queue.length > 0 }
+}
+
+// 搜尋用的：整個 session 資料夾，跳過 FILES_WALK_SKIP。之後每次打字只要依序挑出符合的，不用再排。
+async function walkFiles($: EngineInterface): Promise<Walk> {
+  const rule: WalkRule = { limit: FILES_WALK_LIMIT, skipDir: name => FILES_WALK_SKIP.includes(name), keep: () => true }
+  const { found, isCapped } = await walkTree($, await $.session.root(), rule).catch(() => ({ found: [], isCapped: false }))
+
+  return { paths: found.map(f => f.path), isCapped }
 }
 
 // 搜尋框有字就從整個 session 資料夾挑出符合的檔案（存前 FILES_ROW_LIMIT 筆）；沒字就回到資料夾列表。
@@ -1495,9 +1572,14 @@ async function deleteSpec($: EngineInterface, name: string) {
   await loadSpecs($)
 }
 
-// 回合結束：Claude 可能寫了新的計劃、改了打開的那份。Spec 分頁開著就重讀看得到的那個。
+// Spec 分頁看得到的子分頁：計劃或 wiki。
+async function reloadSpecTab($: EngineInterface) {
+  await ((await read($, subTabs)).spec === 'wiki' ? reloadWiki($) : reloadSpec($))
+}
+
+// 回合結束：Claude 可能寫了新的計劃、wiki 頁面，改了打開的那份。Spec 分頁開著就重讀看得到的那個。
 async function reloadSpecsWhenShown($: EngineInterface) {
-  if ((await read($, tab)) === 'spec') await reloadSpec($)
+  if ((await read($, tab)) === 'spec') await reloadSpecTab($)
 }
 
 // Claude 用 Write／Edit 寫了 .soap/tasks/<feature>/plan.yaml：寫完讀回整份檢查格式，
@@ -1517,6 +1599,293 @@ async function checkPlan<R extends ToolCallResult>($: EngineInterface, path: str
   const note = await checkPlanWrite($, path).catch(() => undefined)
 
   return note === undefined ? ran : { ...ran, context: [...(ran.context ?? []), note] }
+}
+
+// ───── Wiki 子分頁 ─────
+
+// 連點兩頁、讀到一半按了 Back，晚到的舊清單、舊內容不寫。
+const wikiLoads = latestOnly()
+const wikiReads = latestOnly()
+
+const pageAbs = (root: string, path: string) => `${root}/${wikiPath(path)}`
+const draftAbs = (root: string, id: string) => `${root}/${DRAFTS_PATH}/${id}`
+
+// .soap/wiki 底下的頁面和大小：子資料夾也找（. 開頭的不看，草稿在那裡），最多 WIKI_PAGE_LIMIT 頁，照路徑排。
+// 最上層列不出來就丟出去（loadWiki 再看是不存在還是讀不到）。
+async function listPages($: EngineInterface, root: string): Promise<Found[]> {
+  const rule: WalkRule = { limit: WIKI_PAGE_LIMIT, skipDir: name => name.startsWith('.'), keep: (path, e) => e.kind === 'file' && isPagePath(path) }
+
+  return (await walkTree($, `${root}/${WIKI_DIR}`, rule)).found
+}
+
+// checked.txt 列的頁面（手改過的也照讀）；還沒有這個檔案就是一頁都沒勾。
+async function readChecked($: EngineInterface, root: string): Promise<string[]> {
+  return $.fs.read(`${root}/${CHECKED_PATH}`).then(parseChecked, () => [])
+}
+
+async function writeChecked($: EngineInterface, root: string, paths: readonly string[]) {
+  await $.fs.write(`${root}/${CHECKED_PATH}`, formatChecked(paths))
+}
+
+// 畫面只畫還在的頁面：手寫的、已經刪掉的留在 checked.txt，不列出來。
+const shownChecked = (checked: readonly string[], pages: readonly string[]) => checked.filter(c => pages.includes(c))
+
+// 一份草稿的目標頁面和內容；第一行沒寫 target 就丟出去。
+async function readDraft($: EngineInterface, root: string, id: string) {
+  const d = parseDraft(await $.fs.read(draftAbs(root, id)))
+  if (d === null) throw new Error('its first line names no page (target: <page>.md)')
+
+  return d
+}
+
+// 這幾頁的內容；不是頁面路徑的、讀不到的（刪掉了）略過。
+async function readPages($: EngineInterface, root: string, paths: readonly string[]): Promise<PageText[]> {
+  const read = await Promise.all(
+    paths.filter(isPagePath).map(path => $.fs.read(pageAbs(root, path)).then((text): PageText => ({ path, text }), () => undefined)),
+  )
+
+  return read.filter(p => p !== undefined)
+}
+
+// Distill 寫的草稿，舊的在上面（檔名是寫的時間）；第一行沒寫 target 的不算。isNew 等頁面列好再填。
+type DraftFile = Omit<WikiDraft, 'isNew'>
+
+async function listDrafts($: EngineInterface, root: string): Promise<DraftFile[]> {
+  const list = await $.fs.list(`${root}/${DRAFTS_PATH}`).catch(() => [])
+  const ids = list.filter(e => e.kind === 'file' && e.name.endsWith('.md')).map(e => e.name).sort(byName)
+  const drafts = await Promise.all(
+    ids.map(async (id): Promise<DraftFile | undefined> => {
+      const d = await $.fs.read(draftAbs(root, id)).then(parseDraft, () => null)
+
+      return d === null ? undefined : { id, target: d.target }
+    }),
+  )
+
+  return drafts.filter(d => d !== undefined)
+}
+
+// 列出頁面、勾了哪幾頁、草稿。還沒有 .soap/wiki 是還沒有頁面，不是錯誤：列不出來時才看它在不在。
+async function loadWiki($: EngineInterface) {
+  const isStale = wikiLoads.start()
+  const root = await $.session.root()
+  const listing = (async () => {
+    const [found, checked, drafts] = await Promise.all([listPages($, root), readChecked($, root), listDrafts($, root)])
+    const pages = found.map(f => f.path)
+
+    return { pages, checked: shownChecked(checked, pages), drafts: drafts.map(d => ({ ...d, isNew: !pages.includes(d.target) })), error: '' }
+  })().catch(async (err: unknown) => ({
+    pages: [],
+    checked: [],
+    drafts: [],
+    error: (await $.fs.exists(`${root}/${WIKI_DIR}`).catch(() => true)) ? `Couldn't list ./${WIKI_DIR}: ${errorText(err)}` : '',
+  }))
+  const [listed, model] = await Promise.all([listing, readWikiModel($)])
+  if (isStale()) return
+  await setWiki($, { isLoaded: true, model, ...listed })
+}
+
+// Summary Conversation 選的模型；讀不到就是 Current。
+async function readWikiModel($: EngineInterface): Promise<WikiModel | ''> {
+  return wikiModelOf(await $.store.get(WIKI_MODEL_KEY).catch(() => undefined))
+}
+
+async function selectWikiModel($: EngineInterface, model: WikiModel) {
+  await setWiki($, { model })
+  await $.store.set(WIKI_MODEL_KEY, model).catch(() => undefined)
+}
+
+// 勾選框：改 checked.txt（手寫的、已經不在的頁面都留著），畫面只畫還在的頁面。
+async function toggleWikiPage($: EngineInterface, path: string) {
+  const root = await $.session.root()
+  try {
+    const checked = toggled(await readChecked($, root), path)
+    await writeChecked($, root, checked)
+    await setWiki($, { checked: shownChecked(checked, (await read($, wiki)).pages), error: '' })
+  } catch (err) {
+    await setWiki($, { error: `Couldn't save ${CHECKED_PATH}: ${errorText(err)}` })
+  }
+}
+
+// 在分頁裡看一頁的 Markdown。換了頁才捲回最上面；回合結束重讀同一頁，內容沒變就不重畫。
+async function openWikiPage($: EngineInterface, path: string) {
+  const isStale = wikiReads.start()
+  const shown = await $.fs.read(pageAbs(await $.session.root(), path)).then(
+    text => ({ ...cutAtLineEnd(text.trim()), readError: '' }),
+    (err: unknown) => ({ text: '', isTruncated: false, readError: `Couldn't read ${wikiPath(path)}: ${errorText(err)}` }),
+  )
+  if (isStale()) return
+  const prev = await read($, wiki)
+  await setWiki($, { ...NO_WIKI_OPEN, open: path, ...shown })
+  if (prev.open !== path) await scrollTop($)
+}
+
+// 看一份草稿：新頁面畫它的 Markdown；改既有頁面的畫原頁面到草稿的差異。頁面在不在看當下的，不看清單上的。
+async function openWikiDraft($: EngineInterface, id: string) {
+  const isStale = wikiReads.start()
+  const root = await $.session.root()
+  const shown = await (async () => {
+    const d = await readDraft($, root, id)
+    const page = await $.fs.read(pageAbs(root, d.target)).catch(() => undefined)
+    if (page === undefined) return { isNew: true, ...cutAtLineEnd(d.body), diff: '', readError: '' }
+    const diff = unifiedDiff(page, `${d.body}\n`)
+
+    return { isNew: false, text: d.body, diff: diff.source, isTruncated: diff.isTruncated, readError: '' }
+  })().catch((err: unknown) => ({ isNew: true, text: '', diff: '', isTruncated: false, readError: `Couldn't read draft ${id}: ${errorText(err)}` }))
+  if (isStale()) return
+  const prev = await read($, wiki)
+  const { isNew, ...view } = shown
+  const drafts = prev.drafts.map(x => (x.id === id ? { ...x, isNew } : x))
+  await setWiki($, { ...NO_WIKI_OPEN, draft: id, ...view, drafts, deleteError: '' })
+  if (prev.draft !== id) await scrollTop($)
+}
+
+async function closeWiki($: EngineInterface) {
+  wikiReads.drop()
+  await setWiki($, NO_WIKI_OPEN)
+  await loadWiki($)
+}
+
+// Wiki 子分頁看得到的那個：清單，或打開的頁面、草稿（清單這時畫不到，不用重列）。
+async function reloadWiki($: EngineInterface) {
+  const s = await read($, wiki)
+  await (s.draft !== '' ? openWikiDraft($, s.draft) : s.open !== '' ? openWikiPage($, s.open) : loadWiki($))
+}
+
+// 打開的草稿：Accept 寫進 wiki（新頁面或整頁取代）再刪掉草稿；Discard 只刪草稿。做完回清單。
+async function settleWikiDraft($: EngineInterface, isAccept: boolean) {
+  const s = await read($, wiki)
+  if (s.draft === '') return
+  const root = await $.session.root()
+  const at = draftAbs(root, s.draft)
+  try {
+    if (isAccept) {
+      const d = await readDraft($, root, s.draft)
+      await $.fs.write(pageAbs(root, d.target), `${d.body}\n`)
+    }
+    await removePath($, at)
+  } catch (err) {
+    await setWiki($, { deleteError: `Couldn't ${isAccept ? 'accept' : 'discard'} draft ${s.draft}: ${errorText(err)}` })
+
+    return
+  }
+  await setWiki($, { deleteError: '' })
+  await closeWiki($)
+}
+
+const wikiArm: ArmSlot = {}
+
+// 刪頁面要按兩次：垃圾桶按了換成打勾，DELETE_ARM_MS 內再按才刪，也從 checked.txt 拿掉；按別的垃圾桶，原本的就收回。
+async function deleteWikiPage($: EngineInterface, path: string) {
+  const s = await read($, wiki)
+  if (s.deleteArmed !== path) {
+    disarmLater($, wikiArm, () => setWiki($, { deleteArmed: '' }))
+    await setWiki($, { deleteArmed: path, deleteError: '' })
+
+    return
+  }
+  wikiArm.timer?.cancel()
+  await setWiki($, { deleteArmed: '' })
+  const root = await $.session.root()
+  try {
+    if (!isPagePath(path)) throw new Error('not a wiki page')
+    await removePath($, pageAbs(root, path))
+    const checked = await readChecked($, root)
+    if (checked.includes(path)) await writeChecked($, root, checked.filter(c => c !== path))
+  } catch (err) {
+    await setWiki($, { deleteError: `Couldn't delete ${path}: ${errorText(err)}` })
+    await loadWiki($)
+
+    return
+  }
+  await leaveRow($)
+  await setWiki($, { deleteError: '' })
+  await loadWiki($)
+}
+
+// Distill 沒產生草稿的原因。
+function distillFailure(r: Exclude<ModelForkResult, { isAnswered: true }>): string {
+  switch (r.reason) {
+    case 'nothing-to-fork':
+      return 'Nothing to distill yet: Claude has not replied in this conversation (it is new or was just cleared).'
+    case 'api-error':
+      return `Distill failed: the API answered ${r.error}${r.status === null ? '' : ` (${r.status})`}. Try again.`
+    case 'empty-reply':
+      return 'Distill got an empty reply. Try again.'
+    case 'aborted':
+      return 'Distill was cut off. Try again.'
+  }
+}
+
+// 問選的模型這段對話值得留下什麼。跟對話同一種（或兩邊都不知道）就從快取接著問（模型就是對話的）；
+// 其他的把對話轉成文字另外問，還沒有回覆過就跟接著問一樣說沒東西可整理。
+async function askDistill($: EngineInterface, model: WikiModel | '', current: WikiModel | '', pages: { shown: readonly PageText[]; named: readonly string[] }): Promise<ModelForkResult> {
+  if (model === '' || model === current) return $.model.fork({ prompt: distillPrompt(pages.shown, pages.named) })
+  const messages = await $.session.messages()
+  if (!messages.some(m => m.role === 'assistant')) return { isAnswered: false, reason: 'nothing-to-fork' }
+
+  return $.model.complete({
+    model,
+    prompt: distillPrompt(pages.shown, pages.named, transcriptText(messages, WIKI_TRANSCRIPT_MAX_CHARS)),
+    maxTokens: WIKI_DISTILL_MAX_TOKENS,
+    timeoutMs: WIKI_DISTILL_TIMEOUT_MS,
+  })
+}
+
+// 正在 Distill。跟 dbBusy 一樣放模組變數不放 atom，免得被熱重載中斷後一直停在「Summarizing…」。
+let isDistilling = false
+
+// Distill：只有按了才跑。把這段對話和現有頁面給選的模型，請它寫出值得留下的草稿，
+// 存進 .soap/wiki/.drafts 等人看；頁面一頁都不動。一次只跑一個。說明最後寫用了哪個模型。
+async function distillWiki($: EngineInterface) {
+  if (isDistilling) return
+  isDistilling = true
+  const current = await currentModel($)
+  const model = (await read($, wiki)).model || current
+  await setWiki($, { distillNote: '' })
+  let note: string
+  try {
+    const root = await $.session.root()
+    // 只讀放得下的頁面（照大小挑），其餘只給路徑。
+    const picked = pickPages(await listPages($, root).catch(() => []), WIKI_DISTILL_MAX_BYTES)
+    const r = await askDistill($, model, current, { shown: await readPages($, root, picked.shown), named: picked.named })
+    const drafts = r.isAnswered ? parseDistill(r.text) : []
+    const now = await $.clock.now()
+    await Promise.all(drafts.map((d, i) => $.fs.write(draftAbs(root, `${now}-${i + 1}.md`), draftText(d.target, d.body))))
+    // 有草稿就不寫說明：Drafts (N) 的標題已經寫了幾份，說明裡的數字會在 Accept／Discard 後過時。
+    note = !r.isAnswered ? distillFailure(r) : drafts.length === 0 ? 'Nothing new worth keeping in this conversation.' : ''
+  } catch (err) {
+    note = `Distill failed: ${errorText(err)}`
+  }
+  const name = wikiModelLabel(model)
+  isDistilling = false
+  await setWiki($, { distillNote: name === '' || note === '' ? note : `${note} (${name})` })
+  await loadWiki($)
+}
+
+// 對話目前用的模型種類（/model 選的）；讀不到是 ''。
+async function currentModel($: EngineInterface): Promise<WikiModel | ''> {
+  return wikiModelOf(await $.session.model().catch(() => ''))
+}
+
+// Send：把勾了的頁面加進這段對話（使用者角色、不顯示成打的字），Claude 下一個回合就讀得到，不會為此多跑一個回合。
+// 記下這段對話送過哪幾頁，清單上標 sent；/clear 之後是另一段對話，標記跟著不見。
+async function sendWikiPages($: EngineInterface) {
+  const root = await $.session.root()
+  const pages = await readPages($, root, await readChecked($, root))
+  if (pages.length === 0) return void $.ui.toast('Check the pages to send first.')
+  const r = await $.session.append({ message: { type: 'user', content: [{ type: 'text', text: pagesContext(pages) }] } })
+  if (r.deny !== undefined) return void $.ui.toast(`Couldn't send the pages: ${r.deny}`)
+  const conversation = await $.session.id()
+  const paths = pages.map(p => p.path)
+  await update($, wikiSent, s => ({ conversation, pages: [...new Set([...(s.conversation === conversation ? s.pages : []), ...paths])] }))
+  $.ui.toast(`Sent ${pages.length} page${pages.length === 1 ? '' : 's'} to Claude`)
+}
+
+// 這段對話送過的頁面。
+async function sentPages($: EngineInterface): Promise<string[]> {
+  const [conversation, sent] = await Promise.all([$.session.id().catch(() => ''), read($, wikiSent)])
+
+  return sent.conversation === conversation ? sent.pages : []
 }
 
 // ───── DB 分頁（SQL Server） ─────
@@ -1748,15 +2117,16 @@ async function selectTab($: EngineInterface, id: TabId) {
   // 掃描要一秒左右，不等它：先切過去畫「掃描中」或舊清單。
   if (id === 'services') void refreshServices($).catch(() => undefined)
   if (id === 'files') void reloadFiles($).catch(() => undefined)
-  if (id === 'spec') void reloadSpec($).catch(() => undefined)
+  if (id === 'spec') void reloadSpecTab($).catch(() => undefined)
   if (id === 'db') void loadDbConnections($).catch(() => undefined)
   if (showsGit(id)) void refresh($).catch(() => undefined)
 }
 
-// 換子分頁。log 不在看的時候不讀，換過來才讀。
-async function selectSubTab($: EngineInterface, id: GitSubTab) {
-  await Promise.all([update($, subTab, () => id), leaveTab($)])
-  if (id === 'log') await loadLog($)
+// 換子分頁。Git 的 log 不在看的時候不讀，換過來才讀；Spec 的（計劃、wiki）換過去就重讀它。
+async function selectSubTab<T extends keyof SubTabs>($: EngineInterface, t: T, id: SubTabs[T]) {
+  await Promise.all([update($, subTabs, s => ({ ...s, [t]: id })), leaveTab($)])
+  if (t === 'spec') await reloadSpecTab($)
+  else if (id === 'log') await loadLog($)
 }
 
 // branch 分頁的 log 按鈕：換到 log 分頁看那個分支，從最近的 LOG_PAGE 筆開始。
@@ -1764,7 +2134,7 @@ async function selectSubTab($: EngineInterface, id: GitSubTab) {
 async function viewLog($: EngineInterface, b: GitBranch) {
   logLoads.drop()
   await update($, log, () => ({ ...EMPTY_LOG, ref: b.isCurrent ? '' : branchRef(b) }))
-  await selectSubTab($, 'log')
+  await selectSubTab($, 'git', 'log')
 }
 
 let uncopyTimer: Timer | undefined
@@ -1782,7 +2152,7 @@ async function copyBranchName($: EngineInterface, name: string, surface: RenderS
 function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
   return {
     selectTab: id => selectTab($, id),
-    selectSubTab: id => selectSubTab($, id),
+    selectSubTab: (t, id) => selectSubTab($, t, id),
     selectRepo: name => selectRepo($, name),
     openDiff: path => openDiff($, path),
     openMerge: path => openMerge($, path),
@@ -1820,6 +2190,17 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     closeSpec: () => closeSpec($),
     doSpec: () => doSpec($),
     deleteSpec: name => deleteSpec($, name),
+    toggleWikiPage: path => toggleWikiPage($, path),
+    openWikiPage: path => openWikiPage($, path),
+    closeWiki: () => closeWiki($),
+    deleteWikiPage: path => deleteWikiPage($, path),
+    openWikiDraft: id => openWikiDraft($, id),
+    acceptWikiDraft: () => settleWikiDraft($, true),
+    discardWikiDraft: () => settleWikiDraft($, false),
+    // 不等它做完：Claude 要想一陣子，按鈕先換成「Distilling…」。
+    distillWiki: () => void distillWiki($).catch(() => undefined),
+    sendWikiPages: () => sendWikiPages($),
+    selectWikiModel: model => selectWikiModel($, model),
     addDbConnection: text => addDbConnection($, text),
     deleteDbConnection: id => deleteDbConnection($, id),
     openDbConnection: id => openDbConnection($, id),
@@ -1882,9 +2263,9 @@ export const register: Register = on => {
   on('tool.call', { tool: 'Edit' }, async ($, e, next) => checkPlan($, e.file_path, await next(e))).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const [activeTab, activeSub, v, isRemoteOpen, bf, bq, fl, sv, fileList, specs, dbView, lg, lq, shown, usage, now] = await Promise.all([
+    const [activeTab, subs, v, isRemoteOpen, bf, bq, fl, sv, fileList, specs, wikiView, dbView, lg, lq, shown, usage, now] = await Promise.all([
       read($, tab),
-      read($, subTab),
+      read($, subTabs),
       read($, view),
       read($, showRemote),
       read($, branchFolders),
@@ -1893,6 +2274,7 @@ export const register: Register = on => {
       read($, services),
       readFiles($),
       read($, spec),
+      read($, wiki),
       read($, db),
       read($, log),
       read($, logQuery),
@@ -1902,13 +2284,21 @@ export const register: Register = on => {
       $.clock.now(),
     ])
 
+    const isWikiShown = activeTab === 'spec' && subs.spec === 'wiki'
+    // 只有開著時才問：Files 的 ⋯ 選單（Show in Explorer 還是 Finder，問一次就記著）、Wiki 子分頁（模型選單、這段對話送過的頁面）。
+    const [onWindows, current, sent] = await Promise.all([
+      fileList.menu !== '' && isWindows($),
+      isWikiShown ? currentModel($) : ('' as const),
+      isWikiShown ? sentPages($) : [],
+    ])
+    const sub = shownSub(activeTab, subs)
     const tree = renderPanel(
       $.ui.resolve(e),
       {
         surface: e.surface,
         bodyRows: e.props.scroll.bodyRows,
         tab: activeTab,
-        subTab: activeSub,
+        subTabs: subs,
         view: v,
         showRemote: isRemoteOpen,
         branchFolders: bf,
@@ -1917,9 +2307,12 @@ export const register: Register = on => {
         syncing,
         services: sv,
         files: fileList,
-        // 只有 Files 的 ⋯ 選單用得到，開著才問（問一次就記著）。
-        isWindows: fileList.menu !== '' && (await isWindows($)),
+        isWindows: onWindows,
         spec: specs,
+        wiki: wikiView,
+        currentModel: current,
+        wikiSent: sent,
+        isDistilling,
         db: dbView,
         dbBusy,
         servicePending,
@@ -1933,8 +2326,8 @@ export const register: Register = on => {
       actionsFor($, e.surface),
       (fn, ringKey) => act($, fn, ringKey),
     )
-    checkPressed($, tree, now, activeTab, activeSub)
-    checkCover($, shown.kind, now, activeTab, activeSub)
+    checkPressed($, tree, now, activeTab, sub)
+    checkCover($, shown.kind, now, activeTab, sub)
 
     return tree
   })
