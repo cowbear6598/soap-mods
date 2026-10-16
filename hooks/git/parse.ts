@@ -100,8 +100,15 @@ export function isConflict(file: GitFile): boolean {
   return file.x === 'U' || file.y === 'U' || (file.x === 'A' && file.y === 'A') || (file.x === 'D' && file.y === 'D')
 }
 
-/** Whether the diff tab's trash can take back a file's changes: not a conflict, nor a rename or copy (its source path is not kept). */
-export const canDiscard = (file: GitFile) => !isConflict(file) && letterKind(file.x) !== 'renamed' && letterKind(file.y) !== 'renamed'
+/** Whether the diff tab's trash can delete a file: it is on disk (not deleted) and not a conflict. */
+export const canDelete = (file: GitFile) => !isConflict(file) && letterKind(file.x) !== 'deleted' && letterKind(file.y) !== 'deleted'
+
+/** Whether the diff tab's rollback can take a file back to HEAD: HEAD has it (not untracked or newly added), not a conflict, nor a rename or copy (its source path is not kept). */
+export function canRollback(file: GitFile): boolean {
+  const kind = letterKind(file.x)
+
+  return !isConflict(file) && kind !== 'added' && kind !== 'renamed' && letterKind(file.y) !== 'renamed'
+}
 
 export function letterKind(letter: string): FileKind {
   if (letter === 'A' || letter === '?') return 'added'

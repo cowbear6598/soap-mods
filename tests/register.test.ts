@@ -140,14 +140,23 @@ test('pressing a changed file shows its diff over the tabs, Next/Previous step t
   await ui.unmount()
 })
 
-test('the trash of a diff tab row asks with a check first: an untracked file is deleted, a tracked one goes back to HEAD', async ($, on) => {
+test('a diff tab row asks with a check first: the trash only deletes the file, rollback only takes it back to HEAD', async ($, on) => {
   const runs: string[] = []
   stubPanel(on)
   // 不是 Windows：用 rm -rf 刪。
   on('env.get', () => ({ value: undefined }))
+  const isDone = (r: string) => runs.includes(r)
   gitRepo(on, {
     status: () =>
-      ['## main', 'R  new.ts\0old.ts', ...(runs.some(r => r.startsWith('git')) ? [] : [' M a.ts']), ...(runs.some(r => r.startsWith('rm')) ? [] : ['?? b.ts']), ''].join('\0'),
+      [
+        '## main',
+        'R  new.ts\0old.ts',
+        'A  c.ts',
+        ...(isDone('git restore --source=HEAD --staged --worktree -- a.ts') ? [] : [' M a.ts']),
+        isDone('rm -rf -- /repo/d.ts') ? ' D d.ts' : ' M d.ts',
+        ...(isDone('rm -rf -- /repo/b.ts') ? [] : ['?? b.ts']),
+        '',
+      ].join('\0'),
     run: (cmd, e) => {
       if (e.argv[0] === 'rm') {
         runs.push(e.argv.join(' '))
@@ -163,18 +172,32 @@ test('the trash of a diff tab row asks with a check first: an untracked file is 
   await openPanel($)
 
   const ui = await mountPane($)
-  // 改名的沒有垃圾桶。
-  expect(await ui.find({ key: 'discard:staged:new.ts' })).toBeUndefined()
+  // 改名的、未追蹤的、新加的沒有 rollback；未追蹤的、新加的、改名的都還有垃圾桶。
+  expect(await ui.find({ key: 'rollback:staged:new.ts' })).toBeUndefined()
+  expect(await ui.find({ key: 'rollback:untracked:b.ts' })).toBeUndefined()
+  expect(await ui.find({ key: 'rollback:staged:c.ts' })).toBeUndefined()
+  expect(await ui.find({ key: 'remove:staged:c.ts' })).toBeDefined()
 
   // 按一下只換成打勾，再按才刪。
-  await ui.press({ key: 'discard:untracked:b.ts' })
+  await ui.press({ key: 'remove:untracked:b.ts' })
   expect(runs).toEqual([])
-  await ui.press({ key: 'discard:untracked:b.ts' })
+  await ui.press({ key: 'remove:untracked:b.ts' })
   expect(runs).toEqual(['rm -rf -- /repo/b.ts'])
   expect(await ui.find({ key: 'file:untracked:b.ts' })).toBeUndefined()
 
-  await ui.press({ key: 'discard:unstaged:a.ts' })
-  await ui.press({ key: 'discard:unstaged:a.ts' })
+  // 有追蹤的也只刪檔案：之後列成刪除，只剩 rollback。
+  await ui.press({ key: 'remove:unstaged:d.ts' })
+  await ui.press({ key: 'remove:unstaged:d.ts' })
+  expect(runs.at(-1)).toBe('rm -rf -- /repo/d.ts')
+  expect(await ui.find({ key: 'remove:unstaged:d.ts' })).toBeUndefined()
+  expect(await ui.find({ key: 'rollback:unstaged:d.ts' })).toBeDefined()
+
+  // 按了 rollback 再按垃圾桶，打勾換到垃圾桶，不會刪。
+  await ui.press({ key: 'rollback:unstaged:a.ts' })
+  await ui.press({ key: 'remove:unstaged:a.ts' })
+  expect(runs).toHaveLength(2)
+  await ui.press({ key: 'rollback:unstaged:a.ts' })
+  await ui.press({ key: 'rollback:unstaged:a.ts' })
   expect(runs.at(-1)).toBe('git restore --source=HEAD --staged --worktree -- a.ts')
   expect(await ui.find({ key: 'file:unstaged:a.ts' })).toBeUndefined()
   await ui.unmount()

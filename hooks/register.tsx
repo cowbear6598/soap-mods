@@ -678,26 +678,27 @@ async function showDiff($: EngineInterface, pane: DiffPaneView) {
   await scrollTop($)
 }
 
-// diff 分頁的垃圾桶要按兩次：按了換成打勾，DELETE_ARM_MS 內再按同一個檔案才做（Staged、Unstaged 都列著的兩列一起打勾，做的事一樣）。
-// 未追蹤的檔案直接刪掉（-uall 列的都是檔案，不會是資料夾）；有追蹤的把 index 和工作區都還原成 HEAD 的樣子，
-// 新加的檔案（HEAD 沒有）就從 index 和工作區拿掉。不經過資源回收筒，也沒有 undo。
-async function discardFile($: EngineInterface, file: GitFile) {
-  if ((await read($, view)).fileArmed !== file.path) {
-    await arm($, { fileArmed: file.path })
+// diff 分頁的垃圾桶和 rollback 都要按兩次：按了換成打勾，DELETE_ARM_MS 內再按同一顆才做（Staged、Unstaged 都列著的兩列一起打勾，做的事一樣）。
+// delete 只刪工作區的檔案（-uall 列的都是檔案，不會是資料夾），index 不動：有追蹤的之後列成刪除。
+// rollback 只把 index 和工作區都還原成 HEAD 的樣子，不刪 HEAD 沒有的檔案。不經過資源回收筒，也沒有 undo。
+async function changeFile($: EngineInterface, file: GitFile, action: 'delete' | 'rollback') {
+  const armed = `${action}:${file.path}`
+  if ((await read($, view)).fileArmed !== armed) {
+    await arm($, { fileArmed: armed })
 
     return
   }
   gitArm.timer?.cancel()
   try {
-    if (file.x === '?') await removePath($, inRepo(file.path))
+    if (action === 'delete') await removePath($, inRepo(file.path))
     else await gitOk($, ['restore', '--source=HEAD', '--staged', '--worktree', '--', file.path])
   } catch (err) {
-    await setView($, { ...NO_MESSAGES, fileError: `Couldn't discard ${file.path}: ${gitErrorText(err)}` })
+    await setView($, { ...NO_MESSAGES, fileError: `Couldn't ${action === 'delete' ? 'delete' : 'roll back'} ${file.path}: ${gitErrorText(err)}` })
 
     return
   }
 
-  // 不跳 toast：那列不見就是刪掉了。
+  // 不跳 toast：那顆按鈕不見就是做完了。
   await leaveRow($)
   await setView($, NO_MESSAGES)
   await refresh($)
@@ -2188,7 +2189,8 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     openDiff: path => openDiff($, path),
     openMerge: path => openMerge($, path),
     showMoreFiles: () => update($, fileLimit, n => n + FILE_PAGE),
-    discardFile: file => discardFile($, file),
+    deleteChange: file => changeFile($, file, 'delete'),
+    rollbackChange: file => changeFile($, file, 'rollback'),
     searchBranches: text => update($, branchQuery, () => text),
     toggleRemote: () => update($, showRemote, open => !open),
     toggleBranchFolder: (key, isOpen) => update($, branchFolders, folders => ({ ...folders, [key]: isOpen })),

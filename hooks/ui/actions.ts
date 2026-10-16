@@ -46,7 +46,8 @@ export type Actions = {
   openDiff: (path: string) => unknown
   openMerge: (path: string) => unknown
   showMoreFiles: () => unknown
-  discardFile: (file: GitFile) => unknown
+  deleteChange: (file: GitFile) => unknown
+  rollbackChange: (file: GitFile) => unknown
   // branch
   searchBranches: (text: string) => unknown
   toggleRemote: () => unknown
