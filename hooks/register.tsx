@@ -368,6 +368,10 @@ async function isPaneShown($: EngineInterface) {
   return (await findPane($))?.isShown === true
 }
 
+// session 開始時還沒有畫面接上（desktop 剛開 session、-p、SDK）就先不開面板（這時開，引擎會跳 no-surface 警告），
+// 等 session.attach 再開。
+let isOpenPending = false
+
 async function focusPanel($: EngineInterface) {
   await $.ui.open({ ...PANE_ARGS, focus: true })
 }
@@ -2319,7 +2323,8 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     // 先開面板（畫「讀取中…」），git 在背景讀，不擋住 session 開始。
-    void $.ui.open(PANE_ARGS)
+    isOpenPending = e.surface === null
+    if (!isOpenPending) void $.ui.open(PANE_ARGS)
     void refresh($).catch(() => undefined)
     $.clock.every(FOCUS_WATCH_MS, () => void focusWhenShown($))
     // 用量直接跟引擎拿（不花錢），這裡只負責讓重置倒數每分鐘重畫一次。
@@ -2328,6 +2333,17 @@ export const register: Register = on => {
     $.clock.every(GIT_REFRESH_MS, () => void refreshWhenShown($).catch(() => undefined))
 
     return next(e)
+  })
+
+  // 畫面接上了（名冊已加進它），開始時沒開成的面板現在開。
+  on('session.attach', async ($, e, next) => {
+    const r = await next(e)
+    if (isOpenPending) {
+      isOpenPending = false
+      void $.ui.open(PANE_ARGS)
+    }
+
+    return r
   })
 
   // 某個用量視窗動了一整個百分點，就重畫底部的用量。

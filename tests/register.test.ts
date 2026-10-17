@@ -1568,6 +1568,30 @@ test('at turn end the Files tab relists its folder, and an open file shows its n
 
 // ───── 焦點 ─────
 
+test('with no screen attached at start, Soap Panel waits for session.attach to open', async ($, on) => {
+  mock.clock(on)
+  const opened: string[] = []
+  on('ui.open', (_$, e) => {
+    opened.push(e.id)
+
+    return { value: { isPlaced: true } }
+  })
+  on('ui.panes', () => ({ value: [] }))
+  on('session.attach', (_$, e) => ({ clientId: e.clientId }))
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  on('session.root', () => ({ value: '/repo' }))
+  gitRepo(on, { status: '## main\0' })
+  await $.session.start({ cwd: '/repo', surface: null, isInteractive: true })
+  expect(opened).toEqual([])
+
+  await $.session.attach({ surface: 'desktop', clientId: 'desktop:default' })
+  expect(opened).toEqual(['soap-panel'])
+
+  // 再接上一個不重開（人可能已經關掉了）。
+  await $.session.attach({ surface: 'desktop', clientId: 'desktop:2' })
+  expect(opened).toEqual(['soap-panel'])
+})
+
 test('Soap Panel brought to the front, or just pressed, gets the keyboard back', async ($, on) => {
   const clock = mock.clock(on)
   const pane = (isShown: boolean, isFocused: boolean) => [{ id: 'soap-panel', title: 'Soap Panel', isShown, isFocused, isPlaced: true }]
