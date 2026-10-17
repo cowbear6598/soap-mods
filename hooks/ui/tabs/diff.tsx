@@ -17,7 +17,8 @@ export const diffTab: TabBody = ({ w, d, a }) => {
     const isDeletable = canDelete(file)
     const isRollbackable = canRollback(file)
 
-    return w.pathRow(`file:${group}:${file.path}`, file.path, letter, kind, () => (kind === 'conflict' ? a.openMerge(file.path) : a.openDiff(file.path)), {
+    return w.pathRow(`file:${group}:${file.path}`, file.path, () => (kind === 'conflict' ? a.openMerge(file.path) : a.openDiff(file.path)), {
+      status: { letter, kind },
       // 一顆都沒有要給 undefined：pressRow 看到 trailing 就會改排版。
       trailing:
         isDeletable || isRollbackable ? (

@@ -11,7 +11,7 @@ export const conflictTab: TabBody = ({ w, d, a }) => {
   const v = d.view
   const conflicts = v.files.filter(isConflict)
   const opLabel = v.op === '' ? '' : OP_LABEL[v.op]
-  const conflictRow = (f: GitFile) => w.pathRow(`conflict:${f.path}`, f.path, '!', 'conflict', () => a.openMerge(f.path), { note: conflictLabel(f) })
+  const conflictRow = (f: GitFile) => w.pathRow(`conflict:${f.path}`, f.path, () => a.openMerge(f.path), { status: { letter: '!', kind: 'conflict' }, note: conflictLabel(f) })
 
   return (
     <Box flexDirection="column" gap={1}>

@@ -14,6 +14,7 @@ import {
   ICON_BUTTON_LABEL,
   ICON_PX,
   KIND_STYLE,
+  PATH_NAME_WIDTH,
   ROW_BUTTON_LABEL,
   ROW_OVERLAY_WIDTH,
 } from '../config'
@@ -29,6 +30,7 @@ type Row = {
   isDim?: boolean
   isBold?: boolean
   isTruncated?: boolean
+  labelWidth?: number
   color?: string
   indent?: number
   lead?: RenderChildren
@@ -85,6 +87,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
   // 終端機：疊上去的空白會蓋掉底下的字，所以只有名稱是按鈕。
   // isTruncated：名稱撐滿剩下的寬度、太長時在桌面版截成「…」，rest 留在同一行、貼著最右邊（commit 的 subject 和時間）。
   // 要 minWidth 0 才縮得比內容窄，不然長的名稱會把 rest 擠出畫面。
+  // labelWidth：名稱固定這麼寬、太長時截尾，rest 從同一個位置開始，一列一列對齊（檔案列的檔名和資料夾）。
   // trailing：放在整行最右邊、自己能按的東西（branch 列的 log 圖示），不在透明按鈕底下，才按得到。
   const pressRow = (row: Row) => {
     if (isTerminal) {
@@ -97,18 +100,25 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
         </Box>
       )
     }
+    const shrinks = row.isTruncated === true || row.labelWidth !== undefined
     const label = (
-      <Text bold={row.isBold} color={row.color} dimColor={row.isDim} wrap={row.isTruncated ? 'truncate-end' : undefined}>
+      <Text bold={row.isBold} color={row.color} dimColor={row.isDim} wrap={shrinks ? 'truncate-end' : undefined}>
         {row.label}
       </Text>
     )
     const hasTrailing = row.trailing !== undefined
     const pressable = (
-      <Box key={`${row.key}:row`} position="relative" flexGrow={hasTrailing ? 1 : undefined} flexShrink={hasTrailing ? 1 : undefined}>
-        <Box gap={1} paddingLeft={row.indent ?? 2} flexGrow={row.isTruncated ? 1 : undefined} minWidth={row.isTruncated ? 0 : undefined}>
+      <Box
+        key={`${row.key}:row`}
+        position="relative"
+        flexGrow={hasTrailing ? 1 : undefined}
+        flexShrink={hasTrailing ? 1 : undefined}
+        minWidth={hasTrailing && shrinks ? 0 : undefined}
+      >
+        <Box gap={1} paddingLeft={row.indent ?? 2} flexGrow={shrinks ? 1 : undefined} minWidth={shrinks ? 0 : undefined}>
           {row.lead}
-          {row.isTruncated ? (
-            <Box flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden">
+          {shrinks ? (
+            <Box width={row.labelWidth} flexGrow={row.labelWidth === undefined ? 1 : undefined} flexShrink={1} minWidth={0} overflow="hidden">
               {label}
             </Box>
           ) : (
@@ -134,14 +144,13 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
     )
   }
 
-  // 一個檔案一列：彩色狀態字母、檔名、淡色的說明和資料夾。diff、log、conflict 分頁共用。
+  // 一個檔案一列：彩色狀態字母（status，Files 搜尋沒有）、固定寬的檔名、淡色的說明和資料夾。
+  // 資料夾吃掉剩下的寬度，太長時截頭，縮得比檔名快，右邊的按鈕才不會被擠出去。diff、log、conflict、Files 搜尋共用。
   const pathRow = (
     key: string,
     path: string,
-    letter: string,
-    kind: FileKind,
     onPress: () => unknown,
-    { note = '', trailing }: { note?: string; trailing?: RenderChildren } = {},
+    { status, note = '', trailing }: { status?: { letter: string; kind: FileKind }; note?: string; trailing?: RenderChildren } = {},
   ) => {
     const { name, dir } = splitPath(path)
     const detail = [note, dir].filter(s => s !== '').join(' · ')
@@ -150,16 +159,19 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
       key,
       label: name,
       onPress,
-      lead: (
-        <Text bold color={KIND_STYLE[kind].theme}>
-          {letter}
+      labelWidth: PATH_NAME_WIDTH,
+      lead: status && (
+        <Text bold color={KIND_STYLE[status.kind].theme}>
+          {status.letter}
         </Text>
       ),
       rest:
         detail === '' ? null : (
-          <Text dimColor wrap="truncate-start">
-            {detail}
-          </Text>
+          <Box flexGrow={1} flexShrink={3} minWidth={0} overflow="hidden">
+            <Text dimColor wrap="truncate-start">
+              {detail}
+            </Text>
+          </Box>
         ),
       trailing,
     })

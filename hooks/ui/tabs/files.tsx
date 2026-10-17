@@ -77,18 +77,7 @@ function searchBody(ctx: TabContext) {
 
   return (
     <Box flexDirection="column" position="relative">
-      {found.paths.map(path => {
-        const { name, dir } = splitPath(path)
-
-        return w.pressRow({
-          key: `files:found:${path}`,
-          label: name,
-          isTruncated: true,
-          rest: dir !== '' && <Text dimColor wrap="truncate-start">{dir}</Text>,
-          trailing: moreButton(ctx, path),
-          onPress: () => a.openFile(path),
-        })
-      })}
+      {found.paths.map(path => w.pathRow(`files:found:${path}`, path, () => a.openFile(path), { trailing: moreButton(ctx, path) }))}
       {hidden > 0 && note(ctx, `… ${hidden} more`)}
       {found.isCapped && note(ctx, `Only the first ${FILES_WALK_LIMIT} files were searched.`)}
       {menuCard(ctx, found.paths, Number(hidden > 0) + Number(found.isCapped))}

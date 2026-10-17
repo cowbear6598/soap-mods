@@ -19,7 +19,7 @@ function commitFiles({ w, d, a }: TabContext, lg: LogView) {
   const { Box, Text } = w
   const { now } = d
   const commitFileRow = (f: CommitFile, _: number, files: CommitFile[]) =>
-    w.pathRow(`commit-file:${f.path}`, f.path, f.letter, letterKind(f.letter), () => a.openCommitDiff(opened, f, files))
+    w.pathRow(`commit-file:${f.path}`, f.path, () => a.openCommitDiff(opened, f, files), { status: { letter: f.letter, kind: letterKind(f.letter) } })
   const [c] = opened
   if (c === undefined) return null
   const isSearching = hasQuery(d.logQuery)

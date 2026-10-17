@@ -71,6 +71,9 @@ export const ICON_PX = 16
 export const LOG_SHA_WIDTH = 8
 export const LOG_AUTHOR_WIDTH = 10
 export const LOG_AGO_WIDTH = 4
+
+// 檔案列（diff、log 的 commit、conflict、Files 搜尋）檔名那欄的固定寬（字數），太長截斷；資料夾從這欄後面開始。
+export const PATH_NAME_WIDTH = 14
 // 選中的 tab 恆亮的底色。
 export const ACTIVE_BG = '#3a3a3a'
 // Files 分頁 ⋯ 選單的底色（不透明，蓋住底下的列）和寬度（字數，放得下 Press again to delete）。
