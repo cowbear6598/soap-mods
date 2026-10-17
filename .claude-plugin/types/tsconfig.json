@@ -1,8 +1,9 @@
 {
   "compilerOptions": {
     "target": "es2023",
-    "lib": ["es2023"],
-    "types": [],
+    "lib": [
+      "es2023"
+    ],
     "module": "esnext",
     "moduleResolution": "bundler",
     "strict": true,
@@ -11,7 +12,19 @@
     "skipLibCheck": true,
     "jsx": "react",
     "jsxFactory": "h",
-    "jsxFragmentFactory": "Fragment"
+    "jsxFragmentFactory": "Fragment",
+    "typeRoots": [
+      "."
+    ],
+    "types": [
+      "claude-code",
+      "claude-code-tools",
+      "claude-code-mcp"
+    ]
   },
-  "include": [".", "../../hooks", "../../types", "../../tests"]
+  "include": [
+    "../../hooks",
+    "../../types",
+    "../../tests"
+  ]
 }
