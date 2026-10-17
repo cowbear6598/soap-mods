@@ -381,9 +381,9 @@ export type WikiView = {
   drafts: WikiDraft[]
   /** Why listing `.soap/wiki` or saving the checked pages failed, '' when none (a missing folder is no pages, not an error). */
   error: string
-  /** Page whose trash button was pressed once and now asks to confirm, '' when none. */
+  /** Path under `.soap/wiki` (a page, or a draft as `.drafts/<id>`) whose trash button was pressed once and now asks to confirm, '' when none. */
   deleteArmed: string
-  /** Why the last delete, accept, Accept all or discard failed, '' when none. */
+  /** Why the last delete, accept or discard failed, '' when none. */
   deleteError: string
   /** The page opened, '' when none. */
   open: string

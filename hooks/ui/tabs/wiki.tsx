@@ -1,15 +1,16 @@
 import type { WikiDraft } from '../../../types'
-import { FOLDER_COLOR, WIKI_MODELS } from '../../config'
+import { FOLDER_COLOR, WIKI_DRAFTS_DIR, WIKI_MODELS } from '../../config'
 import { pathTree, treeRows } from '../../tree'
-import { wikiModelOf, wikiPath } from '../../wiki/parse'
+import { draftPath, wikiModelOf, wikiPath } from '../../wiki/parse'
 import { backButton } from '../stepBar'
 import type { TabBody, TabContext } from './context'
 
 // Wiki 子分頁：.soap/wiki 底下的 Markdown 頁面，照資料夾畫成樹（資料夾一列，點了開合，預設打開），一頁一列：最左邊勾選框，
-// 最下面 Send（s）把勾了的送給 Claude、Uncheck all 取消全部勾選；點名稱在分頁裡看內容，最右邊垃圾桶按兩次才刪。
+// 最下面 Send（s）把勾了的送給 Claude、Uncheck all 取消全部勾選；點名稱在分頁裡看內容，最右邊 @ 把路徑插進聊天框、垃圾桶按兩次才刪。
 // 最上面 Summary Conversation（旁邊選問哪個模型：Current 是對話目前的模型）請 Claude 把這段對話值得留下的整理成草稿；
-// /soap-mods:wiki 跟 Claude 討論後寫的草稿也在這裡。草稿列在頁面上面，點開看內容（改既有頁面的看差異，搬移、刪除看那頁現在的內容），
-// Accept 才照草稿改 wiki、Discard 丟掉；Accept all 一次套用全部。
+// /soap-mods:wiki 跟 Claude 討論後寫的草稿也在這裡。草稿列在頁面上面，照它寫到的頁面路徑跟頁面一樣畫成樹，右邊 @ 插草稿檔的路徑、
+// 垃圾桶按兩次丟掉；點開看內容（改既有頁面的看差異，搬移、刪除看那頁現在的內容），
+// Accept 才照草稿改 wiki、Discard 丟掉。
 export const wikiTab: TabBody = ctx => {
   const s = ctx.d.wiki
 
@@ -17,6 +18,7 @@ export const wikiTab: TabBody = ctx => {
 }
 
 type TreeRow = ReturnType<typeof treeRows<string>>[number]
+type DraftTreeRow = ReturnType<typeof treeRows<WikiDraft>>[number]
 
 function wikiList(ctx: TabContext) {
   const { w, d, a } = ctx
@@ -24,6 +26,8 @@ function wikiList(ctx: TabContext) {
   const s = d.wiki
   if (!s.isLoaded) return <Text dimColor>Loading…</Text>
   const rows = treeRows(pathTree(s.pages, path => path), path => d.wikiFolders[path] ?? true)
+  // 草稿樹從 .drafts/ 長出來再跳過這層：資料夾路徑帶著 .drafts/，開合跟頁面樹分開記（頁面路徑不會以 . 開頭，撞不到）。
+  const draftRows = treeRows(pathTree(s.drafts, draft => `${WIKI_DRAFTS_DIR}/${draft.target}`, true), path => d.wikiFolders[path] ?? true)
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -51,11 +55,8 @@ function wikiList(ctx: TabContext) {
       {s.deleteError !== '' && <Text color="error">{s.deleteError}</Text>}
       {s.drafts.length > 0 && (
         <Box flexDirection="column">
-          <Box gap={1} alignItems="center">
-            <Text bold>{`Drafts (${s.drafts.length})`}</Text>
-            <Button key="wiki:accept-all" label="Accept all" onPress={w.press(() => a.acceptAllWikiDrafts())} />
-          </Box>
-          {s.drafts.map(draft => draftRow(ctx, draft))}
+          <Text bold>{`Drafts (${s.drafts.length})`}</Text>
+          {draftRows.map(row => draftRow(ctx, row))}
         </Box>
       )}
       {s.pages.length > 0 && (
@@ -74,23 +75,37 @@ function wikiList(ctx: TabContext) {
   )
 }
 
-// 樹的一列：資料夾「db/ · 3 ▾」點了開合；頁面是勾選框、名稱（扣掉所在資料夾；點了看內容；這段對話送過的後面標 sent）、垃圾桶。
+// 資料夾列「db/ · 3 ▾」，點了開合。
+function folderRow({ w, a }: TabContext, row: Extract<TreeRow | DraftTreeRow, { kind: 'folder' }>) {
+  const { path, label, count } = row.folder
+
+  return w.pressRow({
+    key: `wiki:folder:${path}`,
+    label: `${label} · ${count} ${row.isOpen ? '▾' : '▸'}`,
+    color: FOLDER_COLOR,
+    indent: row.depth * 2,
+    onPress: () => a.toggleWikiFolder(path, !row.isOpen),
+  })
+}
+
+// 頁面列、草稿列最右邊：@ 把檔案路徑插進聊天框，垃圾桶按兩次才刪。path 是 .soap/wiki 底下的（草稿是 .drafts/<id>）。
+function fileButtons({ w, d, a }: TabContext, path: string) {
+  return (
+    <w.Box key={`wiki:trailing:${path}`} gap={1} alignItems="center">
+      {w.iconButton(`wiki:mention:${path}`, 'at', '@', false, () => a.mentionPath(wikiPath(path)))}
+      {w.deleteButton(`wiki:delete:${path}`, d.wiki.deleteArmed === path, () => a.deleteWikiFile(path))}
+    </w.Box>
+  )
+}
+
+// 樹的一列：資料夾點了開合；頁面是勾選框、名稱（扣掉所在資料夾；點了看內容；這段對話送過的後面標 sent）、@、垃圾桶。
 // 跟同一層的其他列一樣縮排。沒給 limit，不會有「… more」那種列。
-function wikiRow({ w, d, a }: TabContext, row: TreeRow) {
+function wikiRow(ctx: TabContext, row: TreeRow) {
+  const { w, d, a } = ctx
   const { Box, Text } = w
   if (row.kind === 'more') return null
   const indent = row.depth * 2
-  if (row.kind === 'folder') {
-    const { path, label, count } = row.folder
-
-    return w.pressRow({
-      key: `wiki:folder:${path}`,
-      label: `${label} · ${count} ${row.isOpen ? '▾' : '▸'}`,
-      color: FOLDER_COLOR,
-      indent,
-      onPress: () => a.toggleWikiFolder(path, !row.isOpen),
-    })
-  }
+  if (row.kind === 'folder') return folderRow(ctx, row)
   const path = row.item
   const isChecked = d.wiki.checked.includes(path)
 
@@ -105,7 +120,7 @@ function wikiRow({ w, d, a }: TabContext, row: TreeRow) {
           isTruncated: true,
           rest: d.wikiSent.includes(path) ? <Text dimColor>sent</Text> : undefined,
           onPress: () => a.openWikiPage(path),
-          trailing: w.deleteButton(`wiki:delete:${path}`, d.wiki.deleteArmed === path, () => a.deleteWikiPage(path)),
+          trailing: fileButtons(ctx, path),
         })}
       </Box>
     </Box>
@@ -126,16 +141,24 @@ function draftBadge({ Text }: TabContext['w'], draft: WikiDraft) {
   return <Text color={badge.color}>{badge.label}</Text>
 }
 
-// 草稿列上的名稱：搬移寫「舊 → 新」。
+// 打開的草稿上面的名稱：搬移寫「舊 → 新」。
 const draftLabel = (draft: WikiDraft) => (draft.kind === 'move' ? `${draft.from} → ${draft.target}` : draft.target)
 
-function draftRow({ w, a }: TabContext, draft: WikiDraft) {
+// 草稿樹的一列：草稿放在它寫到的頁面的資料夾底下，名稱扣掉那個資料夾；搬移的照樣寫完整的「舊 → 新」，才看得出從哪搬來。
+// 右邊 @ 把草稿檔的路徑插進聊天框，垃圾桶按兩次丟掉草稿。
+function draftRow(ctx: TabContext, row: DraftTreeRow) {
+  const { w, a } = ctx
+  if (row.kind === 'more') return null
+  if (row.kind === 'folder') return folderRow(ctx, row)
+  const draft = row.item
+
   return w.pressRow({
     key: `wiki:draft:${draft.id}`,
-    label: draftLabel(draft),
+    label: draft.kind === 'move' ? draftLabel(draft) : row.label,
+    indent: row.depth * 2,
     isTruncated: true,
-    rest: draftBadge(w, draft),
     onPress: () => a.openWikiDraft(draft.id),
+    trailing: fileButtons(ctx, draftPath(draft.id)),
   })
 }
 

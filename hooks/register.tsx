@@ -179,6 +179,7 @@ import {
   draftFixNote,
   draftText,
   isDraftPath,
+  draftIdOf,
   isPagePath,
   pagesContext,
   parseDistill,
@@ -1763,6 +1764,12 @@ async function toggleWikiPage($: EngineInterface, path: string) {
   await saveChecked($, root, toggled(await readChecked($, root), path))
 }
 
+// 把路徑（session 資料夾底下的）當 @ 引用插進聊天框的游標位置；放不進去（有對話框擋著、沒有聊天框）就跳提示。
+async function mentionPath($: EngineInterface, path: string) {
+  const r = await $.prompt.fill({ text: `@${path} `, mode: 'insert' })
+  if (!r.isFilled) $.ui.toast(r.refusal === 'dialog' ? 'Close the dialog first.' : "Couldn't put the path in the prompt box.")
+}
+
 // Uncheck all：已經不在的頁面也一起清掉。
 async function uncheckAllWikiPages($: EngineInterface) {
   await saveChecked($, await $.session.root(), [])
@@ -1854,26 +1861,11 @@ async function settleWikiDraft($: EngineInterface, isAccept: boolean) {
   await closeWiki($)
 }
 
-// Accept all：清單上的草稿照順序一份一份套用；有一份做不成就停在那裡、說是哪一份，後面的留著。
-async function acceptAllWikiDrafts($: EngineInterface) {
-  const root = await $.session.root()
-  let error = ''
-  for (const d of (await read($, wiki)).drafts) {
-    try {
-      await applyDraft($, root, d.id)
-    } catch (err) {
-      error = `Couldn't accept draft ${d.id}: ${errorText(err)}`
-      break
-    }
-  }
-  await setWiki($, { deleteError: error })
-  await loadWiki($)
-}
-
 const wikiArm: ArmSlot = {}
 
-// 刪頁面要按兩次：垃圾桶按了換成打勾，DELETE_ARM_MS 內再按才刪，也從勾選拿掉；按別的垃圾桶，原本的就收回。
-async function deleteWikiPage($: EngineInterface, path: string) {
+// 刪 .soap/wiki 底下的檔案要按兩次：垃圾桶按了換成打勾，DELETE_ARM_MS 內再按才刪；按別的垃圾桶，原本的就收回。
+// 頁面刪了也從勾選拿掉；草稿（.drafts/<id>）只刪草稿，同 Discard。
+async function deleteWikiFile($: EngineInterface, path: string) {
   const s = await read($, wiki)
   if (s.deleteArmed !== path) {
     disarmLater($, wikiArm, () => setWiki($, { deleteArmed: '' }))
@@ -1884,10 +1876,14 @@ async function deleteWikiPage($: EngineInterface, path: string) {
   wikiArm.timer?.cancel()
   await setWiki($, { deleteArmed: '' })
   const root = await $.session.root()
+  const draftId = draftIdOf(path)
   try {
-    if (!isPagePath(path)) throw new Error('not a wiki page')
-    await removePath($, pageAbs(root, path))
-    await moveChecked($, root, path)
+    if (draftId !== undefined) await removePath($, draftAbs(root, draftId))
+    else {
+      if (!isPagePath(path)) throw new Error('not a wiki page')
+      await removePath($, pageAbs(root, path))
+      await moveChecked($, root, path)
+    }
   } catch (err) {
     await setWiki($, { deleteError: `Couldn't delete ${path}: ${errorText(err)}` })
     await loadWiki($)
@@ -2291,14 +2287,14 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     deleteSpec: name => deleteSpec($, name),
     toggleWikiPage: path => toggleWikiPage($, path),
     uncheckAllWikiPages: () => uncheckAllWikiPages($),
+    mentionPath: path => mentionPath($, path),
     toggleWikiFolder: (path, isOpen) => update($, wikiFolders, folders => ({ ...folders, [path]: isOpen })),
     openWikiPage: path => openWikiPage($, path),
     closeWiki: () => closeWiki($),
-    deleteWikiPage: path => deleteWikiPage($, path),
+    deleteWikiFile: path => deleteWikiFile($, path),
     openWikiDraft: id => openWikiDraft($, id),
     acceptWikiDraft: () => settleWikiDraft($, true),
     discardWikiDraft: () => settleWikiDraft($, false),
-    acceptAllWikiDrafts: () => acceptAllWikiDrafts($),
     // 不等它做完：Claude 要想一陣子，按鈕先換成「Distilling…」。
     distillWiki: () => void distillWiki($).catch(() => undefined),
     sendWikiPages: () => sendWikiPages($),

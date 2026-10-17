@@ -303,9 +303,22 @@ test('Summary Conversation asks the model picked beside it: the conversation\'s 
   await ui.unmount()
 })
 
-test('the Wiki tab draws the pages as a tree of folders that open and close, and Uncheck all clears every check', async ($, on) => {
+test('the Wiki tab draws the pages as a tree of folders that open and close, Uncheck all clears every check, and @ puts a page path in the prompt box', async ($, on) => {
   const store: Record<string, unknown> = {}
   disk(on, { [`${WIKI}/style.md`]: '# Style\n', [`${WIKI}/db/schema.md`]: '# Schema\n', [`${WIKI}/db/ops/backup.md`]: '# Backup\n' }, { store })
+  const fills: { text: string; mode: string }[] = []
+  let isFilled = true
+  const toasts: string[] = []
+  on('prompt.fill', (_$, e) => {
+    fills.push({ text: e.text, mode: e.mode })
+
+    return isFilled ? { isFilled, text: e.text, cursor: e.text.length } : { isFilled, text: '', cursor: 0 }
+  })
+  on('ui.toast', (_$, e) => {
+    toasts.push(e.text)
+
+    return { value: undefined }
+  })
   const ui = await mountPane($)
   await ui.press({ key: 'tab:spec' })
   await ui.press({ key: 'sub:wiki' })
@@ -332,10 +345,19 @@ test('the Wiki tab draws the pages as a tree of folders that open and close, and
   expect((await ui.find({ key: 'wiki:send' }))?.props.label).toBe('Send to Claude (0)')
   expect(CHECKED in store).toBe(false)
   expect(await ui.find({ key: 'wiki:uncheck' })).toBeUndefined()
+
+  // @：把頁面路徑插進聊天框的游標位置；放不進去就跳提示。
+  await ui.press({ key: 'wiki:mention:db/schema.md' })
+  expect(fills).toEqual([{ text: '@.soap/wiki/db/schema.md ', mode: 'insert' }])
+  expect(toasts).toEqual([])
+  isFilled = false
+  await ui.press({ key: 'wiki:mention:style.md' })
+  // hook 擋下的不帶原因（引擎會拿掉），只能說放不進去。
+  expect(toasts).toEqual(["Couldn't put the path in the prompt box."])
   await ui.unmount()
 })
 
-test('drafts can move and delete pages; Accept all applies them in order, checks follow the pages, and a clash stops it', async ($, on) => {
+test('drafts can move and delete pages; accepting them in order applies each, checks follow the pages, and a clash is refused', async ($, on) => {
   const store: Record<string, unknown> = { [CHECKED]: ['style.md', 'naming.md'] }
   const files: Record<string, string> = {
     [`${WIKI}/style.md`]: '# Style\n',
@@ -350,13 +372,23 @@ test('drafts can move and delete pages; Accept all applies them in order, checks
   await ui.press({ key: 'tab:spec' })
   await ui.press({ key: 'sub:wiki' })
 
-  // 第一行看不懂的不列；搬移寫「舊 → 新」，每份標它做什麼。
-  expect(await drawnRows(ui, 'wiki:draft:')).toEqual(['wiki:draft:1-merge.md', 'wiki:draft:2-delete.md', 'wiki:draft:3-move.md'])
+  // 第一行看不懂的不列；跟頁面一樣照寫到的路徑畫成樹，資料夾在前；搬移寫完整的「舊 → 新」；列上不標它做什麼，右邊是 @ 和垃圾桶。
+  expect(await drawnRows(ui, 'wiki:folder:.drafts/')).toEqual(['wiki:folder:.drafts/conventions/'])
+  expect(await drawnRows(ui, 'wiki:draft:')).toEqual(['wiki:draft:1-merge.md', 'wiki:draft:3-move.md', 'wiki:draft:2-delete.md'])
+  expect((await ui.find({ key: 'wiki:draft:1-merge.md' }))?.props.label).toBe('code.md')
   expect((await ui.find({ key: 'wiki:draft:3-move.md' }))?.props.label).toBe('style.md → conventions/style.md')
-  for (const badge of ['new page', 'delete', 'move']) expect(await ui.find({ type: 'Text', text: badge })).toBeDefined()
+  // 草稿的資料夾跟頁面的分開開合。
+  await ui.press({ key: 'wiki:folder:.drafts/conventions/' })
+  expect(await drawnRows(ui, 'wiki:draft:')).toEqual(['wiki:draft:2-delete.md'])
+  await ui.press({ key: 'wiki:folder:.drafts/conventions/' })
+  expect(await drawnRows(ui, 'wiki:draft:')).toHaveLength(3)
+  for (const badge of ['new page', 'delete', 'move']) expect(await ui.find({ type: 'Text', text: badge })).toBeUndefined()
+  expect(await drawnRows(ui, 'wiki:mention:')).toEqual(['wiki:mention:.drafts/1-merge.md', 'wiki:mention:.drafts/3-move.md', 'wiki:mention:.drafts/2-delete.md', 'wiki:mention:naming.md', 'wiki:mention:style.md'])
+  expect(await drawnRows(ui, 'wiki:delete:.drafts/')).toHaveLength(3)
 
-  // 打開搬移、刪除的草稿：說會怎樣，底下是那頁現在的內容。
+  // 打開搬移、刪除的草稿：上面標它做什麼，說會怎樣，底下是那頁現在的內容。
   await ui.press({ key: 'wiki:draft:3-move.md' })
+  expect(await ui.find({ type: 'Text', text: 'move' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /^Moves \.soap\/wiki\/style\.md to \.soap\/wiki\/conventions\/style\.md/ })).toBeDefined()
   expect(await ui.find({ type: 'Markdown', text: '# Style' })).toBeDefined()
   await ui.press({ key: 'wiki:back' })
@@ -364,8 +396,11 @@ test('drafts can move and delete pages; Accept all applies them in order, checks
   expect(await ui.find({ type: 'Text', text: 'Deletes .soap/wiki/naming.md:' })).toBeDefined()
   await ui.press({ key: 'wiki:back' })
 
-  // Accept all：照順序全部套用，草稿檔刪掉；勾著的頁面跟著搬、被刪的拿掉。
-  await ui.press({ key: 'wiki:accept-all' })
+  // 照順序一份一份 Accept，草稿檔刪掉；勾著的頁面跟著搬、被刪的拿掉。
+  for (const id of ['1-merge.md', '2-delete.md', '3-move.md']) {
+    await ui.press({ key: `wiki:draft:${id}` })
+    await ui.press({ key: 'wiki:accept' })
+  }
   expect(files[`${WIKI}/conventions/code.md`]).toBe('# Code\n- Tabs\n- camelCase\n')
   expect(files[`${WIKI}/naming.md`]).toBeUndefined()
   expect(files[`${WIKI}/style.md`]).toBeUndefined()
@@ -373,17 +408,26 @@ test('drafts can move and delete pages; Accept all applies them in order, checks
   expect(Object.keys(files).filter(p => p.includes('/.drafts/'))).toEqual([`${WIKI}/.drafts/4-bad.md`])
   expect(store[CHECKED]).toEqual(['conventions/style.md'])
   expect(await drawnRows(ui, 'wiki:draft:')).toEqual([])
-  expect(await ui.find({ key: 'wiki:accept-all' })).toBeUndefined()
 
-  // 搬到已經有頁面的路徑：不蓋掉，停下來說是哪一份，草稿留著；Discard 丟掉。
+  // 搬到已經有頁面的路徑：不蓋掉，說是哪一份，草稿留著；Discard 丟掉。
   files[`${WIKI}/.drafts/5-clash.md`] = 'move: conventions/code.md -> conventions/style.md\n'
   await endTurn($, ui)
-  await ui.press({ key: 'wiki:accept-all' })
+  await ui.press({ key: 'wiki:draft:5-clash.md' })
+  await ui.press({ key: 'wiki:accept' })
   expect(await ui.find({ type: 'Text', text: "Couldn't accept draft 5-clash.md: .soap/wiki/conventions/style.md already exists" })).toBeDefined()
   expect(files[`${WIKI}/conventions/code.md`]).toBeDefined()
-  await ui.press({ key: 'wiki:draft:5-clash.md' })
   await ui.press({ key: 'wiki:discard' })
   expect(files[`${WIKI}/.drafts/5-clash.md`]).toBeUndefined()
+  expect(await drawnRows(ui, 'wiki:draft:')).toEqual([])
+
+  // 草稿列的垃圾桶：按第一次只是待確認，再按才丟掉草稿，頁面不動。
+  files[`${WIKI}/.drafts/7-drop.md`] = 'delete: conventions/code.md\n'
+  await endTurn($, ui)
+  await ui.press({ key: 'wiki:delete:.drafts/7-drop.md' })
+  expect(files[`${WIKI}/.drafts/7-drop.md`]).toBeDefined()
+  await ui.press({ key: 'wiki:delete:.drafts/7-drop.md' })
+  expect(files[`${WIKI}/.drafts/7-drop.md`]).toBeUndefined()
+  expect(files[`${WIKI}/conventions/code.md`]).toBeDefined()
   expect(await drawnRows(ui, 'wiki:draft:')).toEqual([])
 
   // 要刪的頁面已經不在：說讀不到，Accept 照樣按得到，按了只把草稿收掉。

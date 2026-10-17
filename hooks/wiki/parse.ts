@@ -21,6 +21,15 @@ export function isPagePath(path: string): boolean {
 
 export const wikiPath = (path: string) => `${WIKI_DIR}/${path}`
 export const DRAFTS_PATH = wikiPath(WIKI_DRAFTS_DIR)
+/** A draft file as a path under `.soap/wiki` (`.drafts/<id>`). */
+export const draftPath = (id: string) => `${WIKI_DRAFTS_DIR}/${id}`
+
+/** The id of a draft path `.drafts/<id>.md`; undefined for a page or anything deeper. */
+export function draftIdOf(path: string): string | undefined {
+  const id = path.slice(WIKI_DRAFTS_DIR.length + 1)
+
+  return path === draftPath(id) && /^[^/\\]+\.md$/i.test(id) ? id : undefined
+}
 
 /** `paths` with `path` added (at the end) or, when it is there, taken out. */
 export function toggled(paths: readonly string[], path: string): string[] {

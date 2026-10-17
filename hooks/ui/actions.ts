@@ -99,19 +99,19 @@ export type Actions = {
   toggleWikiPage: (path: string) => unknown
   // 取消全部勾選。
   uncheckAllWikiPages: () => unknown
+  // 把 session 資料夾底下的路徑當 @ 引用插進聊天框的游標位置。
+  mentionPath: (path: string) => unknown
   // 開合資料夾，path 含結尾的 /。
   toggleWikiFolder: (path: string, isOpen: boolean) => unknown
   openWikiPage: (path: string) => unknown
   // 關掉打開的頁面或草稿，回清單。
   closeWiki: () => unknown
-  // 刪頁面：按第一次只是待確認（打勾），再按才刪，也從勾選清單拿掉。
-  deleteWikiPage: (path: string) => unknown
+  // 刪 .soap/wiki 底下的頁面或草稿（.drafts/<id>）：按第一次只是待確認（打勾），再按才刪；頁面也從勾選清單拿掉。
+  deleteWikiFile: (path: string) => unknown
   openWikiDraft: (id: string) => unknown
   // 照打開的草稿改 wiki（寫整頁、搬移、刪除）並刪掉草稿；捨棄只刪草稿。
   acceptWikiDraft: () => unknown
   discardWikiDraft: () => unknown
-  // 清單上的草稿全部照順序套用。
-  acceptAllWikiDrafts: () => unknown
   // 請 Claude 把這段對話值得留下的整理成草稿。
   distillWiki: () => unknown
   // 把勾了的頁面送給 Claude（加進這段對話）。

@@ -28,7 +28,7 @@ Write the pages in the language the user writes to you in. Keep them terse: one 
 
 ## Write the drafts
 
-Write each change as its own file directly under `<session root>/.soap/wiki/.drafts/`, named `<n>-<short-kebab-topic>.md` (`1-goals.md`, `2-delete-style.md`). Accept all applies drafts in file name order, so number them in the order they must happen. The first line says what the draft does:
+Write each change as its own file directly under `<session root>/.soap/wiki/.drafts/`, named `<n>-<short-kebab-topic>.md` (`1-goals.md`, `2-delete-style.md`). The user accepts drafts one at a time, so number them in the order they must be accepted. The first line says what the draft does:
 
 ```text
 target: project/goals.md
@@ -56,4 +56,4 @@ Page paths are relative to `.soap/wiki/`, use `/`, end in `.md`, are lowercase-k
 
 ## Hand off
 
-List the drafts you wrote, one line each (what it does to which page), and tell the user to open Soap Panel's Spec tab → Wiki to review them: Accept applies one, Accept all applies them all, Discard drops one.
+List the drafts you wrote, one line each (what it does to which page), and tell the user to open Soap Panel's Spec tab → Wiki to review them: Accept applies one, Discard drops one.
