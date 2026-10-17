@@ -1,19 +1,25 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { type TestOn, fsEntry, mountPane, ok, posix, stubPanel } from '../test-fixtures'
+import { type TestOn, endTurn, fsEntry, mountPane, ok, posix, stubPanel, stubStore } from '../test-fixtures'
 
 const WIKI = '/proj/.soap/wiki'
-const CHECKED = `${WIKI}/checked.txt`
+const CHECKED = 'wiki.checked:/proj'
 
 // 記在記憶體裡的 session 資料夾：路徑 → 內容。fs 的 list、read、write、exists 和 rm -rf 都照它答。
-// now：給 null 時測試自己用 mock.clock（垃圾桶的待確認要計時）。reads：讀過的路徑記在這裡。
+// now：給 null 時測試自己用 mock.clock（垃圾桶的待確認要計時）。reads：讀過的路徑記在這裡。store：$.store 的內容。
 function disk(
   on: TestOn,
   files: Record<string, string>,
-  { sessionId = () => 's1', now = 0, reads = [] }: { sessionId?: () => string; now?: number | null; reads?: string[] } = {},
+  {
+    sessionId = () => 's1',
+    now = 0,
+    reads = [],
+    store = {},
+  }: { sessionId?: () => string; now?: number | null; reads?: string[]; store?: Record<string, unknown> } = {},
 ) {
   const under = (dir: string) => Object.keys(files).filter(p => p.startsWith(`${dir}/`))
   stubPanel(on, { root: '/proj', now })
+  stubStore(on, store)
   on('env.get', () => ({ value: undefined }))
   on('session.id', () => ({ value: sessionId() }))
   on('prompt.context', (_$, e) => ({ blocks: e.blocks }))
@@ -78,10 +84,12 @@ test('the Spec tab has a book icon and Spec / Wiki sub tabs; Spec is the plan li
   await ui.unmount()
 })
 
-test('the Wiki tab lists the pages, saves checks to checked.txt, opens a page, and deletes one with two presses', async ($, on) => {
+test('the Wiki tab lists the pages, keeps checks in the store per session folder, opens a page, and deletes one with two presses', async ($, on) => {
   mock.clock(on)
   const files: Record<string, string> = {}
-  disk(on, files, { now: null })
+  const store: Record<string, unknown> = {}
+  const checked = () => (store[CHECKED] as string[] | undefined) ?? []
+  disk(on, files, { now: null, store })
   for (const surface of ['terminal', 'desktop'] as const) {
     for (const p of Object.keys(files)) delete files[p]
     Object.assign(files, {
@@ -95,13 +103,14 @@ test('the Wiki tab lists the pages, saves checks to checked.txt, opens a page, a
     await ui.press({ key: 'sub:wiki' })
     expect(await drawnRows(ui, 'wiki:page:')).toEqual(['wiki:page:db/schema.md', 'wiki:page:style.md'])
 
-    // 勾選框：寫進 checked.txt，再按取消。
+    // 勾選框：存進 store（這個 session 資料夾的），專案裡不寫檔案；再按取消。
     await ui.press({ key: 'wiki:check:style.md' })
     await ui.press({ key: 'wiki:check:db/schema.md' })
-    expect(files[CHECKED]?.split('\n').filter(l => !l.startsWith('#') && l !== '')).toEqual(['style.md', 'db/schema.md'])
+    expect(checked()).toEqual(['style.md', 'db/schema.md'])
+    expect(Object.keys(files).filter(p => p.endsWith('checked.txt'))).toEqual([])
     if (surface === 'terminal') expect((await ui.find({ key: 'wiki:check:style.md' }))?.props.label).toBe('[x]')
     await ui.press({ key: 'wiki:check:db/schema.md' })
-    expect(files[CHECKED]).not.toContain('db/schema.md')
+    expect(checked()).toEqual(['style.md'])
 
     // 點名稱看內容，b 回清單。
     await ui.press({ key: 'wiki:page:style.md' })
@@ -109,23 +118,25 @@ test('the Wiki tab lists the pages, saves checks to checked.txt, opens a page, a
     expect((await ui.find({ key: 'wiki:back' }))?.props).toMatchObject({ label: '← Back', hotkey: 'b' })
     await ui.press({ key: 'wiki:back' })
 
-    // 垃圾桶按一次只是待確認，再按才刪，也從 checked.txt 拿掉。
+    // 垃圾桶按一次只是待確認，再按才刪，也從勾選拿掉。
     await ui.press({ key: 'wiki:delete:style.md' })
     expect(files[`${WIKI}/style.md`]).toBeDefined()
     await ui.press({ key: 'wiki:delete:style.md' })
     expect(files[`${WIKI}/style.md`]).toBeUndefined()
-    expect(files[CHECKED]).not.toContain('style.md')
+    expect(checked()).toEqual([])
     expect(await drawnRows(ui, 'wiki:page:')).toEqual(['wiki:page:db/schema.md'])
     await ui.unmount()
   }
 })
 
-test('with no .soap/wiki the Wiki tab says how pages get added', async ($, on) => {
+test('with no .soap/wiki the Wiki tab shows only Summary Conversation: no hint, no error, no Send', async ($, on) => {
   disk(on, {})
   const ui = await mountPane($)
   await ui.press({ key: 'tab:spec' })
   await ui.press({ key: 'sub:wiki' })
-  expect(await ui.find({ type: 'Text', text: /^No wiki pages yet\. Press Summary Conversation/ })).toBeDefined()
+  expect(await ui.find({ key: 'wiki:distill' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /No wiki pages|Couldn't list/ })).toBeUndefined()
+  expect(await ui.find({ key: 'wiki:send' })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -134,9 +145,8 @@ test('Send adds the checked pages to the conversation at once, marks them sent, 
   const files: Record<string, string> = {
     [`${WIKI}/style.md`]: '# Style\n- Tabs\n',
     [`${WIKI}/db.md`]: '# DB\n- Read-only\n',
-    [CHECKED]: 'style.md\nmissing.md\n',
   }
-  disk(on, files, { sessionId: () => session })
+  disk(on, files, { sessionId: () => session, store: { [CHECKED]: ['style.md', 'missing.md'], 'wiki.checked:/other': ['db.md'] } })
   const log = mock.session(on)
   const toasts: string[] = []
   on('ui.toast', (_$, e) => {
@@ -236,13 +246,7 @@ test('Distill drafts what is worth keeping into an inbox; Accept writes a draft 
 
 test('Summary Conversation asks the model picked beside it: the conversation\'s own reads the conversation itself, another gets it as text', async ($, on) => {
   const store: Record<string, unknown> = {}
-  on('store.get', (_$, e) => ({ value: store[e.key] }))
-  on('store.set', (_$, e) => {
-    store[e.key] = e.value
-
-    return { value: undefined }
-  })
-  disk(on, { [`${WIKI}/style.md`]: '# Style\n' })
+  disk(on, { [`${WIKI}/style.md`]: '# Style\n' }, { store })
   const forks: string[] = []
   const completes: { model: string; prompt: string }[] = []
   let messages: unknown[] = []
@@ -297,4 +301,126 @@ test('Summary Conversation asks the model picked beside it: the conversation\'s 
   expect(await ui.find({ type: 'Text', text: 'Nothing new worth keeping in this conversation. (Opus)' })).toBeDefined()
   expect(completes).toHaveLength(1)
   await ui.unmount()
+})
+
+test('the Wiki tab draws the pages as a tree of folders that open and close, and Uncheck all clears every check', async ($, on) => {
+  const store: Record<string, unknown> = {}
+  disk(on, { [`${WIKI}/style.md`]: '# Style\n', [`${WIKI}/db/schema.md`]: '# Schema\n', [`${WIKI}/db/ops/backup.md`]: '# Backup\n' }, { store })
+  const ui = await mountPane($)
+  await ui.press({ key: 'tab:spec' })
+  await ui.press({ key: 'sub:wiki' })
+
+  // 資料夾在前、頁面在後，預設打開；列上寫名稱，不寫所在資料夾。
+  expect(await drawnRows(ui, 'wiki:folder:')).toEqual(['wiki:folder:db/', 'wiki:folder:db/ops/'])
+  expect(await drawnRows(ui, 'wiki:page:')).toEqual(['wiki:page:db/ops/backup.md', 'wiki:page:db/schema.md', 'wiki:page:style.md'])
+  expect((await ui.find({ key: 'wiki:folder:db/' }))?.props.label).toBe('db/ · 2 ▾')
+  expect((await ui.find({ key: 'wiki:page:db/schema.md' }))?.props.label).toBe('schema.md')
+
+  // 點資料夾收起來，底下的（含更深的）都不畫；再點打開。
+  await ui.press({ key: 'wiki:folder:db/' })
+  expect((await ui.find({ key: 'wiki:folder:db/' }))?.props.label).toBe('db/ · 2 ▸')
+  expect(await drawnRows(ui, 'wiki:page:')).toEqual(['wiki:page:style.md'])
+  await ui.press({ key: 'wiki:folder:db/' })
+  expect(await drawnRows(ui, 'wiki:page:')).toHaveLength(3)
+
+  // Uncheck all：有勾才有，按了全部取消。
+  expect(await ui.find({ key: 'wiki:uncheck' })).toBeUndefined()
+  await ui.press({ key: 'wiki:check:style.md' })
+  await ui.press({ key: 'wiki:check:db/ops/backup.md' })
+  expect((await ui.find({ key: 'wiki:send' }))?.props.label).toBe('Send to Claude (2)')
+  await ui.press({ key: 'wiki:uncheck' })
+  expect((await ui.find({ key: 'wiki:send' }))?.props.label).toBe('Send to Claude (0)')
+  expect(CHECKED in store).toBe(false)
+  expect(await ui.find({ key: 'wiki:uncheck' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('drafts can move and delete pages; Accept all applies them in order, checks follow the pages, and a clash stops it', async ($, on) => {
+  const store: Record<string, unknown> = { [CHECKED]: ['style.md', 'naming.md'] }
+  const files: Record<string, string> = {
+    [`${WIKI}/style.md`]: '# Style\n',
+    [`${WIKI}/naming.md`]: '# Naming\n',
+    [`${WIKI}/.drafts/1-merge.md`]: 'target: conventions/code.md\n\n# Code\n- Tabs\n- camelCase\n',
+    [`${WIKI}/.drafts/2-delete.md`]: 'delete: naming.md\n',
+    [`${WIKI}/.drafts/3-move.md`]: 'move: style.md -> conventions/style.md\n',
+    [`${WIKI}/.drafts/4-bad.md`]: 'rename: style.md\n',
+  }
+  disk(on, files, { store })
+  const ui = await mountPane($)
+  await ui.press({ key: 'tab:spec' })
+  await ui.press({ key: 'sub:wiki' })
+
+  // 第一行看不懂的不列；搬移寫「舊 → 新」，每份標它做什麼。
+  expect(await drawnRows(ui, 'wiki:draft:')).toEqual(['wiki:draft:1-merge.md', 'wiki:draft:2-delete.md', 'wiki:draft:3-move.md'])
+  expect((await ui.find({ key: 'wiki:draft:3-move.md' }))?.props.label).toBe('style.md → conventions/style.md')
+  for (const badge of ['new page', 'delete', 'move']) expect(await ui.find({ type: 'Text', text: badge })).toBeDefined()
+
+  // 打開搬移、刪除的草稿：說會怎樣，底下是那頁現在的內容。
+  await ui.press({ key: 'wiki:draft:3-move.md' })
+  expect(await ui.find({ type: 'Text', text: /^Moves \.soap\/wiki\/style\.md to \.soap\/wiki\/conventions\/style\.md/ })).toBeDefined()
+  expect(await ui.find({ type: 'Markdown', text: '# Style' })).toBeDefined()
+  await ui.press({ key: 'wiki:back' })
+  await ui.press({ key: 'wiki:draft:2-delete.md' })
+  expect(await ui.find({ type: 'Text', text: 'Deletes .soap/wiki/naming.md:' })).toBeDefined()
+  await ui.press({ key: 'wiki:back' })
+
+  // Accept all：照順序全部套用，草稿檔刪掉；勾著的頁面跟著搬、被刪的拿掉。
+  await ui.press({ key: 'wiki:accept-all' })
+  expect(files[`${WIKI}/conventions/code.md`]).toBe('# Code\n- Tabs\n- camelCase\n')
+  expect(files[`${WIKI}/naming.md`]).toBeUndefined()
+  expect(files[`${WIKI}/style.md`]).toBeUndefined()
+  expect(files[`${WIKI}/conventions/style.md`]).toBe('# Style\n')
+  expect(Object.keys(files).filter(p => p.includes('/.drafts/'))).toEqual([`${WIKI}/.drafts/4-bad.md`])
+  expect(store[CHECKED]).toEqual(['conventions/style.md'])
+  expect(await drawnRows(ui, 'wiki:draft:')).toEqual([])
+  expect(await ui.find({ key: 'wiki:accept-all' })).toBeUndefined()
+
+  // 搬到已經有頁面的路徑：不蓋掉，停下來說是哪一份，草稿留著；Discard 丟掉。
+  files[`${WIKI}/.drafts/5-clash.md`] = 'move: conventions/code.md -> conventions/style.md\n'
+  await endTurn($, ui)
+  await ui.press({ key: 'wiki:accept-all' })
+  expect(await ui.find({ type: 'Text', text: "Couldn't accept draft 5-clash.md: .soap/wiki/conventions/style.md already exists" })).toBeDefined()
+  expect(files[`${WIKI}/conventions/code.md`]).toBeDefined()
+  await ui.press({ key: 'wiki:draft:5-clash.md' })
+  await ui.press({ key: 'wiki:discard' })
+  expect(files[`${WIKI}/.drafts/5-clash.md`]).toBeUndefined()
+  expect(await drawnRows(ui, 'wiki:draft:')).toEqual([])
+
+  // 要刪的頁面已經不在：說讀不到，Accept 照樣按得到，按了只把草稿收掉。
+  files[`${WIKI}/.drafts/6-gone.md`] = 'delete: naming.md\n'
+  await endTurn($, ui)
+  await ui.press({ key: 'wiki:draft:6-gone.md' })
+  expect(await ui.find({ type: 'Text', text: /^Couldn't read \.soap\/wiki\/naming\.md/ })).toBeDefined()
+  await ui.press({ key: 'wiki:accept' })
+  expect(files[`${WIKI}/.drafts/6-gone.md`]).toBeUndefined()
+  expect(await drawnRows(ui, 'wiki:draft:')).toEqual([])
+  await ui.unmount()
+})
+
+test('writing a wiki draft with Write checks its first line: one the Wiki tab cannot read adds what to fix for Claude', async ($, on) => {
+  const files: Record<string, string> = {}
+  const toasts: string[] = []
+  stubPanel(on, { root: '/proj' })
+  on('process.run', () => ok(''))
+  on('ui.toast', (_$, e) => {
+    toasts.push(e.text)
+
+    return { value: undefined }
+  })
+  on('fs.read', (_$, e) => ({ value: files[posix(e.path) ?? ''] ?? '' }))
+  on('tool.call', (_$, e) => {
+    if (e.tool === 'Write') files[e.file_path] = e.content
+
+    return { result: { ok: true } as never }
+  })
+
+  const bad = await $.tool.call({ tool: 'Write', file_path: `${WIKI}/.drafts/1-goals.md`, content: '# Goals\n' })
+  expect(bad.context?.at(-1)).toMatch(/is not a valid soap-mods wiki draft[\s\S]*`move: <page>\.md -> <new page>\.md`/)
+  expect(toasts).toHaveLength(1)
+  const good = await $.tool.call({ tool: 'Write', file_path: `${WIKI}/.drafts/2-goals.md`, content: 'target: project/goals.md\n\n# Goals\n' })
+  expect(good.context ?? []).toEqual([])
+  // 頁面本身不檢查。
+  const page = await $.tool.call({ tool: 'Write', file_path: `${WIKI}/goals.md`, content: '# Goals\n' })
+  expect(page.context ?? []).toEqual([])
+  expect(toasts).toHaveLength(1)
 })

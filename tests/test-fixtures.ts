@@ -38,6 +38,21 @@ export function stubPanel(on: TestOn, { root = '/repo', now = 0 }: { root?: stri
   if (now !== null) on('clock.now', () => ({ value: now }))
 }
 
+// $.store 放在記憶體裡的 store（key → 值），測試讀它看存了什麼。
+export function stubStore(on: TestOn, store: Record<string, unknown>) {
+  on('store.get', (_$, e) => ({ value: store[e.key] }))
+  on('store.set', (_$, e) => {
+    store[e.key] = e.value
+
+    return { value: undefined }
+  })
+  on('store.delete', (_$, e) => {
+    delete store[e.key]
+
+    return { value: undefined }
+  })
+}
+
 // Claude 的一個回合結束：面板在背景重讀看得到的東西，重畫一次等它讀完、畫好。要先 stubPanel。
 export async function endTurn($: TestEngine, ui: Awaited<ReturnType<typeof mountPane>>) {
   await $.turn.complete({ answer: '', reason: 'answer', durationMs: 0, isAborted: false, turnId: 'turn' })

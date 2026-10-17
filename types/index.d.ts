@@ -352,30 +352,38 @@ export type SpecView = {
 /** Which model family Summary Conversation asks; the one the conversation runs on reads the conversation's own cache. */
 export type WikiModel = 'opus' | 'sonnet' | 'haiku'
 
-/** One draft Distill wrote to `.soap/wiki/.drafts`, waiting to be accepted or discarded. */
+/**
+ * One draft Distill or the wiki skill wrote to `.soap/wiki/.drafts`, waiting to be accepted or discarded: it writes a
+ * whole page (new, or replacing one), moves (renames) a page, or deletes one. Page paths are relative to `.soap/wiki`.
+ */
 export type WikiDraft = {
   /** The draft's file name under `.soap/wiki/.drafts`. */
   id: string
-  /** The page it becomes, relative to `.soap/wiki`. */
-  target: string
-  /** No page is at `target` yet: accepting creates it rather than replacing one. */
-  isNew: boolean
-}
+} & (
+  | {
+      kind: 'write'
+      target: string
+      /** No page is at `target` yet: accepting creates it rather than replacing one. */
+      isNew: boolean
+    }
+  | { kind: 'move'; from: string; target: string }
+  | { kind: 'delete'; target: string }
+)
 
 export type WikiView = {
   /** False before the first listing finishes. */
   isLoaded: boolean
   /** Page paths relative to `.soap/wiki` with `/`, `.md` included; by path. */
   pages: string[]
-  /** Paths of the checked pages that exist, as `.soap/wiki/checked.txt` lists them. */
+  /** Paths of the checked pages that exist, as the mod's store keeps them for this session root. */
   checked: string[]
   /** Oldest first. */
   drafts: WikiDraft[]
-  /** Why listing `.soap/wiki` or writing the checked list failed, '' when none (a missing folder is no pages, not an error). */
+  /** Why listing `.soap/wiki` or saving the checked pages failed, '' when none (a missing folder is no pages, not an error). */
   error: string
   /** Page whose trash button was pressed once and now asks to confirm, '' when none. */
   deleteArmed: string
-  /** Why the last delete, accept or discard failed, '' when none. */
+  /** Why the last delete, accept, Accept all or discard failed, '' when none. */
   deleteError: string
   /** The page opened, '' when none. */
   open: string
@@ -476,6 +484,8 @@ declare module 'claude-code' {
       spec: SpecView
       wiki: WikiView
       wikiSent: WikiSent
+      /** Wiki tab folders opened or closed by hand, keyed by the folder's path (`db/`); the rest are open. */
+      wikiFolders: Record<string, boolean>
       db: DbView
       log: LogView
       cover: Cover

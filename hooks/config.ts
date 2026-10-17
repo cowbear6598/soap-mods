@@ -154,10 +154,10 @@ export const FILE_VIEW_MAX_BYTES = 1_000_000
 // Spec 分頁：plan skill 把每個 feature 的計劃寫在這個資料夾（相對 session 資料夾）底下的 <feature>/plan.yaml。
 export const SPEC_DIR = '.soap/tasks'
 export const PLAN_FILE = 'plan.yaml'
-// Wiki 子分頁：頁面是這個資料夾（相對 session 資料夾）底下的 .md；勾了哪幾頁記在 CHECKED_FILE（一行一頁），
-// Distill 的草稿放在 DRAFTS_DIR（. 開頭的資料夾不算頁面）。頁面最多列幾頁。
+// Wiki 子分頁：頁面是這個資料夾（相對 session 資料夾）底下的 .md；勾了哪幾頁存在 $.store 的「CHECKED_KEY:session 資料夾」，
+// Distill 和 wiki skill 的草稿放在 DRAFTS_DIR（. 開頭的資料夾不算頁面）。頁面最多列幾頁。
 export const WIKI_DIR = '.soap/wiki'
-export const WIKI_CHECKED_FILE = 'checked.txt'
+export const WIKI_CHECKED_KEY = 'wiki.checked'
 export const WIKI_DRAFTS_DIR = '.drafts'
 export const WIKI_PAGE_LIMIT = 500
 // Distill 時一起給 Claude 看的既有頁面最多幾 byte（照檔案大小算，超過的只給路徑、不讀），免得整個 wiki 塞爆一次請求。

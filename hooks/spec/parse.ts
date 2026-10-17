@@ -5,6 +5,7 @@
 import type { Plan, SpecEntry } from '../../types'
 import { PLAN_FILE, SPEC_DIR } from '../config'
 import { byName } from '../files/list'
+import { escapeRegExp } from '../text'
 
 type Value = string | string[]
 
@@ -181,7 +182,6 @@ export function readPlan(text: string): { plan: Plan; problems: string[] } {
 /** The plan of feature `name`, relative to the session folder: `.soap/tasks/<name>/plan.yaml`. */
 export const planPath = (name: string) => `${SPEC_DIR}/${name}/${PLAN_FILE}`
 
-const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 const PLAN_PATH = new RegExp(`(^|/)${escapeRegExp(SPEC_DIR)}/[^/]+/${escapeRegExp(PLAN_FILE)}$`)
 
 /** Whether `path` (any separator) is a plan the plan skill writes: `…/.soap/tasks/<feature>/plan.yaml`. */

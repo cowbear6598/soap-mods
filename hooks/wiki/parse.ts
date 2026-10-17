@@ -1,9 +1,10 @@
-// Wiki 子分頁的純邏輯：哪些路徑算頁面、checked.txt 和草稿檔的格式、帶給 Claude 的文字、Distill 的提示和回覆。
+// Wiki 子分頁的純邏輯：哪些路徑算頁面、勾選怎麼存、草稿檔的格式、帶給 Claude 的文字、Distill 的提示和回覆。
 
 import type { SessionMessage } from 'claude-code'
 
-import type { WikiModel } from '../../types'
-import { WIKI_CHECKED_FILE, WIKI_DIR, WIKI_DRAFTS_DIR, WIKI_MODELS } from '../config'
+import type { WikiDraft, WikiModel } from '../../types'
+import { WIKI_CHECKED_KEY, WIKI_DIR, WIKI_DRAFTS_DIR, WIKI_MODELS } from '../config'
+import { escapeRegExp } from '../text'
 
 /** A page's text as it is handed around: its path under `.soap/wiki` and its Markdown. */
 export type PageText = { path: string; text: string }
@@ -19,47 +20,85 @@ export function isPagePath(path: string): boolean {
 }
 
 export const wikiPath = (path: string) => `${WIKI_DIR}/${path}`
-export const CHECKED_PATH = wikiPath(WIKI_CHECKED_FILE)
 export const DRAFTS_PATH = wikiPath(WIKI_DRAFTS_DIR)
-
-/** `checked.txt` → the page paths it lists, once each: one per line, blank lines and `#` comments skipped. */
-export function parseChecked(text: string): string[] {
-  const paths = text
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(line => line !== '' && !line.startsWith('#'))
-
-  return [...new Set(paths)]
-}
-
-/** The `checked.txt` that lists `paths`. */
-export function formatChecked(paths: readonly string[]): string {
-  return [
-    `# Pages under ${WIKI_DIR}/ that Claude reads at the start of every conversation, one per line.`,
-    '# Soap Panel rewrites this file when a checkbox in the Wiki tab changes; editing it by hand works too.',
-    ...paths,
-    '',
-  ].join('\n')
-}
 
 /** `paths` with `path` added (at the end) or, when it is there, taken out. */
 export function toggled(paths: readonly string[], path: string): string[] {
   return paths.includes(path) ? paths.filter(p => p !== path) : [...paths, path]
 }
 
-// 草稿檔：第一行「target: 頁面路徑」，空一行後是頁面的 Markdown。
+// 勾選存在 $.store：整個 mod 共用一份，所以每個 session 資料夾一個 key。
+/** The store key holding the checked pages of the session at `root`. */
+export const checkedKey = (root: string) => `${WIKI_CHECKED_KEY}:${root}`
+
+/** A stored checked list → its page paths; anything else (unset, hand-edited junk) is none. */
+export const checkedList = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((p): p is string => typeof p === 'string' && isPagePath(p)) : []
+
+// 草稿檔：第一行說它做什麼。
+//   target: 頁面路徑   空一行後是那頁整頁的 Markdown（新頁面，或取代既有頁面）
+//   move: 舊路徑 -> 新路徑   搬移／改名，內容不變
+//   delete: 頁面路徑   刪掉那頁
+/** What one draft does, as its file says. */
+export type ParsedDraft =
+  | { kind: 'write'; target: string; body: string }
+  | { kind: 'move'; from: string; target: string }
+  | { kind: 'delete'; target: string }
+
 /** A draft file's text for the page at `target`. */
 export function draftText(target: string, body: string): string {
   return `target: ${target}\n\n${body.trim()}\n`
 }
 
-/** A draft file's text → the page it becomes and its Markdown; null when the first line names no page. */
-export function parseDraft(text: string): { target: string; body: string } | null {
-  const m = /^target:[ \t]*(.*?)[ \t]*(?:\r?\n|$)/.exec(text)
-  const target = m?.[1] ?? ''
-  if (m === null || !isPagePath(target)) return null
+const DRAFT_LINE = /^(target|move|delete):[ \t]*(.*?)[ \t]*(?:\r?\n|$)/
 
-  return { target, body: text.slice(m[0].length).trim() }
+/** A draft file's text → what it does; null when its first line is none of `target:`, `move: a -> b`, `delete:` with pages. */
+export function parseDraft(text: string): ParsedDraft | null {
+  const m = DRAFT_LINE.exec(text)
+  if (m === null) return null
+  const [line, kind, rest = ''] = m
+  if (kind === 'move') {
+    const [from = '', target = '', ...extra] = rest.split(/[ \t]*->[ \t]*/)
+    const isMove = extra.length === 0 && isPagePath(from) && isPagePath(target) && from !== target
+
+    return isMove ? { kind: 'move', from, target } : null
+  }
+  if (!isPagePath(rest)) return null
+
+  return kind === 'delete' ? { kind: 'delete', target: rest } : { kind: 'write', target: rest, body: text.slice(line.length).trim() }
+}
+
+/** A draft file `id` as the Wiki tab lists it; `hasPage` says whether a page is at a path now (a write there edits it). */
+export function wikiDraft(id: string, d: ParsedDraft, hasPage: (path: string) => boolean): WikiDraft {
+  return d.kind === 'write' ? { id, kind: 'write', target: d.target, isNew: !hasPage(d.target) } : { id, ...d }
+}
+
+/** The pages a draft acts on: `from`, the page it takes away (moved or deleted); `to`, the page it writes. */
+export function draftPages(d: ParsedDraft | WikiDraft): { from?: string; to?: string } {
+  switch (d.kind) {
+    case 'write':
+      return { to: d.target }
+    case 'move':
+      return { from: d.from, to: d.target }
+    case 'delete':
+      return { from: d.target }
+  }
+}
+
+const DRAFT_FILE = new RegExp(`(^|/)${escapeRegExp(DRAFTS_PATH)}/[^/]+\\.md$`)
+
+/** Whether `path` (any separator) is a draft file: `…/.soap/wiki/.drafts/<name>.md`. */
+export const isDraftPath = (path: string) => DRAFT_FILE.test(path.replace(/\\/g, '/'))
+
+/** What Claude reads after writing a draft file whose first line says nothing the Wiki tab understands. */
+export function draftFixNote(path: string): string {
+  return [
+    `${path} is not a valid soap-mods wiki draft: the Wiki tab skips it. Make its first line one of:`,
+    '- `target: <page>.md`, a blank line, then the whole page as Markdown (a new page, or one that replaces the page)',
+    '- `move: <page>.md -> <new page>.md` (nothing else in the file)',
+    '- `delete: <page>.md` (nothing else in the file)',
+    `Page paths are relative to ${WIKI_DIR}/, use /, end in .md, and have no part starting with a dot.`,
+  ].join('\n')
 }
 
 /** What Claude reads when the user sends `pages` from the Wiki tab. */
@@ -168,7 +207,7 @@ export function parseDistill(reply: string): { target: string; body: string }[] 
     }
     flush()
     // 模型有時把 wiki 資料夾、./ 或反引號也寫進路徑。
-    const target = (m[1] ?? '').replace(/^`|`$/g, '').replace(/^\.\//, '').replace(new RegExp(`^${WIKI_DIR.replace(/\./g, '\\.')}/`), '')
+    const target = (m[1] ?? '').replace(/^`|`$/g, '').replace(/^\.\//, '').replace(new RegExp(`^${escapeRegExp(WIKI_DIR)}/`), '')
     current = { target, lines: [] }
   }
   flush()

@@ -44,7 +44,6 @@ import type {
   SubTabs,
   SpecView,
   TabId,
-  WikiDraft,
   WikiModel,
   WikiView,
 } from '../types'
@@ -171,14 +170,17 @@ import { hasQuery } from './search'
 import { cutAtLineEnd } from './text'
 import {
   type PageText,
-  CHECKED_PATH,
+  type ParsedDraft,
   DRAFTS_PATH,
+  checkedKey,
+  checkedList,
+  draftPages,
   distillPrompt,
+  draftFixNote,
   draftText,
-  formatChecked,
+  isDraftPath,
   isPagePath,
   pagesContext,
-  parseChecked,
   parseDistill,
   parseDraft,
   pickPages,
@@ -186,6 +188,7 @@ import {
   transcriptText,
   wikiModelLabel,
   wikiModelOf,
+  wikiDraft,
   wikiPath,
 } from './wiki/parse'
 
@@ -220,6 +223,8 @@ const shownSub = (t: TabId, subs: SubTabs) => (hasSubTabs(t) ? subs[t] : undefin
 const wiki = atom({ plugin: 'soap-mods', key: 'wiki' } as const, EMPTY_WIKI)
 // 這段對話已經帶給 Claude 的頁面：每頁一段對話只送一次。
 const wikiSent = atom({ plugin: 'soap-mods', key: 'wikiSent' } as const, NO_WIKI_SENT)
+// Wiki 子分頁資料夾的開合，key 是資料夾路徑（含結尾的 /）；沒有的是打開。
+const wikiFolders = atom({ plugin: 'soap-mods', key: 'wikiFolders' } as const, {})
 const log = atom({ plugin: 'soap-mods', key: 'log' } as const, EMPTY_LOG)
 // DB 分頁：存著的連線（不含密碼）、打開的那個的資料表、查詢和結果。
 const db = atom({ plugin: 'soap-mods', key: 'db' } as const, EMPTY_DB)
@@ -1625,10 +1630,19 @@ async function checkPlanWrite($: EngineInterface, path: string) {
   return planFixNote(path, problems)
 }
 
-// Write／Edit 的結果 ran：寫的是 plan.yaml、寫成功了才檢查。讀不回來就不管，工具結果照原樣給 Claude。
-async function checkPlan<R extends ToolCallResult>($: EngineInterface, path: string, ran: R): Promise<R> {
-  if (ran.deny !== undefined || ran.isError === true || !isPlanPath(path)) return ran
-  const note = await checkPlanWrite($, path).catch(() => undefined)
+// Claude 寫了 .soap/wiki/.drafts 底下的草稿（wiki skill 會寫）：第一行 Wiki 子分頁看不懂就告訴它怎麼改，也跳個 toast。
+async function checkDraftWrite($: EngineInterface, path: string) {
+  if (parseDraft(await $.fs.read(path)) !== null) return undefined
+  void $.ui.toast('A wiki draft has no target:, move: or delete: first line; the Wiki tab skips it.')
+
+  return draftFixNote(path)
+}
+
+// Write／Edit 的結果 ran：寫的是 plan.yaml 或 wiki 草稿、寫成功了才檢查。讀不回來就不管，工具結果照原樣給 Claude。
+async function checkWrite<R extends ToolCallResult>($: EngineInterface, path: string, ran: R): Promise<R> {
+  if (ran.deny !== undefined || ran.isError === true) return ran
+  const checked = isPlanPath(path) ? checkPlanWrite($, path) : isDraftPath(path) ? checkDraftWrite($, path) : undefined
+  const note = await checked?.catch(() => undefined)
 
   return note === undefined ? ran : { ...ran, context: [...(ran.context ?? []), note] }
 }
@@ -1650,22 +1664,30 @@ async function listPages($: EngineInterface, root: string): Promise<Found[]> {
   return (await walkTree($, `${root}/${WIKI_DIR}`, rule)).found
 }
 
-// checked.txt 列的頁面（手改過的也照讀）；還沒有這個檔案就是一頁都沒勾。
+// 勾了哪幾頁：存在 $.store（每個 session 資料夾一個 key），專案裡不留檔案；讀不到就是一頁都沒勾。
 async function readChecked($: EngineInterface, root: string): Promise<string[]> {
-  return $.fs.read(`${root}/${CHECKED_PATH}`).then(parseChecked, () => [])
+  return checkedList(await $.store.get(checkedKey(root)).catch(() => undefined))
 }
 
 async function writeChecked($: EngineInterface, root: string, paths: readonly string[]) {
-  await $.fs.write(`${root}/${CHECKED_PATH}`, formatChecked(paths))
+  await (paths.length === 0 ? $.store.delete(checkedKey(root)) : $.store.set(checkedKey(root), [...paths]))
 }
 
-// 畫面只畫還在的頁面：手寫的、已經刪掉的留在 checked.txt，不列出來。
+// 勾著的頁面被搬走就換成新路徑（to），被刪掉就拿掉（沒給 to）。存不進去不擋住刪頁面、套用草稿。
+async function moveChecked($: EngineInterface, root: string, from: string, to?: string) {
+  const checked = await readChecked($, root)
+  if (!checked.includes(from)) return
+  const next = [...new Set(checked.map(c => (c === from ? to : c)))].filter((c): c is string => c !== undefined)
+  await writeChecked($, root, next).catch(() => undefined)
+}
+
+// 畫面只畫還在的頁面：已經不在的留在 store 裡，不列出來。
 const shownChecked = (checked: readonly string[], pages: readonly string[]) => checked.filter(c => pages.includes(c))
 
-// 一份草稿的目標頁面和內容；第一行沒寫 target 就丟出去。
-async function readDraft($: EngineInterface, root: string, id: string) {
+// 一份草稿做什麼；第一行看不懂就丟出去。
+async function readDraft($: EngineInterface, root: string, id: string): Promise<ParsedDraft> {
   const d = parseDraft(await $.fs.read(draftAbs(root, id)))
-  if (d === null) throw new Error('its first line names no page (target: <page>.md)')
+  if (d === null) throw new Error('its first line is none of target:, move: or delete:')
 
   return d
 }
@@ -1679,17 +1701,15 @@ async function readPages($: EngineInterface, root: string, paths: readonly strin
   return read.filter(p => p !== undefined)
 }
 
-// Distill 寫的草稿，舊的在上面（檔名是寫的時間）；第一行沒寫 target 的不算。isNew 等頁面列好再填。
-type DraftFile = Omit<WikiDraft, 'isNew'>
-
-async function listDrafts($: EngineInterface, root: string): Promise<DraftFile[]> {
+// Distill 和 wiki skill 寫的草稿，照檔名排（Distill 的檔名是寫的時間，舊的在上面）；第一行看不懂的不算。
+async function listDrafts($: EngineInterface, root: string): Promise<{ id: string; draft: ParsedDraft }[]> {
   const list = await $.fs.list(`${root}/${DRAFTS_PATH}`).catch(() => [])
   const ids = list.filter(e => e.kind === 'file' && e.name.endsWith('.md')).map(e => e.name).sort(byName)
   const drafts = await Promise.all(
-    ids.map(async (id): Promise<DraftFile | undefined> => {
-      const d = await $.fs.read(draftAbs(root, id)).then(parseDraft, () => null)
+    ids.map(async id => {
+      const draft = await $.fs.read(draftAbs(root, id)).then(parseDraft, () => null)
 
-      return d === null ? undefined : { id, target: d.target }
+      return draft === null ? undefined : { id, draft }
     }),
   )
 
@@ -1703,8 +1723,9 @@ async function loadWiki($: EngineInterface) {
   const listing = (async () => {
     const [found, checked, drafts] = await Promise.all([listPages($, root), readChecked($, root), listDrafts($, root)])
     const pages = found.map(f => f.path)
+    const hasPage = (path: string) => pages.includes(path)
 
-    return { pages, checked: shownChecked(checked, pages), drafts: drafts.map(d => ({ ...d, isNew: !pages.includes(d.target) })), error: '' }
+    return { pages, checked: shownChecked(checked, pages), drafts: drafts.map(d => wikiDraft(d.id, d.draft, hasPage)), error: '' }
   })().catch(async (err: unknown) => ({
     pages: [],
     checked: [],
@@ -1726,16 +1747,25 @@ async function selectWikiModel($: EngineInterface, model: WikiModel) {
   await $.store.set(WIKI_MODEL_KEY, model).catch(() => undefined)
 }
 
-// 勾選框：改 checked.txt（手寫的、已經不在的頁面都留著），畫面只畫還在的頁面。
-async function toggleWikiPage($: EngineInterface, path: string) {
-  const root = await $.session.root()
+// 存勾選，畫面只畫還在的頁面；存不進去就說。
+async function saveChecked($: EngineInterface, root: string, checked: readonly string[]) {
   try {
-    const checked = toggled(await readChecked($, root), path)
     await writeChecked($, root, checked)
     await setWiki($, { checked: shownChecked(checked, (await read($, wiki)).pages), error: '' })
   } catch (err) {
-    await setWiki($, { error: `Couldn't save ${CHECKED_PATH}: ${errorText(err)}` })
+    await setWiki($, { error: `Couldn't save the checked pages: ${errorText(err)}` })
   }
+}
+
+// 勾選框：已經不在的頁面也留著。
+async function toggleWikiPage($: EngineInterface, path: string) {
+  const root = await $.session.root()
+  await saveChecked($, root, toggled(await readChecked($, root), path))
+}
+
+// Uncheck all：已經不在的頁面也一起清掉。
+async function uncheckAllWikiPages($: EngineInterface) {
+  await saveChecked($, await $.session.root(), [])
 }
 
 // 在分頁裡看一頁的 Markdown。換了頁才捲回最上面；回合結束重讀同一頁，內容沒變就不重畫。
@@ -1751,12 +1781,21 @@ async function openWikiPage($: EngineInterface, path: string) {
   if (prev.open !== path) await scrollTop($)
 }
 
-// 看一份草稿：新頁面畫它的 Markdown；改既有頁面的畫原頁面到草稿的差異。頁面在不在看當下的，不看清單上的。
+// 看一份草稿：新頁面畫它的 Markdown；改既有頁面的畫原頁面到草稿的差異；搬移、刪除畫那頁現在的內容（讀不到就說，Accept 照樣按得到）。
+// 頁面在不在看當下的，不看清單上的。
 async function openWikiDraft($: EngineInterface, id: string) {
   const isStale = wikiReads.start()
   const root = await $.session.root()
   const shown = await (async () => {
     const d = await readDraft($, root, id)
+    if (d.kind !== 'write') {
+      const from = draftPages(d).from ?? d.target
+
+      return $.fs.read(pageAbs(root, from)).then(
+        text => ({ isNew: false, ...cutAtLineEnd(text.trim()), diff: '', readError: '' }),
+        (err: unknown) => ({ isNew: false, text: '', diff: '', isTruncated: false, readError: `Couldn't read ${wikiPath(from)}: ${errorText(err)}` }),
+      )
+    }
     const page = await $.fs.read(pageAbs(root, d.target)).catch(() => undefined)
     if (page === undefined) return { isNew: true, ...cutAtLineEnd(d.body), diff: '', readError: '' }
     const diff = unifiedDiff(page, `${d.body}\n`)
@@ -1766,7 +1805,7 @@ async function openWikiDraft($: EngineInterface, id: string) {
   if (isStale()) return
   const prev = await read($, wiki)
   const { isNew, ...view } = shown
-  const drafts = prev.drafts.map(x => (x.id === id ? { ...x, isNew } : x))
+  const drafts = prev.drafts.map(x => (x.id === id && x.kind === 'write' ? { ...x, isNew } : x))
   await setWiki($, { ...NO_WIKI_OPEN, draft: id, ...view, drafts, deleteError: '' })
   if (prev.draft !== id) await scrollTop($)
 }
@@ -1783,18 +1822,29 @@ async function reloadWiki($: EngineInterface) {
   await (s.draft !== '' ? openWikiDraft($, s.draft) : s.open !== '' ? openWikiPage($, s.open) : loadWiki($))
 }
 
-// 打開的草稿：Accept 寫進 wiki（新頁面或整頁取代）再刪掉草稿；Discard 只刪草稿。做完回清單。
+// 照一份草稿改 wiki，改完刪掉草稿：寫整頁（新頁面或取代）；搬移是先寫到新路徑再刪舊的，新路徑已經有頁面就不蓋掉；
+// 要拿掉的頁面已經不在就略過。勾著的頁面跟著搬、跟著拿掉。
+async function applyDraft($: EngineInterface, root: string, id: string) {
+  const d = await readDraft($, root, id)
+  const { from, to } = draftPages(d)
+  if (d.kind === 'write') await $.fs.write(pageAbs(root, d.target), `${d.body}\n`)
+  if (d.kind === 'move') {
+    const [isTaken, text] = await Promise.all([$.fs.exists(pageAbs(root, d.target)), $.fs.read(pageAbs(root, d.from))])
+    if (isTaken) throw new Error(`${wikiPath(d.target)} already exists`)
+    await $.fs.write(pageAbs(root, d.target), text)
+  }
+  if (from !== undefined && (await $.fs.exists(pageAbs(root, from)))) await removePath($, pageAbs(root, from))
+  await removePath($, draftAbs(root, id))
+  if (from !== undefined) await moveChecked($, root, from, to)
+}
+
+// 打開的草稿：Accept 照草稿改 wiki；Discard 只刪草稿。做完回清單。
 async function settleWikiDraft($: EngineInterface, isAccept: boolean) {
   const s = await read($, wiki)
   if (s.draft === '') return
   const root = await $.session.root()
-  const at = draftAbs(root, s.draft)
   try {
-    if (isAccept) {
-      const d = await readDraft($, root, s.draft)
-      await $.fs.write(pageAbs(root, d.target), `${d.body}\n`)
-    }
-    await removePath($, at)
+    await (isAccept ? applyDraft($, root, s.draft) : removePath($, draftAbs(root, s.draft)))
   } catch (err) {
     await setWiki($, { deleteError: `Couldn't ${isAccept ? 'accept' : 'discard'} draft ${s.draft}: ${errorText(err)}` })
 
@@ -1804,9 +1854,25 @@ async function settleWikiDraft($: EngineInterface, isAccept: boolean) {
   await closeWiki($)
 }
 
+// Accept all：清單上的草稿照順序一份一份套用；有一份做不成就停在那裡、說是哪一份，後面的留著。
+async function acceptAllWikiDrafts($: EngineInterface) {
+  const root = await $.session.root()
+  let error = ''
+  for (const d of (await read($, wiki)).drafts) {
+    try {
+      await applyDraft($, root, d.id)
+    } catch (err) {
+      error = `Couldn't accept draft ${d.id}: ${errorText(err)}`
+      break
+    }
+  }
+  await setWiki($, { deleteError: error })
+  await loadWiki($)
+}
+
 const wikiArm: ArmSlot = {}
 
-// 刪頁面要按兩次：垃圾桶按了換成打勾，DELETE_ARM_MS 內再按才刪，也從 checked.txt 拿掉；按別的垃圾桶，原本的就收回。
+// 刪頁面要按兩次：垃圾桶按了換成打勾，DELETE_ARM_MS 內再按才刪，也從勾選拿掉；按別的垃圾桶，原本的就收回。
 async function deleteWikiPage($: EngineInterface, path: string) {
   const s = await read($, wiki)
   if (s.deleteArmed !== path) {
@@ -1821,8 +1887,7 @@ async function deleteWikiPage($: EngineInterface, path: string) {
   try {
     if (!isPagePath(path)) throw new Error('not a wiki page')
     await removePath($, pageAbs(root, path))
-    const checked = await readChecked($, root)
-    if (checked.includes(path)) await writeChecked($, root, checked.filter(c => c !== path))
+    await moveChecked($, root, path)
   } catch (err) {
     await setWiki($, { deleteError: `Couldn't delete ${path}: ${errorText(err)}` })
     await loadWiki($)
@@ -2225,12 +2290,15 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     doSpec: () => doSpec($),
     deleteSpec: name => deleteSpec($, name),
     toggleWikiPage: path => toggleWikiPage($, path),
+    uncheckAllWikiPages: () => uncheckAllWikiPages($),
+    toggleWikiFolder: (path, isOpen) => update($, wikiFolders, folders => ({ ...folders, [path]: isOpen })),
     openWikiPage: path => openWikiPage($, path),
     closeWiki: () => closeWiki($),
     deleteWikiPage: path => deleteWikiPage($, path),
     openWikiDraft: id => openWikiDraft($, id),
     acceptWikiDraft: () => settleWikiDraft($, true),
     discardWikiDraft: () => settleWikiDraft($, false),
+    acceptAllWikiDrafts: () => acceptAllWikiDrafts($),
     // 不等它做完：Claude 要想一陣子，按鈕先換成「Distilling…」。
     distillWiki: () => void distillWiki($).catch(() => undefined),
     sendWikiPages: () => sendWikiPages($),
@@ -2293,11 +2361,11 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('tool.call', { tool: 'Write' }, async ($, e, next) => checkPlan($, e.file_path, await next(e))).catch(($, e, next) => next(e))
-  on('tool.call', { tool: 'Edit' }, async ($, e, next) => checkPlan($, e.file_path, await next(e))).catch(($, e, next) => next(e))
+  on('tool.call', { tool: 'Write' }, async ($, e, next) => checkWrite($, e.file_path, await next(e))).catch(($, e, next) => next(e))
+  on('tool.call', { tool: 'Edit' }, async ($, e, next) => checkWrite($, e.file_path, await next(e))).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const [activeTab, subs, v, isRemoteOpen, bf, bq, fl, sv, fileList, specs, wikiView, dbView, lg, lq, shown, usage, now] = await Promise.all([
+    const [activeTab, subs, v, isRemoteOpen, bf, bq, fl, sv, fileList, specs, wikiView, wf, dbView, lg, lq, shown, usage, now] = await Promise.all([
       read($, tab),
       read($, subTabs),
       readView($),
@@ -2309,6 +2377,7 @@ export const register: Register = on => {
       readFiles($),
       read($, spec),
       read($, wiki),
+      read($, wikiFolders),
       read($, db),
       read($, log),
       read($, logQuery),
@@ -2344,6 +2413,7 @@ export const register: Register = on => {
         isWindows: onWindows,
         spec: specs,
         wiki: wikiView,
+        wikiFolders: wf,
         currentModel: current,
         wikiSent: sent,
         isDistilling,

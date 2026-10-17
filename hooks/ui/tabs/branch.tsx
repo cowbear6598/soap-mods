@@ -2,7 +2,7 @@ import type { GitBranch } from '../../../types'
 import { BRANCH_ROW_LIMIT, BRANCH_TREE_LIMIT, COPIED_TINT, FOLDER_COLOR, SWITCH_ARMED_HINT } from '../../config'
 import { filterBranches } from '../../git/parse'
 import { hasQuery } from '../../search'
-import { branchTree, treeRows } from '../../git/tree'
+import { pathTree, treeRows } from '../../tree'
 import type { TabBody } from './context'
 
 // branch 分頁。parseBranches 已經排好：目前分支第一個，其餘照名稱。點分支要按兩次才切：第一次那列變黃、
@@ -82,12 +82,12 @@ export const branchTab: TabBody = ({ w, d, a }) => {
   // 開合狀態存在 branchFolders，key 是「l:路徑」或「r:路徑」。
   const treeBody = (group: 'l' | 'r', list: GitBranch[]) =>
     treeRows(
-      branchTree(list, group === 'r'),
+      pathTree(list, b => b.name, group === 'r'),
       (path, fallback) => isSearching || (folderState[`${group}:${path}`] ?? fallback),
       BRANCH_ROW_LIMIT,
       BRANCH_TREE_LIMIT,
     ).map(row => {
-      if (row.kind === 'branch') return branchRow(row.branch, row.label, row.depth)
+      if (row.kind === 'item') return branchRow(row.item, row.label, row.depth)
       if (row.kind === 'more') {
         return (
           <Box key={`more:${group}:${row.path}`} paddingLeft={indentAt(row.depth)}>

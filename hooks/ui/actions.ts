@@ -95,17 +95,23 @@ export type Actions = {
   // 刪掉整個 feature 資料夾：按第一次只是待確認（打勾），再按才刪。
   deleteSpec: (name: string) => unknown
   // wiki：path 是 .soap/wiki 底下的頁面，id 是 .soap/wiki/.drafts 底下的草稿檔名。
-  // 勾選框：選要 Send 的頁面（記在 checked.txt，下次開還勾著）。
+  // 勾選框：選要 Send 的頁面（存在 mod 的 store，依 session 資料夾分開，下次開還勾著）。
   toggleWikiPage: (path: string) => unknown
+  // 取消全部勾選。
+  uncheckAllWikiPages: () => unknown
+  // 開合資料夾，path 含結尾的 /。
+  toggleWikiFolder: (path: string, isOpen: boolean) => unknown
   openWikiPage: (path: string) => unknown
   // 關掉打開的頁面或草稿，回清單。
   closeWiki: () => unknown
   // 刪頁面：按第一次只是待確認（打勾），再按才刪，也從勾選清單拿掉。
   deleteWikiPage: (path: string) => unknown
   openWikiDraft: (id: string) => unknown
-  // 把打開的草稿寫進 wiki（新頁面或取代原頁面）並刪掉草稿；捨棄只刪草稿。
+  // 照打開的草稿改 wiki（寫整頁、搬移、刪除）並刪掉草稿；捨棄只刪草稿。
   acceptWikiDraft: () => unknown
   discardWikiDraft: () => unknown
+  // 清單上的草稿全部照順序套用。
+  acceptAllWikiDrafts: () => unknown
   // 請 Claude 把這段對話值得留下的整理成草稿。
   distillWiki: () => unknown
   // 把勾了的頁面送給 Claude（加進這段對話）。
@@ -153,6 +159,8 @@ export type PanelData = {
   isWindows: boolean
   spec: SpecView
   wiki: WikiView
+  // Wiki 子分頁資料夾的開合；沒有的是打開。
+  wikiFolders: Readonly<Record<string, boolean>>
   // 對話目前用的模型種類；讀不到是 ''。
   currentModel: WikiModel | ''
   // 這段對話已經送過的 wiki 頁面。

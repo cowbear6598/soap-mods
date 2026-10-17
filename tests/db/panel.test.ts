@@ -3,7 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import { DB_STORE_KEY } from '../../hooks/config'
 import { toHex } from '../../hooks/db/secret'
-import { type TestOn, fail, mountPane, ok, stubPanel } from '../test-fixtures'
+import { type TestOn, fail, mountPane, ok, stubPanel, stubStore } from '../test-fixtures'
 
 const PASSWORD = 'S3crét;"pw密'
 const CONN_STRING = `Server=db.local;Database=shop;User Id=reader;Password="${PASSWORD.replace(/"/g, '""')}";TrustServerCertificate=True`
@@ -32,12 +32,7 @@ function dbWorld(on: TestOn, { isWindows = false, hasSqlcmd = true }: { isWindow
 
     return { value: undefined }
   })
-  on('store.get', (_$, e) => ({ value: store[e.key] }))
-  on('store.set', (_$, e) => {
-    store[e.key] = e.value
-
-    return { value: undefined }
-  })
+  stubStore(on, store)
   on('env.get', (_$, e) => ({ value: isWindows && e.name === 'OS' ? 'Windows_NT' : undefined }))
   on('process.run', (_$, e) => {
     runs.push(e)
