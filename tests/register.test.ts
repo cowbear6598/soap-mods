@@ -478,21 +478,32 @@ test('Fetch and Pull run git without asking for a password, toast when done, and
   await ui.unmount()
 })
 
-test('long file and branch lists draw the first 50, with Show more for files and search for branches', async ($, on) => {
+test('long file and branch lists draw the first 50, with pages of 50 for files and search for branches', async ($, on) => {
   const names = (prefix: string, n: number) => Array.from({ length: n }, (_, i) => `${prefix}${String(i).padStart(2, '0')}`)
   stubPanel(on)
   gitRepo(on, {
-    status: `## main\0${names('f', 70).map(f => `?? ${f}.ts\0`).join('')}`,
+    status: `## main\0${names('m', 10).map(f => ` M ${f}.ts\0`).join('')}${names('f', 70).map(f => `?? ${f}.ts\0`).join('')}`,
     branches: [branchLine('main', { isCurrent: true }), ...names('origin/b', 60).map(b => branchLine(b))],
   })
   await openPanel($)
 
   const ui = await mountPane($)
-  expect(await ui.find({ key: 'file:untracked:f49.ts' })).toBeDefined()
-  expect(await ui.find({ key: 'file:untracked:f50.ts' })).toBeUndefined()
-  await ui.press({ key: 'file:more:untracked' })
+  // 三組加起來一頁 50 列：10 個 Unstaged 加 40 個 Untracked。
+  expect(await ui.find({ key: 'file:unstaged:m09.ts' })).toBeDefined()
+  expect(await ui.find({ key: 'file:untracked:f39.ts' })).toBeDefined()
+  expect(await ui.find({ key: 'file:untracked:f40.ts' })).toBeUndefined()
+  expect(await ui.find({ key: 'file:prev' })).toBeUndefined()
+  // Next 換成下一頁，不是接著多畫：一頁最多 50 列，畫太多桌面版會卡住。
+  await ui.press({ key: 'file:next' })
+  expect(await ui.find({ key: 'file:untracked:f40.ts' })).toBeDefined()
   expect(await ui.find({ key: 'file:untracked:f69.ts' })).toBeDefined()
-  expect(await ui.find({ key: 'file:more:untracked' })).toBeUndefined()
+  expect(await ui.find({ key: 'file:untracked:f39.ts' })).toBeUndefined()
+  expect(await ui.find({ key: 'file:unstaged:m00.ts' })).toBeUndefined()
+  expect(await ui.find({ key: 'file:next' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: '51–80 of 80' })).toBeDefined()
+  await ui.press({ key: 'file:prev' })
+  expect(await ui.find({ key: 'file:unstaged:m00.ts' })).toBeDefined()
+  expect(await ui.find({ key: 'file:untracked:f40.ts' })).toBeUndefined()
 
   await ui.press({ key: 'sub:branch' })
   await ui.press({ key: 'remote:toggle' })
@@ -604,10 +615,11 @@ function logRepo(on: TestOn) {
     run: cmd => {
       if (cmd[0] === 'log') {
         logArgs.push(cmd)
-        // 照 --max-count 給；沒給就是整條（搜尋）。
-        const max = cmd.find(a => a.startsWith('--max-count='))?.split('=')[1]
-        const count = Math.min(max === undefined ? Infinity : Number(max), 40)
-        const lines = Array.from({ length: count }, (_, i) => `${sha(i)}\t${short(i)}\t${sha(i + 1)}\tCptSoap\t${time}\tCommit ${i}`)
+        // 照 --skip、--max-count 給；沒給就是整條（搜尋）。
+        const arg = (name: string) => cmd.find(a => a.startsWith(`--${name}=`))?.split('=')[1]
+        const skip = Number(arg('skip') ?? 0)
+        const count = Math.min(Number(arg('max-count') ?? Infinity), 40 - skip)
+        const lines = Array.from({ length: count }, (_, n) => skip + n).map(i => `${sha(i)}\t${short(i)}\t${sha(i + 1)}\tCptSoap\t${time}\tCommit ${i}`)
 
         return ok(`${lines.join('\n')}\n`)
       }
@@ -631,7 +643,7 @@ function logRepo(on: TestOn) {
   return { logArgs, revListArgs, diffTreeArgs }
 }
 
-test('the log tab lists the latest 30 commits of the branch, marks the unpushed ones, and loads more', async ($, on) => {
+test('the log tab lists the latest 30 commits of the branch, marks the unpushed ones, and pages with Previous / Next', async ($, on) => {
   const { revListArgs } = logRepo(on)
   await openPanel($)
 
@@ -649,9 +661,17 @@ test('the log tab lists the latest 30 commits of the branch, marks the unpushed 
   expect(revListArgs.at(-1)).toEqual(['rev-list', '--max-count=30', 'HEAD', '--not', 'origin/main', '--'])
   expect(await ui.findAll({ type: 'Text', text: '↑' })).toHaveLength(2)
 
-  await ui.press({ key: 'log:more' })
+  expect(await ui.find({ key: 'log:prev' })).toBeUndefined()
+  // Next 換成下一頁（跳過前 30 筆），不是接著多畫。
+  await ui.press({ key: 'log:next' })
   expect(await ui.find({ type: 'Text', text: 'main · 40' })).toBeDefined()
-  expect(await ui.find({ key: 'log:more' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: '31–40' })).toBeDefined()
+  expect(await ui.find({ key: `commit:${sha(30)}` })).toBeDefined()
+  expect(await ui.find({ key: `commit:${sha(29)}` })).toBeUndefined()
+  expect(await ui.find({ key: 'log:next' })).toBeUndefined()
+  await ui.press({ key: 'log:prev' })
+  expect(await ui.find({ key: `commit:${sha(0)}` })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'main · 30+' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -741,8 +761,10 @@ test('the log search finds commits across the whole branch, and the log icon of 
   // 符合的超過 30 筆一樣分頁。
   await ui.input({ key: 'log:search', text: 'cptsoap', kind: 'change' })
   expect(await ui.find({ type: 'Text', text: 'main · 30+' })).toBeDefined()
-  await ui.press({ key: 'log:more' })
+  await ui.press({ key: 'log:next' })
   expect(await ui.find({ type: 'Text', text: 'main · 40' })).toBeDefined()
+  expect(await ui.find({ key: `commit:${sha(39)}` })).toBeDefined()
+  expect(await ui.find({ key: `commit:${sha(0)}` })).toBeUndefined()
   // Clear（Enter）清空，回到最近 30 筆。
   await ui.input({ key: 'log:search', text: 'cptsoap' })
   expect(await ui.find({ type: 'Text', text: 'main · 30+' })).toBeDefined()

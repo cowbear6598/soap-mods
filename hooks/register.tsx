@@ -52,7 +52,6 @@ import {
   DB_PROCESS_TIMEOUT_MS,
   DB_STORE_KEY,
   DELETE_ARM_MS,
-  FILE_PAGE,
   FILES_ROW_LIMIT,
   FILES_WALK_BATCH,
   FILES_WALK_LIMIT,
@@ -212,7 +211,8 @@ const branchFolders = atom({ plugin: 'soap-mods', key: 'branchFolders' } as cons
 const branchQuery = atom({ plugin: 'soap-mods', key: 'branchQuery' } as const, '')
 // log 分頁搜尋框裡的字，一樣換分頁就清掉。
 const logQuery = atom({ plugin: 'soap-mods', key: 'logQuery' } as const, '')
-const fileLimit = atom({ plugin: 'soap-mods', key: 'fileLimit' } as const, FILE_PAGE)
+// diff 分頁看的是第幾頁（從 0 開始）。
+const filePage = atom({ plugin: 'soap-mods', key: 'filePage' } as const, 0)
 const services = atom({ plugin: 'soap-mods', key: 'services' } as const, EMPTY_SERVICES)
 const files = atom({ plugin: 'soap-mods', key: 'files' } as const, EMPTY_FILES)
 // Spec 分頁：.soap/tasks 底下的 feature 清單，和點開的那份 plan.yaml。
@@ -841,13 +841,14 @@ async function syncBranches($: EngineInterface, kind: GitSync) {
 
 type LogRead = { commits: GitCommit[]; unpushed: string[]; isTruncated: boolean; error: string }
 
-// 讀 ref 的 commit（limit 沒給就是整條），和其中哪些還沒 push：有 upstream 比 upstream；
-// 沒有的話比所有遠端分支，新分支從 main 分出來後加的才算。遠端分支本身都在遠端上，不會有標記。
-async function readLog($: EngineInterface, ref: string, upstream: string, limit?: number): Promise<LogRead> {
+// 讀 ref 的 commit（page 沒給就是整條；給了是跳過 skip 筆後的 count 筆，多讀一筆看還有沒有下一頁），
+// 和其中哪些還沒 push（rev-list 只列領先的 commit，跟 log 的順序對不上，不能一樣 --skip，只好從頭讀到這頁）：有 upstream 比 upstream；沒有的話比所有遠端分支，新分支從 main 分出來後加的才算。
+// 遠端分支本身都在遠端上，不會有標記。
+async function readLog($: EngineInterface, ref: string, upstream: string, page?: { skip: number; count: number }): Promise<LogRead> {
   const [r, ahead] = await Promise.all([
     // 結尾的 -- ：工作區剛好有叫 HEAD（或跟分支同名）的檔案時，git 才不會分不出是分支還是路徑。
-    git($, ['log', ref, ...(limit === undefined ? [] : [`--max-count=${limit + 1}`]), `--format=${LOG_FORMAT}`, '--']),
-    git($, ['rev-list', ...(limit === undefined ? [] : [`--max-count=${limit}`]), ref, '--not', upstream === '' ? '--remotes' : upstream, '--']),
+    git($, ['log', ref, ...(page === undefined ? [] : [`--skip=${page.skip}`, `--max-count=${page.count + 1}`]), `--format=${LOG_FORMAT}`, '--']),
+    git($, ['rev-list', ...(page === undefined ? [] : [`--max-count=${page.skip + page.count}`]), ref, '--not', upstream === '' ? '--remotes' : upstream, '--']),
   ])
   if (r.exitCode !== 0) {
     // 還沒有任何 commit 不算錯。
@@ -862,7 +863,7 @@ async function readLog($: EngineInterface, ref: string, upstream: string, limit?
   return { commits: parseLog(out), unpushed, isTruncated: r.isStdoutTruncated, error: '' }
 }
 
-// 搜尋用的整條分支歷史：打字、Load more 時從這裡過濾，不用每次都跑 git。換 repo 或分支就重讀；
+// 搜尋用的整條分支歷史：打字、換頁時從這裡過濾，不用每次都跑 git。換 repo 或分支就重讀；
 // refresh（回合結束）時先問分支和比較對象的 tip（tips），都沒動就沿用，動了才重讀。
 // git 最多給 4 MiB（大約兩萬多筆），超過的只搜最新的那些。
 let history: { base: string; tips: string; load: Promise<LogRead> } | undefined
@@ -876,13 +877,13 @@ async function readHistory($: EngineInterface, ref: string, upstream: string, is
   return history.load
 }
 
-// 讀完時已經有更新的讀取開始了（打字、Load more、refresh），或中途換了分支、repo、分頁（logLoads.drop），
+// 讀完時已經有更新的讀取開始了（打字、換頁、refresh），或中途換了分支、repo、分頁（logLoads.drop），
 // 這次讀到的就不寫，免得蓋掉新的。
 const logLoads = latestOnly()
 
-// 讀 log 分頁的 commit，列前 limit 筆（沒給就是目前的筆數）；有搜尋時從整條分支的歷史裡挑出符合的。
-// isFresh 是 false 時（打字、Load more）沿用讀過的歷史。
-async function loadLog($: EngineInterface, { isFresh = true, limit }: { isFresh?: boolean; limit?: number } = {}) {
+// 讀 log 分頁第 page 頁的 commit（沒給就是目前那頁）；有搜尋時從整條分支的歷史裡挑出符合的再切頁。
+// isFresh 是 false 時（打字、換頁）沿用讀過的歷史。
+async function loadLog($: EngineInterface, { isFresh = true, page }: { isFresh?: boolean; page?: number } = {}) {
   const isStale = logLoads.start()
   const [v, l, query] = await Promise.all([read($, view), read($, log), read($, logQuery)])
   const branch = logBranch(v, l)
@@ -890,15 +891,20 @@ async function loadLog($: EngineInterface, { isFresh = true, limit }: { isFresh?
   const isPicked = branch !== undefined && l.ref !== '' && branchRef(branch) === l.ref
   const ref = isPicked ? l.ref : 'HEAD'
   const upstream = branch !== undefined && !branch.isRemote && branch.track !== '[gone]' ? branch.upstream : ''
-  const count = limit ?? l.limit
+  const wanted = page ?? l.page
   const isSearching = hasQuery(query)
   if (!isSearching) history = undefined
   try {
     const found = isSearching
       ? await readHistory($, ref, upstream, isFresh).then(h => ({ ...h, commits: filterCommits(h.commits, query) }))
-      : await readLog($, ref, upstream, count)
+      : await readLog($, ref, upstream, { skip: wanted * LOG_PAGE, count: LOG_PAGE })
     if (isStale()) return
-    const commits = found.commits.slice(0, count)
+    // 搜尋拿到的是整條：自己切，符合的變少了就夾回最後一頁（跟 diff 分頁一樣）。沒搜尋時 git 已經跳過前面幾頁。
+    const index = isSearching ? Math.min(wanted, Math.max(0, Math.ceil(found.commits.length / LOG_PAGE) - 1)) : wanted
+    const from = isSearching ? index * LOG_PAGE : 0
+    const commits = found.commits.slice(from, from + LOG_PAGE)
+    // 沒搜尋時不知道總共幾頁：歷史變短了（rebase、換分支），這頁已經沒有東西，就回到第一頁重讀。
+    if (commits.length === 0 && index > 0) return await loadLog($, { isFresh: false, page: 0 })
     const ahead = new Set(found.unpushed)
     const listed = new Set(commits.map(c => c.sha))
     // 內容沒變 patch 就不寫，停在 log 分頁時回合結束不會白白重畫。
@@ -906,9 +912,9 @@ async function loadLog($: EngineInterface, { isFresh = true, limit }: { isFresh?
       patch(cur, {
         ref: isPicked ? l.ref : '',
         isLoaded: true,
-        limit: count,
+        page: index,
         commits,
-        hasMore: found.commits.length > count,
+        hasNext: found.commits.length > from + LOG_PAGE,
         isTruncated: found.isTruncated,
         // 只留列出來的那些，整條歷史的可能很多。
         unpushed: commits.filter(c => ahead.has(c.sha)).map(c => c.sha),
@@ -925,7 +931,7 @@ async function loadLog($: EngineInterface, { isFresh = true, limit }: { isFresh?
 // log 搜尋框打字：從第一頁開始重新過濾；整條分支的歷史只在第一次搜的時候讀。清空就回到最近的 commit。
 async function searchLog($: EngineInterface, text: string) {
   await update($, logQuery, () => text)
-  await loadLog($, { isFresh: false, limit: LOG_PAGE })
+  await loadLog($, { isFresh: false, page: 0 })
 }
 
 // 換分頁時清掉搜尋；不在這裡重讀，回到 log 分頁時才讀。
@@ -933,10 +939,6 @@ async function clearLogQuery($: EngineInterface) {
   history = undefined
   logLoads.drop()
   await update($, logQuery, () => '')
-}
-
-async function loadMoreLog($: EngineInterface) {
-  await loadLog($, { isFresh: false, limit: (await read($, log)).limit + LOG_PAGE })
 }
 
 // 點 commit（或選好範圍）：列表換成它們合起來改了哪些檔案，commits 是新的在前。
@@ -2253,7 +2255,7 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     selectRepo: name => selectRepo($, name),
     openDiff: path => openDiff($, path),
     openMerge: path => openMerge($, path),
-    showMoreFiles: () => update($, fileLimit, n => n + FILE_PAGE),
+    showFilePage: page => update($, filePage, () => page),
     deleteChange: file => changeFile($, file, 'delete'),
     rollbackChange: file => changeFile($, file, 'rollback'),
     searchBranches: text => update($, branchQuery, () => text),
@@ -2265,7 +2267,7 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     viewLog: b => viewLog($, b),
     copyBranchName: name => copyBranchName($, name, surface),
     searchLog: text => searchLog($, text),
-    loadMoreLog: () => loadMoreLog($),
+    showLogPage: page => loadLog($, { isFresh: false, page }),
     openCommit: c => openCommits($, [c]),
     toggleRangePick: () => update($, log, l => ({ ...l, isPicking: !l.isPicking, rangeStart: '' })),
     pickRange: c => pickRange($, c),
@@ -2377,14 +2379,14 @@ export const register: Register = on => {
   on('tool.call', { tool: 'Edit' }, async ($, e, next) => checkWrite($, e.file_path, await next(e))).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const [activeTab, subs, v, isRemoteOpen, bf, bq, fl, sv, fileList, specs, wikiView, wf, dbView, lg, lq, shown, usage, now] = await Promise.all([
+    const [activeTab, subs, v, isRemoteOpen, bf, bq, fp, sv, fileList, specs, wikiView, wf, dbView, lg, lq, shown, usage, now] = await Promise.all([
       read($, tab),
       read($, subTabs),
       readView($),
       read($, showRemote),
       read($, branchFolders),
       read($, branchQuery),
-      read($, fileLimit),
+      read($, filePage),
       read($, services),
       readFiles($),
       read($, spec),
@@ -2418,7 +2420,7 @@ export const register: Register = on => {
         showRemote: isRemoteOpen,
         branchFolders: bf,
         branchQuery: bq,
-        fileLimit: fl,
+        filePage: fp,
         syncing,
         services: sv,
         files: fileList,

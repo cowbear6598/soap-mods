@@ -254,6 +254,29 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
       </Box>
     )
 
+  // 換頁列（diff、log 分頁）：← Previous、Next →，後面是這頁的範圍（「31–60」，知道總數再加「of 80」）。只有一頁就不畫。
+  // 一次只畫一頁、一頁 size 列，不越畫越多：每列有 Svg 圖示鈕或很寬的透明按鈕，畫到一兩百列桌面版就卡住。
+  // 按的那顆換頁後不見了（到第一頁、最後一頁），焦點圈移到另一顆。count 是這頁實際有幾列。
+  const pager = (
+    prefix: string,
+    { page, size, count, hasNext, total }: { page: number; size: number; count: number; hasNext: boolean; total?: number },
+    onPage: (page: number) => unknown,
+  ) => {
+    if (page === 0 && !hasNext) return null
+    const prevKey = `${prefix}:prev`
+    const nextKey = `${prefix}:next`
+    const from = page * size
+    const range = `${from + 1}–${from + count}${total === undefined ? '' : ` of ${total}`}`
+
+    return (
+      <Box key={`${prefix}:pager`} gap={1} alignItems="center" flexWrap="wrap">
+        {page > 0 && <Button key={prevKey} label="← Previous" onPress={press(() => onPage(page - 1), nextKey)} />}
+        {hasNext && <Button key={nextKey} label="Next →" onPress={press(() => onPage(page + 1), prevKey)} />}
+        <Text dimColor>{range}</Text>
+      </Box>
+    )
+  }
+
   // 分隔線：夾在兩條線中間的東西就會上下對稱。
   const divider =
     Svg === undefined ? (
@@ -264,7 +287,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
       stretched(DIVIDER_SVG, 'Divider', 1)
     )
 
-  return { Box, Button, Code, Markdown, Text, hasSvg: Svg !== undefined, press, iconButton, deleteButton, rollbackButton, pressRow, pathRow, searchField, field, select, iconBar, stretched, divider }
+  return { Box, Button, Code, Markdown, Text, hasSvg: Svg !== undefined, press, iconButton, deleteButton, rollbackButton, pressRow, pathRow, pager, searchField, field, select, iconBar, stretched, divider }
 }
 
 export type Widgets = ReturnType<typeof makeWidgets>

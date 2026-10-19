@@ -110,10 +110,10 @@ export type LogView = {
   commits: GitCommit[]
   /** Shas of the listed commits not pushed yet. */
   unpushed: string[]
-  /** How many commits to list; Load more raises it. */
-  limit: number
-  /** There are older commits than the listed ones (more matches, when searching). */
-  hasMore: boolean
+  /** Which page of LOG_PAGE commits is listed (from 0); Previous / Next change it. */
+  page: number
+  /** There are older commits than the listed page (more matches, when searching): Next shows. */
+  hasNext: boolean
   /** The search covered only the newest commits: git's output hit the size cap. */
   isTruncated: boolean
   /** Why the last log read failed, '' when none. */
@@ -477,8 +477,8 @@ declare module 'claude-code' {
       branchQuery: string
       /** Text in the log tab's search field, '' when not searching. */
       logQuery: string
-      /** How many files each diff tab group draws; Show more raises it. */
-      fileLimit: number
+      /** Which page of files the diff tab draws (from 0); Previous / Next change it. */
+      filePage: number
       services: ServicesView
       files: FilesView
       spec: SpecView

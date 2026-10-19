@@ -45,7 +45,7 @@ export type Actions = {
   // diff
   openDiff: (path: string) => unknown
   openMerge: (path: string) => unknown
-  showMoreFiles: () => unknown
+  showFilePage: (page: number) => unknown
   deleteChange: (file: GitFile) => unknown
   rollbackChange: (file: GitFile) => unknown
   // branch
@@ -59,7 +59,7 @@ export type Actions = {
   copyBranchName: (name: string) => unknown
   // log
   searchLog: (text: string) => unknown
-  loadMoreLog: () => unknown
+  showLogPage: (page: number) => unknown
   openCommit: (c: GitCommit) => unknown
   toggleRangePick: () => unknown
   pickRange: (c: GitCommit) => unknown
@@ -150,7 +150,8 @@ export type PanelData = {
   showRemote: boolean
   branchFolders: Readonly<Record<string, boolean>>
   branchQuery: string
-  fileLimit: number
+  // diff 分頁看的第幾頁（從 0 開始；檔案變少時畫的那邊會夾回最後一頁）。
+  filePage: number
   // 正在跑的 Fetch／Pull，'' 是沒有。
   syncing: GitSync | ''
   services: ServicesView

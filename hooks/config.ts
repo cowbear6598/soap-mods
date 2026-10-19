@@ -135,7 +135,7 @@ export const SUB_TABS: { [T in keyof SubTabs]: { id: SubTabs[T]; label: string; 
 
 export const hasSubTabs = (tab: TabId): tab is keyof SubTabs => tab in SUB_TABS
 
-// log 分頁一次列幾筆 commit；Load more 再多列這麼多筆。
+// log 分頁一頁列幾筆 commit（換頁見 widgets 的 pager）。
 export const LOG_PAGE = 30
 // branch 分頁每個資料夾（含最外層）直屬的分支最多畫幾個；分支上千個時全畫會卡死，其餘用搜尋找。
 export const BRANCH_ROW_LIMIT = 50
@@ -144,7 +144,7 @@ export const BRANCH_ROW_LIMIT = 50
 export const BRANCH_TREE_LIMIT = 50
 // branch 分頁資料夾列的顏色（天空藍；也可以寫主題色名稱）；終端機的按鈕吃不到顏色，只有桌面版看得到。
 export const FOLDER_COLOR = '#38bdf8'
-// diff 分頁每組一開始畫幾個檔案；Show more 再多畫這麼多個。沒 ignore 的資料夾會冒出上千個 untracked 檔案。
+// diff 分頁一頁最多畫幾個檔案（三組加起來；換頁見 widgets 的 pager）。沒 ignore 的資料夾會冒出上千個 untracked 檔案。
 export const FILE_PAGE = 50
 
 // Files 分頁一個資料夾最多畫幾列（node_modules 這種上千個的，全畫會卡）。

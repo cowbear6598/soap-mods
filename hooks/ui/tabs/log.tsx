@@ -1,5 +1,5 @@
 import type { CommitFile, GitCommit, LogView } from '../../../types'
-import { LOG_AGO_WIDTH, LOG_AUTHOR_WIDTH, LOG_SHA_WIDTH } from '../../config'
+import { LOG_AGO_WIDTH, LOG_AUTHOR_WIDTH, LOG_PAGE, LOG_SHA_WIDTH } from '../../config'
 import { commitsLabel, formatAgo, letterKind, logBranch } from '../../git/parse'
 import { hasQuery } from '../../search'
 import { backButton } from '../stepBar'
@@ -103,7 +103,7 @@ function commitList({ w, d, a }: TabContext, lg: LogView) {
     })
   }
 
-  // 搜尋時標題的數字是符合的筆數（超過列出的就加 +）。
+  // 標題的數字是列到這一頁為止的筆數（搜尋時是符合的），後面還有就加 +。
   const isSearching = hasQuery(query)
   const rangeButton = (
     <Button
@@ -125,7 +125,7 @@ function commitList({ w, d, a }: TabContext, lg: LogView) {
         <Text dimColor>Loading…</Text>
       ) : (
         <Box flexDirection="column">
-          <Text bold dimColor>{`${logBranch(v, lg)?.name ?? 'HEAD (detached)'} · ${lg.commits.length}${lg.hasMore ? '+' : ''}`}</Text>
+          <Text bold dimColor>{`${logBranch(v, lg)?.name ?? 'HEAD (detached)'} · ${lg.page * LOG_PAGE + lg.commits.length}${lg.hasNext ? '+' : ''}`}</Text>
           {lg.commits.length === 0 && lg.error === '' && (
             <Box paddingLeft={2}>
               <Text dimColor>{isSearching ? 'No matching commits.' : 'No commits yet.'}</Text>
@@ -135,7 +135,7 @@ function commitList({ w, d, a }: TabContext, lg: LogView) {
         </Box>
       )}
       {isSearching && lg.isTruncated && <Text dimColor>History is too long; searched only the newest commits.</Text>}
-      {lg.hasMore && <Button key="log:more" label="Load more" onPress={w.press(() => a.loadMoreLog())} />}
+      {lg.isLoaded && w.pager('log', { page: lg.page, size: LOG_PAGE, count: lg.commits.length, hasNext: lg.hasNext }, p => a.showLogPage(p))}
     </Box>
   )
 }
