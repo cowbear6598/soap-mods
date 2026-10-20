@@ -40,8 +40,8 @@ type Row = {
   trailing?: RenderChildren
 }
 
-// press：這個面板上的按鈕都經過它，動作做完後丟了焦點會補回來。
-export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
+// press：這個面板上的按鈕都經過它，動作做完後丟了焦點會補回來。focusInput：把焦點圈移到某個輸入框。
+export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInput: (key: string) => unknown) {
   const { Box, Button, Code, Markdown, Text } = ui
   // 終端機畫不出 Svg（元素表裡有這個 key，但畫成空的），那邊退回文字按鈕。
   const Svg = !isTerminal && 'Svg' in ui ? ui.Svg : undefined
@@ -216,12 +216,23 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
 
   // 一個輸入框（搜尋、DB 分頁的連線字串和查詢）；手機版沒有 Input，是 null。onInput 沒給就只在 Enter 時拿到字。
   // 終端機的框只有淡色的 placeholder 一行字，看不出能打字：墊一塊至少 FIELD_MIN_WIDTH 寬的 ACTIVE_BG 底色。
+  // 框本身只有字那麼寬，點底色的其他地方點不到它：底下先墊一顆一樣大的透明按鈕（rowOverlay），按了把焦點移到框上。
+  // 按鈕要先畫、框後畫：終端機後畫的蓋在上面，反過來按鈕的空白會蓋掉框裡的字。
+  // isFixed：底色固定 FIELD_MIN_WIDTH 寬，打長了也不撐寬（搜尋框，免得把旁邊的 Clear 擠走）。
   const field = (
     key: string,
-    props: { placeholder: string; value: string; submitLabel: string; onInput?: (text: string) => unknown; onSubmit: (text: string) => unknown },
+    props: {
+      placeholder: string
+      value: string
+      submitLabel: string
+      isFixed?: boolean
+      onInput?: (text: string) => unknown
+      onSubmit: (text: string) => unknown
+    },
   ) => {
     const { onInput } = props
     if (!('Input' in ui)) return null
+    const fixed = props.isFixed === true ? ({ width: FIELD_MIN_WIDTH, flexShrink: 0, overflow: 'hidden' } as const) : {}
     const input = (
       <ui.Input
         key={key}
@@ -234,7 +245,15 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
     )
 
     return isTerminal ? (
-      <Box key={`${key}:bg`} minWidth={FIELD_MIN_WIDTH} paddingX={1} backgroundColor={ACTIVE_BG}>
+      <Box
+        key={`${key}:bg`}
+        position="relative"
+        minWidth={FIELD_MIN_WIDTH}
+        {...fixed}
+        paddingX={1}
+        backgroundColor={ACTIVE_BG}
+      >
+        {rowOverlay(<Button key={`${key}:focus`} label={ROW_BUTTON_LABEL} plain onPress={() => void focusInput(key)} />)}
         {input}
       </Box>
     ) : (
@@ -249,19 +268,32 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
   // branch、log 分頁最上面的搜尋框。手機版沒有 Input，就不畫。邊打邊過濾；桌面版拔不掉框旁邊的 submit 按鈕，
   // 就讓它（和 Enter）清空搜尋（onInput('')）。框不能設寬度、撐不滿，所以整組水平置中。
   // trailing：同一行最右邊的按鈕（branch 的 Fetch／Pull），搜尋框靠左、中間一條直線隔開 Clear；沒有搜尋框時只剩它，靠右。
+  // 終端機的框旁邊沒有 submit 按鈕（只在有焦點時畫一個「↵ Clear」提示），自己補一顆 [ Clear ]，跟桌面版一樣。
   const searchField = (
     key: string,
     value: string,
     onInput: (text: string) => unknown,
     trailing?: RenderChildren,
   ) => {
-    const input = field(key, { placeholder: 'Search', value, submitLabel: 'Clear', onInput, onSubmit: () => onInput('') })
+    const clear = () => onInput('')
+    // 終端機已經有自己的 [ Clear ]，引擎在框旁邊畫的提示給空字串，不要再畫一次「↵ Clear」。
+    const input = field(key, { placeholder: 'Search', value, submitLabel: isTerminal ? '' : 'Clear', isFixed: true, onInput, onSubmit: clear })
     if (input === null && trailing === undefined) return null
     const justify = trailing === undefined ? 'center' : input === null ? 'flex-end' : 'space-between'
 
+    const box =
+      isTerminal && input !== null ? (
+        <Box key={`${key}:field`} gap={1} alignItems="center">
+          {input}
+          <Button key={`${key}:clear`} label="Clear" variant="secondary" onPress={press(clear)} />
+        </Box>
+      ) : (
+        input
+      )
+
     return (
       <Box key={`${key}:row`} width="100%" gap={1} alignItems="center" justifyContent={justify}>
-        {input}
+        {box}
         {trailing !== undefined && (
           <Box key={`${key}:trailing`} gap={1} alignItems="center" flexShrink={0}>
             {input !== null && <Text dimColor>│</Text>}

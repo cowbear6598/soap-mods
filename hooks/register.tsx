@@ -200,7 +200,8 @@ const PANE_ARGS: PaneOpenArgs = { id: PANE, title: PANEL_TITLE }
 
 // ───── 狀態 ─────
 
-const tab = atom({ plugin: 'soap-mods', key: 'tab' } as const, 'git')
+// 打開時先看 Files。
+const tab = atom({ plugin: 'soap-mods', key: 'tab' } as const, 'files')
 // 有子分頁的 Tab 各自看的子分頁。
 const subTabs = atom({ plugin: 'soap-mods', key: 'subTabs' } as const, { git: 'diff', spec: 'spec' })
 const view = atom({ plugin: 'soap-mods', key: 'view' } as const, EMPTY)
@@ -2213,7 +2214,11 @@ async function leaveTab($: EngineInterface) {
 
 async function selectTab($: EngineInterface, id: TabId) {
   await Promise.all([update($, tab, () => id), leaveTab($)])
-  // 掃描要一秒左右，不等它：先切過去畫「掃描中」或舊清單。
+  loadTab($, id)
+}
+
+// 讀這個 Tab 要的資料。掃描要一秒左右，不等它：先畫「掃描中」或舊清單。
+function loadTab($: EngineInterface, id: TabId) {
   if (id === 'services') void refreshServices($).catch(() => undefined)
   if (id === 'files') void reloadFiles($).catch(() => undefined)
   if (id === 'spec') void reloadSpecTab($).catch(() => undefined)
@@ -2318,6 +2323,7 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     takeSide: side => takeSide($, side),
     applyMerge: () => applyMerge($),
     askClaude: () => askClaude($),
+    focusInput: key => ringOn($, key),
   }
 }
 
@@ -2325,10 +2331,12 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    // 先開面板（畫「讀取中…」），git 在背景讀，不擋住 session 開始。
+    // 先開面板（畫「讀取中…」），看著的 Tab 的資料在背景讀，不擋住 session 開始。
     isOpenPending = e.surface === null
     if (!isOpenPending) void $.ui.open(PANE_ARGS)
-    void refresh($).catch(() => undefined)
+    void read($, tab)
+      .then(t => loadTab($, t))
+      .catch(() => undefined)
     $.clock.every(FOCUS_WATCH_MS, () => void focusWhenShown($))
     // 用量直接跟引擎拿（不花錢），這裡只負責讓重置倒數每分鐘重畫一次。
     $.clock.every(USAGE_TICK_MS, () => $.ui.invalidate('ui.render'))
@@ -2360,7 +2368,7 @@ export const register: Register = on => {
   // 這裡接下來直接開面板，不交給 Claude。引擎可能不帶外掛名稱前綴，兩個名字都接。
   for (const command of ['soap-mods:open', 'open']) {
     on('command.run', { command }, async $ => {
-      await refresh($)
+      loadTab($, await read($, tab))
       await $.ui.open(PANE_ARGS)
 
       return { text: 'Soap Panel opened.' }

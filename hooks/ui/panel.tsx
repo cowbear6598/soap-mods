@@ -101,7 +101,7 @@ export function renderPanel(drawUi: Ui, d: PanelData, a: Actions, press: Press) 
   const isTerminal = d.surface === 'terminal'
   const bound = new Set<string>()
   const ui = recordHotkeys(drawUi, bound)
-  const w = makeWidgets(ui, isTerminal, press)
+  const w = makeWidgets(ui, isTerminal, press, a.focusInput)
   const { Box, Text } = w
   const ctx: TabContext = { w, d, a }
   const isGit = d.tab === 'git'

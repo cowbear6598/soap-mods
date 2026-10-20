@@ -860,6 +860,29 @@ test('the Files search finds file names in every folder below the session folder
   await ui.unmount()
 })
 
+test('the panel opens on the Files tab; on the terminal the whole search box focuses it and a Clear button sits after it', async ($, on) => {
+  on('clock.now', () => ({ value: 0 }))
+  on('session.root', () => ({ value: '/proj' }))
+  on('fs.list', () => ({ value: [fsEntry('Login.md')] }))
+  on('process.run', () => ok(''))
+  on('ui.focus', () => ({}))
+
+  const ui = await mountPane($, 'terminal', 'files')
+  expect((await ui.find({ key: 'tab:files' }))?.props).toMatchObject({ variant: 'primary' })
+  expect(await ui.find({ key: 'sub:diff' })).toBeUndefined()
+
+  // 框底下墊一顆一樣大的透明按鈕：點框裡字以外的地方，它把焦點移到框上。
+  expect((await ui.find({ key: 'files:search:focus' }))?.props).toMatchObject({ plain: true })
+  await ui.press({ key: 'files:search:focus' })
+
+  await ui.input({ key: 'files:search', text: 'login', kind: 'change' })
+  expect(await waitFor(() => ui.find({ key: 'files:found:Login.md' }))).toBeDefined()
+  await ui.press({ key: 'files:search:clear' })
+  expect(await ui.find({ key: 'files:found:Login.md' })).toBeUndefined()
+  expect((await ui.find({ key: 'files:search' }))?.props).toMatchObject({ value: '' })
+  await ui.unmount()
+})
+
 test('pressing a file in the Files tab shows its text over the tabs, steps with Next, and Back returns', async ($, on) => {
   const texts: Record<string, string> = { '/proj/a.ts': 'const a = 1\r\n', '/proj/b.png': 'PNG\0\0' }
   on('clock.now', () => ({ value: 0 }))

@@ -20,8 +20,13 @@ const PANE_PROPS = {
   view: {},
 } as const
 
-export const mountPane = ($: TestEngine, surface: 'terminal' | 'desktop' = 'terminal') =>
-  $.ui.mount({ plugin: 'soap-mods', surface, component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+// 面板打開時在 Files 分頁；測試大多從 Git 開始，掛上後先按到 Git。tab 給 'files' 就停在打開時的樣子。
+export async function mountPane($: TestEngine, surface: 'terminal' | 'desktop' = 'terminal', tab: 'git' | 'files' = 'git') {
+  const ui = await $.ui.mount({ plugin: 'soap-mods', surface, component: 'Pane', requestId: 'soap-panel', props: PANE_PROPS })
+  if (tab === 'git') await ui.press({ key: 'tab:git' })
+
+  return ui
+}
 
 // 使用者打 /soap-mods:open 打開面板。
 export const openPanel = ($: TestEngine) =>

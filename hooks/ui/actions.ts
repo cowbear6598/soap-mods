@@ -139,6 +139,8 @@ export type Actions = {
   takeSide: (side: 'ours' | 'theirs' | 'as-is') => unknown
   applyMerge: () => unknown
   askClaude: () => unknown
+  // 把焦點圈移到這個輸入框（終端機點框裡的空白時）。
+  focusInput: (key: string) => unknown
 }
 
 // Soap Panel 畫一次要的全部資料。
