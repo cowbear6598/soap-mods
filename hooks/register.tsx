@@ -104,6 +104,7 @@ import { errorText, failure, isMissingCommand } from './errors'
 import {
   BRANCH_FORMAT,
   LOG_FORMAT,
+  branchId,
   branchRef,
   commitRange,
   diffSteps,
@@ -200,11 +201,11 @@ const PANE_ARGS: PaneOpenArgs = { id: PANE, title: PANEL_TITLE }
 
 // ───── 狀態 ─────
 
-// 打開時先看 Files。
 const tab = atom({ plugin: 'soap-mods', key: 'tab' } as const, 'files')
 // 有子分頁的 Tab 各自看的子分頁。
 const subTabs = atom({ plugin: 'soap-mods', key: 'subTabs' } as const, { git: 'diff', spec: 'spec' })
-const view = atom({ plugin: 'soap-mods', key: 'view' } as const, EMPTY)
+// shape：GitView、FilesView 改了樣子就換，熱重載後不沿用舊程式存的、缺欄位的值（同 wiki）。
+const view = atom({ plugin: 'soap-mods', key: 'view' } as const, EMPTY, { shape: 'git-2' })
 const showRemote = atom({ plugin: 'soap-mods', key: 'showRemote' } as const, false)
 // branch 分頁資料夾的開合，key 是「l:路徑」或「r:路徑」；沒有的照預設。
 const branchFolders = atom({ plugin: 'soap-mods', key: 'branchFolders' } as const, {})
@@ -215,11 +216,10 @@ const logQuery = atom({ plugin: 'soap-mods', key: 'logQuery' } as const, '')
 // diff 分頁看的是第幾頁（從 0 開始）。
 const filePage = atom({ plugin: 'soap-mods', key: 'filePage' } as const, 0)
 const services = atom({ plugin: 'soap-mods', key: 'services' } as const, EMPTY_SERVICES)
-const files = atom({ plugin: 'soap-mods', key: 'files' } as const, EMPTY_FILES)
+const files = atom({ plugin: 'soap-mods', key: 'files' } as const, EMPTY_FILES, { shape: 'files-2' })
 // Spec 分頁：.soap/tasks 底下的 feature 清單，和點開的那份 plan.yaml。
 const spec = atom({ plugin: 'soap-mods', key: 'spec' } as const, EMPTY_SPEC)
 
-// 看得到的 Tab 的子分頁；沒有子分頁的 Tab 是 undefined。
 const shownSub = (t: TabId, subs: SubTabs) => (hasSubTabs(t) ? subs[t] : undefined)
 // Wiki 子分頁：.soap/wiki 的頁面、勾了哪幾頁、Distill 的草稿，和打開的那頁或那份草稿。
 // shape：WikiView 改了樣子（加欄位、改說明文字）就換；熱重載後整個 Wiki 狀態（勾選以外的畫面狀態、打開的頁面）從頭來，不沿用舊程式留下的值。
@@ -236,11 +236,6 @@ const cover = atom({ plugin: 'soap-mods', key: 'cover' } as const, NO_COVER)
 
 // 改一個物件 atom 的其中幾個欄位；改的欄位內容都沒變就不寫（patch），面板不會白白重畫。
 // 引擎要看得出改的是哪個 atom，所以每個 atom 一個，不能寫成通用的。
-// 舊版存的 view 沒有後來加的欄位（fileArmed、fileError）：補上預設值。
-async function readView($: EngineInterface): Promise<GitView> {
-  return { ...EMPTY, ...(await read($, view)) }
-}
-
 async function setView($: EngineInterface, change: Partial<GitView>) {
   await update($, view, v => patch(v, change))
 }
@@ -271,11 +266,6 @@ async function setServices($: EngineInterface, change: Partial<ServicesView>) {
   await update($, services, s => patch(s, change))
 }
 
-// 面板重新載入時 atom 留著舊版存的樣子，後來加的欄位（query、found）會沒有：補上預設值。
-async function readFiles($: EngineInterface): Promise<FilesView> {
-  return { ...EMPTY_FILES, ...(await read($, files)) }
-}
-
 // 換資料夾、改搜尋字時 ⋯ 選單收起來；回合結束重列同一個資料夾、重找同樣的字不收。
 async function setFiles($: EngineInterface, change: Partial<FilesView>) {
   await update($, files, f => {
@@ -303,6 +293,16 @@ type ArmSlot = { timer?: Timer }
 function disarmLater($: EngineInterface, slot: ArmSlot, disarm: () => unknown) {
   slot.timer?.cancel()
   slot.timer = $.clock.after(DELETE_ARM_MS, () => void disarm())
+}
+
+// 要按兩次的按鈕：還沒待確認就 arm、回 false（DELETE_ARM_MS 後 disarm）；已經待確認就停掉計時、回 true（該做了）。
+async function isConfirmed($: EngineInterface, slot: ArmSlot, isArmed: boolean, arm: () => Promise<unknown>, disarm: () => unknown) {
+  slot.timer?.cancel()
+  if (isArmed) return true
+  disarmLater($, slot, disarm)
+  await arm()
+
+  return false
 }
 
 // ───── 跑 git ─────
@@ -426,7 +426,7 @@ function checkPressed($: EngineInterface, tree: RenderChildren, now: number, t: 
   $.clock.after(0, () => void ringOn($, anchor))
 }
 
-// 按的那顆跟著那列要被刪掉了（分支、Spec、DB 連線、Files 選單）：刪之前先把焦點圈移到下一列同一種按鈕（沒有就上一列、再沒有就分頁圖示）。
+// 按的那顆跟著那列要被刪掉了（diff 分頁的檔案、分支、Spec、Wiki、DB 連線、Files 選單）：刪之前先把焦點圈移到下一列同一種按鈕（沒有就上一列、再沒有就分頁圖示）。
 // rowKey：用那列的這顆找鄰居（Files 是在選單裡按 Delete，鄰居是下一列的 ⋯）；沒給就用按的那顆。
 // 等它不見才移就晚了：桌面版的焦點已經掉出 Soap Panel，下一次點只會拿回焦點、按不到東西。
 async function leaveRow($: EngineInterface, rowKey?: string) {
@@ -499,6 +499,12 @@ async function findRepos($: EngineInterface): Promise<Repo[]> {
   return found.filter(c => c !== undefined).sort((a, b) => a.name.localeCompare(b.name))
 }
 
+// 重找 repo：選中的那個還在就留著，不在了（或還沒選過）就換成第一個。
+async function reloadRepos($: EngineInterface) {
+  repos.list = await findRepos($)
+  repos.current = repos.list.find(c => c.root === repos.current?.root) ?? repos.list[0]
+}
+
 // 其他 repo 有沒有變更、有沒有衝突；讀不到就當作沒有變更。
 async function summarize($: EngineInterface, r: Repo): Promise<RepoSummary> {
   const status = await git($, SUMMARY_ARGS, { cwd: r.root }).catch(() => undefined)
@@ -535,13 +541,26 @@ function refresh($: EngineInterface): Promise<void> {
   return gitReads.run(() => readGit($))
 }
 
-// 畫得到 git 狀態的分頁：Git，和照 repo 分組的 Services。新分頁預設不讀 git。
-const showsGit = (t: TabId) => t === 'git' || t === 'services'
+// 畫得到 git 的分頁要讀的：Git 讀完整的狀態；Services 只照 repo 分組，只重找 repo，不讀狀態、分支、其他 repo 的摘要。
+// 新分頁預設不讀 git。
+function refreshTab($: EngineInterface, t: TabId): Promise<void> | undefined {
+  if (t === 'git') return refresh($)
+  if (t === 'services') return gitReads.run(() => readRepoList($))
 
-// 回合結束、每 GIT_REFRESH_MS、換到 Git／Services 分頁、Soap Panel 被切到前面時呼叫；
-// git 狀態看不到（停在 Files、Spec 分頁、Soap Panel 不在前面）就不讀。
+  return undefined
+}
+
+// 回合結束、每 GIT_REFRESH_MS、Soap Panel 被切到前面時呼叫；Soap Panel 不在前面就不讀。
 async function refreshWhenShown($: EngineInterface) {
-  if (showsGit(await read($, tab)) && (await isPaneShown($))) await refresh($)
+  const t = await read($, tab)
+  if ((t === 'git' || t === 'services') && (await isPaneShown($))) await refreshTab($, t)
+}
+
+// 重找 repo，那排 repo 已經讀過的摘要留著，新的當作沒有變更（換到 Git 分頁時整個重讀）。
+async function readRepoList($: EngineInterface) {
+  await reloadRepos($)
+  const shown = (await read($, view)).repos
+  await setView($, { repos: repos.list.map(r => shown.find(s => s.root === r.root) ?? toSummary(r, [])) })
 }
 
 // 選中的 repo 的狀態、分支、.git 裡的檔案，和其他 repo 的摘要，一起讀。
@@ -562,9 +581,7 @@ async function readGit($: EngineInterface) {
   const isStale = gitReads.isWanted
   let snap
   try {
-    repos.list = await findRepos($)
-    // 選中的 repo 還在就留著，不在了（或還沒選過）就換成第一個。
-    repos.current = repos.list.find(c => c.root === repos.current?.root) ?? repos.list[0]
+    await reloadRepos($)
     const active = repos.current
     if (active === undefined) {
       if (!isStale()) await setView($, { ...EMPTY, isLoaded: true, isRepo: false })
@@ -691,16 +708,11 @@ async function showDiff($: EngineInterface, pane: DiffPaneView) {
 }
 
 // diff 分頁的垃圾桶和 rollback 都要按兩次：按了換成打勾，DELETE_ARM_MS 內再按同一顆才做（Staged、Unstaged 都列著的兩列一起打勾，做的事一樣）。
-// delete 只刪工作區的檔案（-uall 列的都是檔案，不會是資料夾），index 不動：有追蹤的之後列成刪除。
+// delete 只刪工作區的檔案，index 不動：有追蹤的之後列成刪除。未追蹤的巢狀 repo 列成「sub/」，canDelete 不給刪。
 // rollback 只把 index 和工作區都還原成 HEAD 的樣子，不刪 HEAD 沒有的檔案。不經過資源回收筒，也沒有 undo。
 async function changeFile($: EngineInterface, file: GitFile, action: 'delete' | 'rollback') {
   const armed = `${action}:${file.path}`
-  if ((await read($, view)).fileArmed !== armed) {
-    await arm($, { fileArmed: armed })
-
-    return
-  }
-  gitArm.timer?.cancel()
+  if (!(await isGitConfirmed($, (await read($, view)).fileArmed === armed, { fileArmed: armed }))) return
   try {
     if (action === 'delete') await removePath($, inRepo(file.path))
     else await gitOk($, ['restore', '--source=HEAD', '--staged', '--worktree', '--', file.path])
@@ -745,13 +757,8 @@ async function stepDiffFile($: EngineInterface, step: 1 | -1) {
 
 // 切換分支要按兩次：第一次只把那列標成「再按一次」，DELETE_ARM_MS 內再按同一列才切；按別列就改標那列。
 async function switchBranch($: EngineInterface, name: string, isRemote: boolean) {
-  const id = `${isRemote ? 'r' : 'l'}:${name}`
-  if ((await read($, view)).switchArmed !== id) {
-    await arm($, { switchArmed: id })
-
-    return
-  }
-  gitArm.timer?.cancel()
+  const id = branchId({ name, isRemote })
+  if (!(await isGitConfirmed($, (await read($, view)).switchArmed === id, { switchArmed: id }))) return
   await setView($, { switchArmed: '' })
   try {
     await gitOk($, isRemote ? ['switch', '--track', name] : ['switch', name])
@@ -769,36 +776,42 @@ async function switchBranch($: EngineInterface, name: string, isRemote: boolean)
 // 待確認的刪除、捨棄（打勾）、切換（再按一次）一次只有一個。
 const gitArm: ArmSlot = {}
 
-async function arm($: EngineInterface, armed: Partial<GitView>) {
-  disarmLater($, gitArm, () => setView($, NO_ARMED))
-  await setView($, { ...NO_MESSAGES, ...armed })
-}
+const armGit = ($: EngineInterface, armed: Partial<GitView>) =>
+  setView($, { ...NO_MESSAGES, ...armed })
 
-const armDelete = ($: EngineInterface, name: string, isRemote: boolean, isForce: boolean) =>
-  arm($, { deleteArmed: { name, isRemote, isForce } })
+const isGitConfirmed = ($: EngineInterface, isArmed: boolean, armed: Partial<GitView>) =>
+  isConfirmed($, gitArm, isArmed, () => armGit($, armed), () => setView($, NO_ARMED))
+
+// 遠端分支（my/fork/feature/x）屬於哪個遠端：名稱最長的那個前綴，遠端名稱裡也可以有「/」。
+async function remoteOf($: EngineInterface, name: string) {
+  const remotes = (await gitOk($, ['remote'])).stdout.split('\n').map(r => r.trim())
+  const remote = remotes.filter(r => r !== '' && name.startsWith(`${r}/`)).sort((a, b) => b.length - a.length)[0]
+  if (remote === undefined) throw new Error(`No remote holds ${name}`)
+
+  return { remote, branch: name.slice(remote.length + 1) }
+}
 
 // 刪分支要按兩次：垃圾桶按了換成打勾，DELETE_ARM_MS 內再按才真的刪；按別的垃圾桶，原本的就收回。
 // 本地用 -d，有沒合併的 commit 時 git 不肯刪，換成強制刪除的打勾（-D），讓人決定要不要連那些 commit 一起丟掉。
-// 遠端的（origin/feature/x）push --delete 到第一個「/」前的遠端；跟 Fetch 一樣不讓 git 停下來問帳密。
+// 遠端的推一個「:refs/heads/x」上去刪（分支名稱是遠端給的，不能讓它變成 git 的選項）；跟 Fetch 一樣不讓 git 停下來問帳密。
 async function deleteBranch($: EngineInterface, name: string, isRemote: boolean) {
   const armed = (await read($, view)).deleteArmed
-  if (armed?.name !== name || armed.isRemote !== isRemote) {
-    await armDelete($, name, isRemote, false)
-
-    return
-  }
-  gitArm.timer?.cancel()
+  const isArmed = armed !== null && branchId(armed) === branchId({ name, isRemote })
+  if (!(await isGitConfirmed($, isArmed, { deleteArmed: { name, isRemote, isForce: false } }))) return
+  const isForce = armed?.isForce === true
   try {
     if (isRemote) {
-      const slash = name.indexOf('/')
-      await gitOk($, ['push', name.slice(0, slash), '--delete', name.slice(slash + 1)], NO_PROMPT)
+      const { remote, branch } = await remoteOf($, name)
+      await gitOk($, ['push', remote, `:refs/heads/${branch}`], NO_PROMPT)
     } else {
-      await gitOk($, ['branch', armed.isForce ? '-D' : '-d', name])
+      await gitOk($, ['branch', isForce ? '-D' : '-d', '--', name])
     }
   } catch (err) {
     const message = gitErrorText(err)
-    if (!isRemote && !armed.isForce && message.includes('not fully merged')) await armDelete($, name, false, true)
-    else await setView($, { ...NO_MESSAGES, branchError: message })
+    if (!isRemote && !isForce && message.includes('not fully merged')) {
+      disarmLater($, gitArm, () => setView($, NO_ARMED))
+      await armGit($, { deleteArmed: { name, isRemote, isForce: true } })
+    } else await setView($, { ...NO_MESSAGES, branchError: message })
 
     return
   }
@@ -974,11 +987,7 @@ async function pickRange($: EngineInterface, c: GitCommit) {
 // ───── 解衝突（合併） ─────
 
 async function editChunks($: EngineInterface, edit: (chunks: MergeChunk[]) => MergeChunk[]) {
-  await update($, cover, c => {
-    const m = coverData(c, 'merge')
-
-    return m === undefined ? c : patchCover(c, 'merge', { chunks: edit(m.chunks) })
-  })
+  await update($, cover, c => patchCover(c, 'merge', { chunks: edit(coverData(c, 'merge')?.chunks ?? []) }))
 }
 
 // git 為這個衝突檔案留了哪幾個版本（1 共同祖先、2 ours、3 theirs）。每列是「mode sha stage<TAB>path」，
@@ -995,11 +1004,11 @@ type Stages = { path: string; key: string; chunks: MergeChunk[] | null }
 // 上一次讀到的版本和比對結果：同一個檔案、同一組版本就不用再跑三次 git show，也不用再比一次。
 let stageCache: Stages | undefined
 
-// git 留著的某一個版本；那一邊沒有這個檔案就是 null。
+// git 留著的某一個版本；那一邊沒有這個檔案、或大到讀不完（拿去比對的話，Apply 會寫回截掉的檔案）就是 null。
 async function readStage($: EngineInterface, stage: 1 | 2 | 3, path: string) {
   const r = await git($, ['show', `:${stage}:${path}`]).catch(() => null)
 
-  return r === null || r.exitCode !== 0 ? null : splitLines(r.stdout)
+  return r === null || r.exitCode !== 0 || r.isStdoutTruncated ? null : splitLines(r.stdout)
 }
 
 async function readStages($: EngineInterface, path: string, key: string | null): Promise<Stages> {
@@ -1154,10 +1163,11 @@ async function askClaude($: EngineInterface) {
 // ───── conflict 分頁：abort、continue ─────
 
 // abort／continue：成功跳 toast，失敗把錯誤留在 conflict 分頁，最後重讀狀態。
+// 逾時跟 Fetch 一樣長：commit 會跑 pre-commit hook（lint、測試），預設的逾時砍掉它會留下 index.lock。
 async function runOp($: EngineInterface, op: Exclude<MergeOp, ''>, args: string[], done: string, env?: Record<string, string>) {
   let opError = ''
   try {
-    await gitOk($, args, { env })
+    await gitOk($, args, { env, timeoutMs: SYNC_TIMEOUT_MS })
     $.ui.toast(`${OP_LABEL[op]} ${done}`)
   } catch (err) {
     opError = errorText(err)
@@ -1166,15 +1176,12 @@ async function runOp($: EngineInterface, op: Exclude<MergeOp, ''>, args: string[
   await refresh($)
 }
 
-// abort 要按兩次：第一次只把按鈕換成確認。
+// abort 要按兩次：第一次只把按鈕換成確認，DELETE_ARM_MS 後收回。
 async function abortOp($: EngineInterface) {
   const v = await read($, view)
   if (v.op === '') return
-  if (!v.isAbortArmed) {
-    await setView($, { isAbortArmed: true, opError: '' })
-
-    return
-  }
+  const arm = () => setView($, { isAbortArmed: true, opError: '' })
+  if (!(await isConfirmed($, gitArm, v.isAbortArmed, arm, () => setView($, { isAbortArmed: false })))) return
   await runOp($, v.op, [v.op, '--abort'], 'aborted')
 }
 
@@ -1343,7 +1350,7 @@ async function loadFiles($: EngineInterface, dir: string) {
 }
 
 async function reloadFiles($: EngineInterface) {
-  await loadFiles($, (await readFiles($)).dir)
+  await loadFiles($, (await read($, files)).dir)
 }
 
 type Walk = { paths: string[]; isCapped: boolean }
@@ -1406,9 +1413,10 @@ async function clearFilesQuery($: EngineInterface) {
   await setFiles($, { ...NO_FILE_MENU, query: '', found: null })
 }
 
-// ⋯ 選單一次只開一列的，換列、離開分頁、開檔案都收起來（換資料夾、搜尋見 setFiles）。
+// Files 選單裡 Delete 的待確認計時；開關選單就停掉。
 const fileArm: ArmSlot = {}
 
+// ⋯ 選單一次只開一列的，換列、離開分頁、開檔案都收起來（換資料夾、搜尋見 setFiles）。
 async function toggleFileMenu($: EngineInterface, path: string) {
   fileArm.timer?.cancel()
   await update($, files, f => patch(f, { ...NO_FILE_MENU, menu: f.menu === path ? '' : path }))
@@ -1435,19 +1443,12 @@ async function revealFile($: EngineInterface, path: string) {
 }
 
 // 刪檔案或整個資料夾要按兩次：Delete 按了換成紅字，DELETE_ARM_MS 內再按才刪，不經過資源回收筒。
-// path 是列出來的，不會是 session 資料夾本身或含 ..；還是擋一下，免得刪到外面。
 async function deleteFile($: EngineInterface, path: string) {
-  const f = await readFiles($)
-  fileArm.timer?.cancel()
-  if (!f.isDeleteArmed) {
-    disarmLater($, fileArm, () => setFiles($, { isDeleteArmed: false }))
-    await setFiles($, { isDeleteArmed: true, menuError: '' })
-
-    return
-  }
+  const f = await read($, files)
+  const arm = () => setFiles($, { isDeleteArmed: true, menuError: '' })
+  if (!(await isConfirmed($, fileArm, f.isDeleteArmed, arm, () => setFiles($, { isDeleteArmed: false })))) return
   const { name } = splitPath(path)
   try {
-    if (path === '' || path.split('/').includes('..')) throw new Error('outside the session folder')
     await removePath($, absPath(await $.session.root(), path))
   } catch (err) {
     await setFiles($, { isDeleteArmed: false, menuError: `Couldn't delete ${name}: ${errorText(err)}` })
@@ -1468,7 +1469,7 @@ const fileReads = latestOnly()
 // known：畫面上已經是這個檔案時它的 stamp；修改時間和大小都沒變就不讀內容，回傳 null（回合結束重讀時常常沒變）。
 async function readFileView($: EngineInterface, path: string, known: string): Promise<FileView | null> {
   try {
-    const full = `${await $.session.root()}/${path}`
+    const full = absPath(await $.session.root(), path)
     const stat = await $.fs.stat(full)
     const stamp = `${stat.mtimeMs}:${stat.size}`
     if (stamp === known) return null
@@ -1495,7 +1496,7 @@ async function showFile($: EngineInterface, path: string) {
 }
 
 async function stepFile($: EngineInterface, step: 1 | -1) {
-  const [shown, list] = await Promise.all([readFileCover($), readFiles($)])
+  const [shown, list] = await Promise.all([readFileCover($), read($, files)])
   const next = neighbour(fileSteps(list), p => p === shown.path, step)
   if (next !== undefined) await showFile($, next)
 }
@@ -1538,7 +1539,7 @@ async function openSpec($: EngineInterface, name: string) {
   const prev = await read($, spec)
   const path = planPath(name)
   const shown = await (async () => {
-    const full = `${await $.session.root()}/${path}`
+    const full = absPath(await $.session.root(), path)
     const stat = await $.fs.stat(full)
     const stamp = `${stat.mtimeMs}:${stat.size}`
     if (prev.open === name && prev.stamp === stamp) return null
@@ -1577,11 +1578,21 @@ async function doSpec($: EngineInterface) {
   $.ui.toast('Sent to Claude')
 }
 
-// 刪檔案或整個資料夾（Spec 的 feature 資料夾、Files 分頁的一列）：macOS 用 rm -rf，Windows 用 PowerShell 的 Remove-Item；
-// 路徑從環境變數給，不拼進指令。
-const REMOVE_ARGV = powershellArgv("$ErrorActionPreference = 'Stop'; Remove-Item -LiteralPath $env:SOAP_PATH -Recurse -Force")
+// 刪檔案或整個資料夾（diff、Files、Spec、Wiki 都走這裡）：macOS 用 rm -rf，Windows 用 PowerShell 的 Remove-Item；
+// 路徑從環境變數給，不拼進指令。連結（junction、symlink）只刪連結本身：Windows PowerShell 的 Remove-Item -Recurse 會進到目標裡刪。
+const REMOVE_ARGV = powershellArgv(
+  "$ErrorActionPreference = 'Stop'; $i = Get-Item -LiteralPath $env:SOAP_PATH -Force; if ($i.Attributes -band [IO.FileAttributes]::ReparsePoint) { $i.Delete() } else { Remove-Item -LiteralPath $env:SOAP_PATH -Recurse -Force }",
+)
 
+// 只刪 session 資料夾底下的東西：不在它底下、或路徑裡有 . 和 .. 的不刪。
+// 比的時候不分大小寫、斜線方向：repo 的根目錄是 git 給的（C:/…），session 資料夾是引擎給的。
 async function removePath($: EngineInterface, abs: string) {
+  const norm = (p: string) => p.replace(/\\/g, '/').toLowerCase()
+  const root = `${norm(await $.session.root()).replace(/\/$/, '')}/`
+  const rel = norm(abs)
+  if (!rel.startsWith(root) || rel.slice(root.length).split('/').some(p => p === '' || p === '.' || p === '..')) {
+    throw new Error('outside the session folder')
+  }
   if (await isWindows($)) await runOk($, REMOVE_ARGV, 'Remove-Item', { env: { SOAP_PATH: abs } })
   else await runOk($, ['rm', '-rf', '--', abs], 'rm')
 }
@@ -1589,23 +1600,13 @@ async function removePath($: EngineInterface, abs: string) {
 const specArm: ArmSlot = {}
 
 // 刪 Spec 要按兩次：垃圾桶按了換成打勾，DELETE_ARM_MS 內再按才刪掉整個 .soap/tasks/<feature>/；按別的垃圾桶，原本的就收回。
-// 名稱是 fs.list 列出來的資料夾名稱；空的、. 或 ..、含斜線的不刪（會刪到 .soap/tasks 外面）。
+// 名稱是 fs.list 列出來的資料夾名稱，含斜線的不刪（不是一個 feature 資料夾）；空的、. 和 .. 由 removePath 擋。
 async function deleteSpec($: EngineInterface, name: string) {
-  const s = await read($, spec)
-  if (s.deleteArmed !== name) {
-    disarmLater($, specArm, () => setSpec($, { deleteArmed: '' }))
-    await setSpec($, { deleteArmed: name, deleteError: '' })
-
-    return
-  }
-  specArm.timer?.cancel()
+  const arm = () => setSpec($, { deleteArmed: name, deleteError: '' })
+  if (!(await isConfirmed($, specArm, (await read($, spec)).deleteArmed === name, arm, () => setSpec($, { deleteArmed: '' })))) return
   await setSpec($, { deleteArmed: '' })
-  if (name === '' || name === '.' || name === '..' || /[\\/]/.test(name)) {
-    await setSpec($, { deleteError: `Couldn't delete ${name}: not a feature folder name.` })
-
-    return
-  }
   try {
+    if (/[\\/]/.test(name)) throw new Error('not a feature folder name')
     await removePath($, `${await $.session.root()}/${SPEC_DIR}/${name}`)
   } catch (err) {
     await setSpec($, { deleteError: `Couldn't delete ${name}: ${errorText(err)}` })
@@ -1746,7 +1747,7 @@ async function loadWiki($: EngineInterface) {
   await setWiki($, { isLoaded: true, model, ...listed })
 }
 
-// Summary Conversation 選的模型；讀不到就是 Current。
+// Summary Conversation 選的模型；讀不到是 ''（跟對話同一種）。
 async function readWikiModel($: EngineInterface): Promise<WikiModel | ''> {
   return wikiModelOf(await $.store.get(WIKI_MODEL_KEY).catch(() => undefined))
 }
@@ -1874,14 +1875,8 @@ const wikiArm: ArmSlot = {}
 // 刪 .soap/wiki 底下的檔案要按兩次：垃圾桶按了換成打勾，DELETE_ARM_MS 內再按才刪；按別的垃圾桶，原本的就收回。
 // 頁面刪了也從勾選拿掉；草稿（.drafts/<id>）只刪草稿，同 Discard。
 async function deleteWikiFile($: EngineInterface, path: string) {
-  const s = await read($, wiki)
-  if (s.deleteArmed !== path) {
-    disarmLater($, wikiArm, () => setWiki($, { deleteArmed: '' }))
-    await setWiki($, { deleteArmed: path, deleteError: '' })
-
-    return
-  }
-  wikiArm.timer?.cancel()
+  const arm = () => setWiki($, { deleteArmed: path, deleteError: '' })
+  if (!(await isConfirmed($, wikiArm, (await read($, wiki)).deleteArmed === path, arm, () => setWiki($, { deleteArmed: '' })))) return
   await setWiki($, { deleteArmed: '' })
   const root = await $.session.root()
   const draftId = draftIdOf(path)
@@ -1933,11 +1928,16 @@ async function askDistill($: EngineInterface, model: WikiModel | '', current: Wi
 // 正在 Distill。跟 dbBusy 一樣放模組變數不放 atom，免得被熱重載中斷後一直停在「Summarizing…」。
 let isDistilling = false
 
+function setDistilling($: EngineInterface, isBusy: boolean) {
+  isDistilling = isBusy
+  $.ui.invalidate('ui.render')
+}
+
 // Distill：只有按了才跑。把這段對話和現有頁面給選的模型，請它寫出值得留下的草稿，
 // 存進 .soap/wiki/.drafts 等人看；頁面一頁都不動。一次只跑一個。說明最後寫用了哪個模型。
 async function distillWiki($: EngineInterface) {
   if (isDistilling) return
-  isDistilling = true
+  setDistilling($, true)
   const current = await currentModel($)
   const model = (await read($, wiki)).model || current
   await setWiki($, { distillNote: '' })
@@ -1957,7 +1957,7 @@ async function distillWiki($: EngineInterface) {
     note = `Distill failed: ${errorText(err)}`
   }
   const name = wikiModelLabel(model)
-  isDistilling = false
+  setDistilling($, false)
   await setWiki($, { distillNote: name === '' || note === '' ? note : `${note} (${name})` })
   await loadWiki($)
 }
@@ -1979,13 +1979,6 @@ async function sendWikiPages($: EngineInterface) {
   const paths = pages.map(p => p.path)
   await update($, wikiSent, s => ({ conversation, pages: [...new Set([...(s.conversation === conversation ? s.pages : []), ...paths])] }))
   $.ui.toast(`Sent ${pages.length} page${pages.length === 1 ? '' : 's'} to Claude`)
-}
-
-// 這段對話送過的頁面。
-async function sentPages($: EngineInterface): Promise<string[]> {
-  const [conversation, sent] = await Promise.all([$.session.id().catch(() => ''), read($, wikiSent)])
-
-  return sent.conversation === conversation ? sent.pages : []
 }
 
 // ───── DB 分頁（SQL Server） ─────
@@ -2090,13 +2083,8 @@ const dbArm: ArmSlot = {}
 
 // 刪連線要按兩次，跟 Spec 一樣；刪的時候密碼一起刪。
 async function deleteDbConnection($: EngineInterface, id: string) {
-  dbArm.timer?.cancel()
-  if ((await read($, db)).deleteArmed !== id) {
-    disarmLater($, dbArm, () => setDb($, { deleteArmed: '' }))
-    await setDb($, { deleteArmed: id, error: '' })
-
-    return
-  }
+  const arm = () => setDb($, { deleteArmed: id, error: '' })
+  if (!(await isConfirmed($, dbArm, (await read($, db)).deleteArmed === id, arm, () => setDb($, { deleteArmed: '' })))) return
   try {
     const saved = await readSaved($)
     const gone = saved.find(c => c.id === id)
@@ -2115,7 +2103,6 @@ const tableLoads = latestOnly()
 const columnLoads = latestOnly()
 const queryRuns = latestOnly()
 
-// 晚到的資料表、欄位、查詢結果都不寫，密碼也丟掉。
 function dropConnection($: EngineInterface) {
   tableLoads.drop()
   columnLoads.drop()
@@ -2163,7 +2150,6 @@ async function runDbQuery($: EngineInterface, query: string) {
   }
 }
 
-// 讀資料表的欄位；讀到時已經換了資料表就不寫。
 async function loadColumns($: EngineInterface, t: DbTable) {
   const isStale = columnLoads.start()
   try {
@@ -2198,7 +2184,7 @@ async function closeCover($: EngineInterface) {
 
 // 回合結束：Claude 可能改了檔案。Files 分頁開著就重列（有搜尋就重新走一遍再找），開著檔案內容就重讀。
 async function reloadFilesWhenShown($: EngineInterface) {
-  const [t, shown, list] = await Promise.all([read($, tab), readFileCover($), readFiles($)])
+  const [t, shown, list] = await Promise.all([read($, tab), readFileCover($), read($, files)])
   if (t !== 'files') return
   walked = undefined
   await Promise.all([reloadFiles($), findFiles($, list.query), shown.path === '' ? undefined : showFile($, shown.path)])
@@ -2206,8 +2192,8 @@ async function reloadFilesWhenShown($: EngineInterface) {
 
 // ───── 換分頁 ─────
 
-// 換分頁（上層 Tab 或子分頁）時清掉的東西：錯誤訊息、待確認的 abort、branch、log 和 Files 的搜尋、
-// log 點開的 commit（回來時是整個 commit 列表）。
+// 換分頁（上層 Tab 或子分頁）時清掉的東西：錯誤訊息、待確認的刪除／切換／rollback／abort、branch、log 和 Files 的搜尋
+// （連 Files 的 ⋯ 選單）、log 點開的 commit（回來時是整個 commit 列表）。
 async function leaveTab($: EngineInterface) {
   await Promise.all([setView($, NO_MESSAGES), update($, branchQuery, () => ''), clearLogQuery($), clearFilesQuery($), setLog($, NO_COMMIT)])
 }
@@ -2223,7 +2209,7 @@ function loadTab($: EngineInterface, id: TabId) {
   if (id === 'files') void reloadFiles($).catch(() => undefined)
   if (id === 'spec') void reloadSpecTab($).catch(() => undefined)
   if (id === 'db') void loadDbConnections($).catch(() => undefined)
-  if (showsGit(id)) void refresh($).catch(() => undefined)
+  void refreshTab($, id)?.catch(() => undefined)
 }
 
 // 已經為哪個 session 讀過看著的 Tab。畫的時候看到 id 換了就讀一次：剛開始的第一次畫，
@@ -2317,7 +2303,7 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     openWikiDraft: id => openWikiDraft($, id),
     acceptWikiDraft: () => settleWikiDraft($, true),
     discardWikiDraft: () => settleWikiDraft($, false),
-    // 不等它做完：Claude 要想一陣子，按鈕先換成「Distilling…」。
+    // 不等它做完：Claude 要想一陣子，按鈕先換成「Summarizing…」。
     distillWiki: () => void distillWiki($).catch(() => undefined),
     sendWikiPages: () => sendWikiPages($),
     selectWikiModel: model => selectWikiModel($, model),
@@ -2342,7 +2328,7 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    // 先開面板（畫「讀取中…」），看著的 Tab 的資料等第一次畫時在背景讀（loadTabOnce），不擋住 session 開始。
+    // 先開面板（畫「Loading…」），看著的 Tab 的資料等第一次畫時在背景讀（loadTabOnce），不擋住 session 開始。
     isOpenPending = e.surface === null
     if (!isOpenPending) void $.ui.open(PANE_ARGS)
     $.clock.every(FOCUS_WATCH_MS, () => void focusWhenShown($))
@@ -2396,16 +2382,16 @@ export const register: Register = on => {
   on('tool.call', { tool: 'Edit' }, async ($, e, next) => checkWrite($, e.file_path, await next(e))).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const [activeTab, subs, v, isRemoteOpen, bf, bq, fp, sv, fileList, specs, wikiView, wf, dbView, lg, lq, shown, usage, now, session] = await Promise.all([
+    const [activeTab, subs, v, isRemoteOpen, bf, bq, fp, sv, fileList, specs, wikiView, wf, dbView, lg, lq, shown, sentWiki, usage, now, session] = await Promise.all([
       read($, tab),
       read($, subTabs),
-      readView($),
+      read($, view),
       read($, showRemote),
       read($, branchFolders),
       read($, branchQuery),
       read($, filePage),
       read($, services),
-      readFiles($),
+      read($, files),
       read($, spec),
       read($, wiki),
       read($, wikiFolders),
@@ -2413,6 +2399,7 @@ export const register: Register = on => {
       read($, log),
       read($, logQuery),
       read($, cover),
+      read($, wikiSent),
       // 讀不到用量就當作還沒有讀數，不要讓整個面板畫不出來。
       $.session.usage().catch(() => undefined),
       $.clock.now(),
@@ -2421,12 +2408,10 @@ export const register: Register = on => {
 
     loadTabOnce($, activeTab, session)
     const isWikiShown = activeTab === 'spec' && subs.spec === 'wiki'
-    // 只有開著時才問：Files 的 ⋯ 選單（Show in Explorer 還是 Finder，問一次就記著）、Wiki 子分頁（模型選單、這段對話送過的頁面）。
-    const [onWindows, current, sent] = await Promise.all([
-      fileList.menu !== '' && isWindows($),
-      isWikiShown ? currentModel($) : ('' as const),
-      isWikiShown ? sentPages($) : [],
-    ])
+    // 只有開著時才問：Files 的 ⋯ 選單（Show in Explorer 還是 Finder，問一次就記著）、Wiki 子分頁的模型選單。
+    const [onWindows, current] = await Promise.all([fileList.menu !== '' && isWindows($), isWikiShown ? currentModel($) : ('' as const)])
+    // 這段對話送過的頁面。
+    const sent = sentWiki.conversation === session ? sentWiki.pages : []
     const sub = shownSub(activeTab, subs)
     const tree = renderPanel(
       $.ui.resolve(e),

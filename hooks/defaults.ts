@@ -97,8 +97,8 @@ export const EMPTY_DIFF: DiffPaneView = {
 // 關掉 log 分頁打開的 commit；選範圍也一起結束。
 export const NO_COMMIT: Partial<LogView> = { opened: [], files: null, commitError: '', isPicking: false, rangeStart: '' }
 
-// 切換／刪除分支、abort／continue 失敗的訊息和待確認的切換、刪除、abort：換分頁、換 repo 時清掉。
 // 待確認的刪除、切換、捨棄：DELETE_ARM_MS 後收回。
 export const NO_ARMED = { deleteArmed: null, switchArmed: '', fileArmed: '' } as const
 
+// Git 分頁的錯誤訊息和待確認的按鈕（連 abort）：換分頁、換 repo 時清掉。
 export const NO_MESSAGES = { ...NO_ARMED, branchError: '', opError: '', isAbortArmed: false, fileError: '' } as const

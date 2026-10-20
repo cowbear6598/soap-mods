@@ -7,7 +7,7 @@ import type { TabBody, TabContext } from './context'
 
 // Wiki 子分頁：.soap/wiki 底下的 Markdown 頁面，照資料夾畫成樹（資料夾一列，點了開合，預設打開），一頁一列：最左邊勾選框，
 // 最下面 Send（s）把勾了的送給 Claude、Uncheck all 取消全部勾選；點名稱在分頁裡看內容，最右邊 @ 把路徑插進聊天框、垃圾桶按兩次才刪。
-// 最上面 Summary Conversation（旁邊選問哪個模型：Current 是對話目前的模型）請 Claude 把這段對話值得留下的整理成草稿；
+// 最上面 Summary Conversation（旁邊選問哪個模型：Opus／Sonnet／Haiku；還沒選過是對話目前的那種）請 Claude 把這段對話值得留下的整理成草稿；
 // /soap-mods:wiki 跟 Claude 討論後寫的草稿也在這裡。草稿列在頁面上面，照它寫到的頁面路徑跟頁面一樣畫成樹，右邊 @ 插草稿檔的路徑、
 // 垃圾桶按兩次丟掉；點開看內容（改既有頁面的看差異，搬移、刪除看那頁現在的內容），
 // Accept 才照草稿改 wiki、Discard 丟掉。
@@ -130,7 +130,6 @@ function wikiRow(ctx: TabContext, row: TreeRow) {
   )
 }
 
-// 草稿做什麼：新頁面、改既有頁面、搬移、刪除。
 const DRAFT_BADGES = {
   new: { label: 'new page', color: 'success' },
   edit: { label: 'edit', color: 'warning' },
@@ -165,8 +164,9 @@ function draftRow(ctx: TabContext, row: DraftTreeRow) {
   })
 }
 
-function pageView({ w, d, a }: TabContext) {
-  const { Box, Markdown, Text } = w
+function pageView(ctx: TabContext) {
+  const { w, d, a } = ctx
+  const { Box, Text } = w
   const s = d.wiki
 
   return (
@@ -176,14 +176,22 @@ function pageView({ w, d, a }: TabContext) {
         <Text bold wrap="truncate-start">{s.open}</Text>
       </Box>
       {s.readError !== '' && <Text color="error">{s.readError}</Text>}
-      {s.readError === '' && (s.text === '' ? <Text dimColor>Empty page.</Text> : <Markdown text={s.text} />)}
+      {pageText(ctx)}
       {s.isTruncated && <Text dimColor>Page is too long; showing only the beginning.</Text>}
     </Box>
   )
 }
 
+function pageText({ w, d }: TabContext) {
+  const { Markdown, Text } = w
+  const s = d.wiki
+
+  return s.readError === '' && (s.text === '' ? <Text dimColor>Empty page.</Text> : <Markdown text={s.text} />)
+}
+
 // 打開的草稿的內容：寫整頁的看 Markdown 或差異；搬移、刪除先說會怎樣，底下是那頁現在的內容。
-function draftBody({ w, d }: TabContext, draft: WikiDraft) {
+function draftBody(ctx: TabContext, draft: WikiDraft) {
+  const { w, d } = ctx
   const { Box, Markdown, Text } = w
   const s = d.wiki
   if (draft.kind === 'write') {
@@ -201,7 +209,7 @@ function draftBody({ w, d }: TabContext, draft: WikiDraft) {
   return (
     <Box flexDirection="column" gap={1}>
       {intro}
-      {s.readError === '' && (s.text === '' ? <Text dimColor>Empty page.</Text> : <Markdown text={s.text} />)}
+      {pageText(ctx)}
     </Box>
   )
 }

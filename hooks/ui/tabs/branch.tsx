@@ -1,6 +1,6 @@
 import type { GitBranch } from '../../../types'
 import { BRANCH_ROW_LIMIT, BRANCH_TREE_LIMIT, COPIED_TINT, FOLDER_COLOR, SWITCH_ARMED_HINT } from '../../config'
-import { filterBranches } from '../../git/parse'
+import { branchId, filterBranches } from '../../git/parse'
 import { hasQuery } from '../../search'
 import { pathTree, treeRows } from '../../tree'
 import type { TabBody } from './context'
@@ -25,7 +25,7 @@ export const branchTab: TabBody = ({ w, d, a }) => {
   // 目前分支的 ● 落在縮排的空位裡，名稱跟其他分支對齊；點它不做事。
   // 右邊的複製圖示按了複製分支名稱（遠端的含 origin/），變成綠底打勾一下再換回來；log 圖示按了到 log 分頁看這個分支；不是目前分支的都多一個垃圾桶（遠端的會刪掉遠端上的分支），按了換成打勾。
   const branchRow = (b: GitBranch, label = b.name, depth = 0) => {
-    const id = `${b.isRemote ? 'r' : 'l'}:${b.name}`
+    const id = branchId(b)
     const isCopied = v.copied === b.name
     const copyButton = w.iconButton(
       `copy:${id}`,
@@ -36,7 +36,7 @@ export const branchTab: TabBody = ({ w, d, a }) => {
       isCopied ? COPIED_TINT : undefined,
     )
     const logButton = w.iconButton(`log:${id}`, 'log', 'Log', false, () => a.viewLog(b))
-    const armed = v.deleteArmed?.name === b.name && v.deleteArmed.isRemote === b.isRemote ? v.deleteArmed : null
+    const armed = v.deleteArmed !== null && branchId(v.deleteArmed) === id ? v.deleteArmed : null
     const deleteButton =
       !b.isCurrent &&
       w.deleteButton(`delete:${id}`, armed !== null, () => a.deleteBranch(b.name, b.isRemote), armed?.isForce === true ? 'Force delete' : 'Confirm')

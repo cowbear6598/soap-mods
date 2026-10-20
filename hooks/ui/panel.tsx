@@ -1,6 +1,5 @@
 // Soap Panel 本體：最上面的 Tab、repo 列（Git）、子分頁（SUB_TABS 有列的 Tab），中間是分頁內容，最底下是用量。
 // 打開了衝突檔案、檔案的差異或 Files 分頁的檔案時，上面整塊換成合併（mergeView）、差異（diffView）或內容（fileView），Back 回來。
-// 加分頁：config.ts 的 TABS 加一筆，這裡的 TAB_BODIES 加它的內容；加子分頁：config.ts 的 SUB_TABS 加一筆，那個 Tab 的 *_SUB_TAB_BODIES 加內容。
 
 import type { GitSubTab, SubTabs, TabId } from '../../types'
 import { DANGER, SUB_TABS, TABS, type Tint, hasSubTabs } from '../config'
@@ -121,7 +120,6 @@ export function renderPanel(drawUi: Ui, d: PanelData, a: Actions, press: Press) 
           {w.iconBar('tab', TABS, d.tab, id => a.selectTab(id))}
           {divider(w)}
           {isGit && repoBar(ctx)}
-          {/* Git 有衝突時 conflict 變紅。 */}
           {isGit ? subTabBar(ctx, 'git', d.view.files.some(isConflict) ? { conflict: DANGER } : {}) : hasSubTabs(d.tab) && subTabBar(ctx, d.tab)}
         </Box>
         {/* 分頁內容左右各空一格，不貼著面板邊。 */}

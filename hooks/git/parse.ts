@@ -31,7 +31,7 @@ export function toHunks(diff: string): { source: string; isTruncated: boolean } 
 }
 
 // 只要 ref 本身的欄位：不拿 commit 的日期、subject，git 就不用每次 refresh 都去讀上千個 commit。
-export const BRANCH_FORMAT = ['%(HEAD)', '%(refname)', '%(refname:short)', '%(upstream:short)', '%(upstream:track)'].join('%09')
+export const BRANCH_FORMAT = ['%(HEAD)', '%(refname)', '%(refname:lstrip=2)', '%(upstream:short)', '%(upstream:track)'].join('%09')
 
 // 分支上千個時每次 refresh 都要排；共用一個 Collator 比每次 localeCompare 快很多，順序一樣。
 const byName = new Intl.Collator().compare
@@ -65,6 +65,9 @@ export function parseBranches(out: string): GitBranch[] {
 
 /** Whether a path can go into a prompt as is: no backtick, line break or other control character to smuggle text in. */
 export const isPromptSafePath = (path: string) => !/[`\u0000-\u001f\u007f]/.test(path)
+
+/** A branch's id in the branch tab's keys and armed buttons: a local and a remote branch can share a name. */
+export const branchId = (b: Pick<GitBranch, 'name' | 'isRemote'>) => `${b.isRemote ? 'r' : 'l'}:${b.name}`
 
 /** A branch's full ref: a local and a remote branch can share a name. */
 export const branchRef = (b: GitBranch) => `refs/${b.isRemote ? 'remotes' : 'heads'}/${b.name}`
@@ -100,8 +103,12 @@ export function isConflict(file: GitFile): boolean {
   return file.x === 'U' || file.y === 'U' || (file.x === 'A' && file.y === 'A') || (file.x === 'D' && file.y === 'D')
 }
 
-/** Whether the diff tab's trash can delete a file: it is on disk (not deleted) and not a conflict. */
-export const canDelete = (file: GitFile) => !isConflict(file) && letterKind(file.x) !== 'deleted' && letterKind(file.y) !== 'deleted'
+/**
+ * Whether the diff tab's trash can delete a file: it is on disk (not deleted), not a conflict, and not
+ * an untracked nested repo (listed as `sub/`), whose `.git` and uncommitted work would go with it.
+ */
+export const canDelete = (file: GitFile) =>
+  !isConflict(file) && !file.path.endsWith('/') && letterKind(file.x) !== 'deleted' && letterKind(file.y) !== 'deleted'
 
 /** Whether the diff tab's rollback can take a file back to HEAD: HEAD has it (not untracked or newly added), not a conflict, nor a rename or copy (its source path is not kept). */
 export function canRollback(file: GitFile): boolean {

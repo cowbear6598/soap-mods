@@ -1,6 +1,7 @@
 import type { DbConnection, DbResult, DbTable } from '../../../types'
 import { DB_CELL_WIDTH, DB_TABLE_LIMIT } from '../../config'
 import { connectionName, tableKey } from '../../db/sql'
+import { truncate } from '../../text'
 import { backButton } from '../stepBar'
 import type { TabBody, TabContext } from './context'
 
@@ -48,12 +49,10 @@ function connectionList({ w, d, a }: TabContext) {
   )
 }
 
-// 一格：換行、Tab 換成空白，| 跳脫（Markdown 表格的欄線），太長截成「…」。
+// 一格：換行、Tab 換成空白，太長截成「…」。跳脫 |（表格的欄線）和連結、圖片、強調、HTML 的符號：
+// 資料庫裡的值要原樣畫出來，不能變成會去抓網址的圖片或連結。
 function cell(value: string) {
-  const flat = value.replace(/[\r\n\t]+/g, ' ')
-  const cut = flat.length > DB_CELL_WIDTH ? `${flat.slice(0, DB_CELL_WIDTH - 1)}…` : flat
-
-  return cut.replace(/\\/g, '\\\\').replace(/\|/g, '\\|') || ' '
+  return truncate(value.replace(/[\r\n\t]+/g, ' '), DB_CELL_WIDTH).replace(/[\\|[\]()!<>*_`~]/g, '\\$&') || ' '
 }
 
 // 查詢結果畫成一張 Markdown 表格：上千個格子一格一個元素太重，一個 Markdown 就好。

@@ -3,7 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import { DB_STORE_KEY } from '../../hooks/config'
 import { toHex } from '../../hooks/db/secret'
-import { type TestOn, fail, mountPane, ok, stubPanel, stubStore } from '../test-fixtures'
+import { type Pane, type TestOn, fail, mountPane, ok, stubPanel, stubStore } from '../test-fixtures'
 
 const PASSWORD = 'S3crét;"pw密'
 const CONN_STRING = `Server=db.local;Database=shop;User Id=reader;Password="${PASSWORD.replace(/"/g, '""')}";TrustServerCertificate=True`
@@ -18,7 +18,10 @@ type Run = { argv: readonly string[]; init?: ProcessRunInit }
 
 // DB 分頁要的引擎回應：$.store 放在記憶體、Keychain（macOS）或 DPAPI（Windows），sqlcmd 照查詢回固定的表格。
 // sqlcmd 給 false 是沒裝（跑不起來）。記下每個跑過的程序。
-function dbWorld(on: TestOn, { isWindows = false, hasSqlcmd = true }: { isWindows?: boolean; hasSqlcmd?: boolean } = {}) {
+function dbWorld(
+  on: TestOn,
+  { isWindows = false, hasSqlcmd = true, tablesOut = TABLES_OUT }: { isWindows?: boolean; hasSqlcmd?: boolean; tablesOut?: string } = {},
+) {
   const store: Record<string, unknown> = {}
   const keychain: Record<string, string> = {}
   const runs: Run[] = []
@@ -61,7 +64,7 @@ function dbWorld(on: TestOn, { isWindows = false, hasSqlcmd = true }: { isWindow
       // 引擎跑不起來的程序：$.process.run 被拒，訊息有 ENOENT。
       if (!hasSqlcmd) return { deny: 'spawn sqlcmd ENOENT' }
       const query = e.argv.at(-1) ?? ''
-      if (query.includes('INFORMATION_SCHEMA.TABLES')) return ok(TABLES_OUT)
+      if (query.includes('INFORMATION_SCHEMA.TABLES')) return ok(tablesOut)
       if (query.includes('INFORMATION_SCHEMA.COLUMNS')) return ok(COLUMNS_OUT)
 
       return ok(ROWS_OUT)
@@ -77,14 +80,14 @@ function dbWorld(on: TestOn, { isWindows = false, hasSqlcmd = true }: { isWindow
 }
 
 // 打開 DB 分頁、貼上連線字串存好，回傳存好的那筆的 id。
-async function addConnection(ui: Awaited<ReturnType<typeof mountPane>>, world: ReturnType<typeof dbWorld>) {
+async function addConnection(ui: Pane, world: ReturnType<typeof dbWorld>) {
   await ui.press({ key: 'tab:db' })
   await ui.input({ key: 'db:add', text: CONN_STRING })
 
   return world.saved()[0]?.id ?? ''
 }
 
-const markdown = async (ui: Awaited<ReturnType<typeof mountPane>>) =>
+const markdown = async (ui: Pane) =>
   (await ui.findAll({ type: 'Markdown' })).map(m => String(m.props.text)).join('\n')
 
 test('on macOS a pasted connection string is saved with its password in the Keychain, never in the store or on a command line', async ($, on) => {
@@ -106,12 +109,43 @@ test('on macOS a pasted connection string is saved with its password in the Keyc
   await ui.unmount()
 })
 
+test('ADO.NET and ODBC spellings, quoted and braced passwords all reach sqlcmd as written', async ($, on) => {
+  const cases = [
+    {
+      text: 'Server=tcp:db.local,1433;Initial Catalog=shop;User ID=reader;Password="p;w""d";TrustServerCertificate=True;',
+      name: 'shop @ tcp:db.local,1433',
+      args: ['-S', 'tcp:db.local,1433', '-d', 'shop', '-U', 'reader', '-C'],
+      password: 'p;w"d',
+    },
+    { text: 'Data Source=db\\SQL;Database=shop;UID=sa;PWD={a}}b}', name: 'shop @ db\\SQL', args: ['-S', 'db\\SQL', '-d', 'shop', '-U', 'sa'], password: 'a}b' },
+  ]
+  const world = dbWorld(on)
+  const ui = await mountPane($, 'desktop')
+  await ui.press({ key: 'tab:db' })
+  for (const [i, c] of cases.entries()) {
+    await ui.input({ key: 'db:add', text: c.text })
+    expect(await ui.find({ type: 'Text', text: c.name })).toBeDefined()
+    await ui.press({ key: `db:item:${world.saved()[i]?.id}` })
+    const run = world.sqlcmds().at(-1)
+    expect(run?.argv.join(' ')).toContain(c.args.join(' '))
+    if (!c.args.includes('-C')) expect(run?.argv).not.toContain('-C')
+    expect(run?.init?.env?.SQLCMDPASSWORD).toBe(c.password)
+    await ui.press({ key: 'db:back' })
+  }
+  await ui.unmount()
+})
+
 test('a bad connection string is refused with the reason, and nothing is saved', async ($, on) => {
   const world = dbWorld(on)
   const ui = await mountPane($, 'desktop')
   await ui.press({ key: 'tab:db' })
-  await ui.input({ key: 'db:add', text: 'Database=shop;User Id=x;Password=topsecret' })
-  expect(await ui.find({ type: 'Text', text: 'The connection string has no Server (or Data Source).' })).toBeDefined()
+  for (const [text, reason] of [
+    ['Database=shop;User Id=x;Password=topsecret', 'The connection string has no Server (or Data Source).'],
+    ['Server=db;Password=topsecret', 'The connection string has no User Id, and no Integrated Security.'],
+  ] as const) {
+    await ui.input({ key: 'db:add', text })
+    expect(await ui.find({ type: 'Text', text: reason })).toBeDefined()
+  }
   expect(world.saved()).toEqual([])
   expect(world.runs.some(r => r.argv[0] === 'security')).toBe(false)
   await ui.unmount()
@@ -152,15 +186,57 @@ test('anything but one SELECT is refused before sqlcmd runs', async ($, on) => {
   const ui = await mountPane($, 'desktop')
   const id = await addConnection(ui, world)
   await ui.press({ key: `db:item:${id}` })
-  const before = world.sqlcmds().length
 
-  await ui.input({ key: 'db:query', text: 'DELETE FROM dbo.orders' })
-  expect(await ui.find({ type: 'Text', text: 'Only SELECT runs here.' })).toBeDefined()
-  await ui.input({ key: 'db:query', text: 'SELECT 1; DROP TABLE dbo.orders' })
-  expect(await ui.find({ type: 'Text', text: 'Only one statement at a time.' })).toBeDefined()
-  await ui.input({ key: 'db:query', text: 'SELECT * INTO copy FROM dbo.orders' })
-  expect(await ui.find({ type: 'Text', text: 'INTO is not allowed: only SELECT runs here.' })).toBeDefined()
-  expect(world.sqlcmds()).toHaveLength(before)
+  const SQLCMD_BLOCKED = 'sqlcmd commands and $( ) are not allowed: only SELECT runs here.'
+  for (const [query, error] of [
+    ['   ', 'Type a SELECT to run.'],
+    ['DELETE FROM dbo.orders', 'Only SELECT runs here.'],
+    ['EXEC sp_who', 'Only SELECT runs here.'],
+    ['SELECT 1; DROP TABLE dbo.orders', 'Only one statement at a time.'],
+    ['SELECT * INTO copy FROM dbo.orders', 'INTO is not allowed: only SELECT runs here.'],
+    ['WITH x AS (SELECT 1 AS n) DELETE FROM dbo.orders', 'DELETE is not allowed: only SELECT runs here.'],
+    ["SELECT * FROM OPENROWSET('SQLNCLI', 'x', 'y')", 'OPENROWSET is not allowed: only SELECT runs here.'],
+    [':setvar x 1\nSELECT 1', SQLCMD_BLOCKED],
+    ['SELECT 1\n!!dir', SQLCMD_BLOCKED],
+    ["SELECT '$(x)' AS v", SQLCMD_BLOCKED],
+  ] as const) {
+    const before = world.sqlcmds().length
+    await ui.input({ key: 'db:query', text: query })
+    expect(await ui.find({ type: 'Text', text: error })).toBeDefined()
+    expect(world.sqlcmds()).toHaveLength(before)
+  }
+  await ui.unmount()
+})
+
+test('a SELECT runs even with write keywords inside strings, [names] or comments', async ($, on) => {
+  const world = dbWorld(on)
+  const ui = await mountPane($, 'desktop')
+  const id = await addConnection(ui, world)
+  await ui.press({ key: `db:item:${id}` })
+
+  for (const query of [
+    'select top 5 id from dbo.orders;',
+    'WITH x AS (SELECT 1 AS n) SELECT n FROM x',
+    "SELECT 'DELETE FROM a; DROP TABLE b' AS note, [update] FROM t -- insert here\n",
+    'SELECT /* exec */ 1',
+  ]) {
+    await ui.input({ key: 'db:query', text: query })
+    expect(world.sqlcmds().at(-1)?.argv.at(-1)).toBe(`SET NOCOUNT ON;\n${query}`)
+  }
+  await ui.unmount()
+})
+
+test("a table name with ] and ' is bracketed and quoted in the preview and columns queries", async ($, on) => {
+  const world = dbWorld(on, { tablesOut: "TABLE_SCHEMA\tTABLE_NAME\tTABLE_TYPE\n--\t--\t--\ndbo\to]rd'ers\tBASE TABLE\n" })
+  const ui = await mountPane($, 'desktop')
+  const id = await addConnection(ui, world)
+  await ui.press({ key: `db:item:${id}` })
+
+  await ui.press({ key: "db:table:dbo.o]rd'ers" })
+  expect((await ui.find({ key: 'db:query' }))?.props.value).toBe("SELECT TOP 100 * FROM [dbo].[o]]rd'ers]")
+  const queries = world.sqlcmds().map(r => r.argv.at(-1) ?? '')
+  expect(queries.some(q => q.endsWith("SELECT TOP 100 * FROM [dbo].[o]]rd'ers]"))).toBe(true)
+  expect(queries.some(q => q.includes("TABLE_NAME = N'o]rd''ers'"))).toBe(true)
   await ui.unmount()
 })
 

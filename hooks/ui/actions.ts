@@ -97,7 +97,6 @@ export type Actions = {
   // wiki：path 是 .soap/wiki 底下的頁面，id 是 .soap/wiki/.drafts 底下的草稿檔名。
   // 勾選框：選要 Send 的頁面（存在 mod 的 store，依 session 資料夾分開，下次開還勾著）。
   toggleWikiPage: (path: string) => unknown
-  // 取消全部勾選。
   uncheckAllWikiPages: () => unknown
   // 把 session 資料夾底下的路徑當 @ 引用插進聊天框的游標位置。
   mentionPath: (path: string) => unknown

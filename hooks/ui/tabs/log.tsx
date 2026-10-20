@@ -63,7 +63,7 @@ function commitFiles({ w, d, a }: TabContext, lg: LogView) {
 }
 
 // 一筆 commit 一列：短 sha、作者、subject、多久前；作者和時間固定寬，subject 吃掉剩下的寬度、太長截斷，
-// 一欄一欄對齊（桌面版字寬不一，每欄都是固定寬的 Box）。還沒 push 的在 sha 前面標黃色 ↑（落在縮排那一格裡）。
+// 一欄一欄對齊（桌面版字寬不一，每欄都是固定寬的 Box）。還沒 push 的在 sha 前面標黃色 ↑（sha 前面一格寬的欄）。
 // 搜尋框右邊的 Select range：按了之後點一筆當起點（綠色粗體，再點一次取消）、再點一筆當終點，兩筆之間（含）一起打開。
 function commitList({ w, d, a }: TabContext, lg: LogView) {
   const { Box, Button, Text } = w

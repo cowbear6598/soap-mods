@@ -110,6 +110,81 @@ test('the Spec tab lists the plans newest first, opens one to its Description, G
   await ui.unmount()
 })
 
+// plan skill 寫出來的各種寫法，和各種寫錯的：打開後畫出來的欄位、紅字列出的問題。
+const PLAN_CASES: { name: string; text: string; meta?: string; shown: string[]; problems: string[] }[] = [
+  {
+    name: 'quoted',
+    text: `branch: "feature/PROJ-123-login"
+issue-number: "PROJ-123"
+description: >
+  Users can't sign in with SSO,
+  so support tickets pile up.
+
+  Adding it removes the manual reset flow.
+goals:
+  - SSO button on the login page signs the user in
+  - 'Failed sign-in shows the provider''s message'
+constraints: []
+related:
+  - src/login.ts # the entry point
+verify:
+  - "npm test -- src/login.spec.ts"
+`,
+    meta: 'PROJ-123 · feature/PROJ-123-login',
+    shown: [
+      "Users can't sign in with SSO, so support tickets pile up.\nAdding it removes the manual reset flow.",
+      "- SSO button on the login page signs the user in\n- Failed sign-in shows the provider's message",
+      '- `src/login.ts`',
+      '- `npm test -- src/login.spec.ts`',
+    ],
+    problems: [],
+  },
+  {
+    name: 'crlf',
+    text: ['branch: long', '  line', 'description: |-', '  one', '    two', 'goals: [x, "y, z"]', 'constraints: []', 'related:', '- first', '  continued', 'verify: []', ''].join('\r\n'),
+    meta: 'long line',
+    shown: ['one\n  two', '- x\n- y, z', '- `first continued`'],
+    problems: [],
+  },
+  {
+    name: 'broken',
+    text: ['description: ""', 'goal:', '  - x', 'related: src/a.ts', 'verify:', 'extra: 1', '  - oops: [', 'what is this'].join('\n'),
+    shown: [],
+    problems: [
+      'line 8: expected "key: value", got "what is this"',
+      'missing "goals"',
+      'missing "constraints"',
+      '"description" must be a non-empty string',
+      '"related" must be a list (use [] when empty)',
+      '"verify" must be a list (use [] when empty)',
+      'use "goals", not "goal"',
+      'unknown key "extra"',
+    ],
+  },
+  {
+    name: 'repeated',
+    text: ['description: x', 'description: y', 'goals:', '  -', 'constraints: []', 'related: []', 'verify: []'].join('\n'),
+    shown: [],
+    problems: ['line 2: "description" appears twice', '"goals" has an empty item'],
+  },
+]
+
+test('an opened plan reads quotes, comments, folded and | blocks, [a, b] lists and CRLF, and lists every problem in red', async ($, on) => {
+  tasks(on, { folders: PLAN_CASES.map(c => c.name), plans: Object.fromEntries(PLAN_CASES.map(c => [`${c.name}/plan.yaml`, { text: c.text, mtimeMs: 1 }])) })
+
+  const ui = await mountPane($)
+  await ui.press({ key: 'tab:spec' })
+  for (const c of PLAN_CASES) {
+    await ui.press({ key: `spec:item:${c.name}` })
+    if (c.meta !== undefined) expect(await ui.find({ type: 'Text', text: c.meta })).toBeDefined()
+    for (const text of c.shown) expect(await ui.find({ type: 'Markdown', text })).toBeDefined()
+    const problems = (await ui.findAll({ type: 'Text', text: /^! / })).map(t => t.text)
+    expect(problems).toEqual(c.problems.map(p => `! ${p}`))
+    await ui.press({ key: 'spec:back' })
+  }
+  await ui.unmount()
+})
+
 test('the trash button of a spec asks with a check first, then deletes its whole folder; a failed delete keeps the row and says why', async ($, on) => {
   const clock = mock.clock(on)
   const state = {

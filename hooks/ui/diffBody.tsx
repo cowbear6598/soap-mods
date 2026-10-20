@@ -15,12 +15,15 @@ const ROW_STYLE = {
 } as const
 
 // 面板每次重畫都會走到這裡：同一份差異只解析一次（逐對跑字詞 diff 不便宜）。
-let parsed: { source: string; rows: DiffRow[]; width: number } = { source: '', rows: [], width: 1 }
-function rowsOf(source: string) {
-  if (parsed.source !== source) {
+// 行數太多的只切成段落（hunks）交給 Code：內容行開頭是空白、+、-、\，只有段落標頭是 @@，在那裡切開。
+let parsed: { source: string; hunks: string[] | null; rows: DiffRow[]; width: number } = { source: '', hunks: null, rows: [], width: 1 }
+function parse(source: string) {
+  if (parsed.source === source) return parsed
+  if (source.split('\n').length > WORD_DIFF_MAX_ROWS) parsed = { source, hunks: source.split(/\n(?=@@)/), rows: [], width: 1 }
+  else {
     const rows = parseDiffRows(source)
     const width = String(Math.max(0, ...rows.map(r => (r.kind === 'hunk' ? 0 : r.line)))).length
-    parsed = { source, rows, width }
+    parsed = { source, hunks: null, rows, width }
   }
 
   return parsed
@@ -41,15 +44,14 @@ export function diffBody(ui: Pick<Ui, 'Box' | 'Code' | 'Text'>, source: string, 
       {body}
     </Box>
   )
-  if (source.split('\n').length > WORD_DIFF_MAX_ROWS) {
-    // 內容行開頭是空白、+、-、\，只有段落標頭是 @@，在那裡切開。
+  const { hunks, rows, width } = parse(source)
+  if (hunks !== null) {
     return (
       <Box key="diff" flexDirection="column">
-        {source.split(/\n(?=@@)/).map((h, i) => hunk(i, <Code source={h} format="diff" path={path} />))}
+        {hunks.map((h, i) => hunk(i, <Code source={h} format="diff" path={path} />))}
       </Box>
     )
   }
-  const { rows, width } = rowsOf(source)
   const mono = isTerminal ? {} : { mono: true }
 
   return (

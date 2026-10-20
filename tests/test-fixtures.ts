@@ -5,7 +5,7 @@ import type { test } from 'claude-code/testing'
 import type { ScanProc, ScanResult } from '../types'
 
 type TestBody = Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>
-export type TestEngine = Parameters<TestBody>[0]
+type TestEngine = Parameters<TestBody>[0]
 export type TestOn = Parameters<TestBody>[1]
 
 // ───── 面板測試的 helper ─────
@@ -27,6 +27,8 @@ export async function mountPane($: TestEngine, surface: 'terminal' | 'desktop' =
 
   return ui
 }
+
+export type Pane = Awaited<ReturnType<typeof mountPane>>
 
 // 使用者打 /soap-mods:open 打開面板。
 export const openPanel = ($: TestEngine) =>
@@ -59,7 +61,7 @@ export function stubStore(on: TestOn, store: Record<string, unknown>) {
 }
 
 // Claude 的一個回合結束：面板在背景重讀看得到的東西，重畫一次等它讀完、畫好。要先 stubPanel。
-export async function endTurn($: TestEngine, ui: Awaited<ReturnType<typeof mountPane>>) {
+export async function endTurn($: TestEngine, ui: Pane) {
   await $.turn.complete({ answer: '', reason: 'answer', durationMs: 0, isAborted: false, turnId: 'turn' })
   await ui.redraw()
 }

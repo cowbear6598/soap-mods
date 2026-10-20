@@ -1,5 +1,3 @@
-// 面板最底下的用量：左邊 5h、右邊 weekly，各占一半。
-
 import { ACTIVE_BG, DANGER, GOOD, USAGE_BAR_EMPTY, USAGE_BAR_FULL, USAGE_BAR_PX, USAGE_WINDOWS, WARN } from '../config'
 import type { UsageReading } from './actions'
 import { stretchedSvg } from './svg'

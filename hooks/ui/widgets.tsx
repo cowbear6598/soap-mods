@@ -5,6 +5,7 @@ import type { RenderChildren } from 'claude-code'
 
 import type { FileKind } from '../../types'
 import { splitPath } from '../git/parse'
+import { truncate } from '../text'
 import type { IconName, Tint } from '../config'
 import {
   ACTIVE_BG,
@@ -90,7 +91,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
 
   const rollbackButton = (key: string, isArmed: boolean, action: () => unknown) => armedButton(key, 'rollback', 'Rollback', isArmed, action)
 
-  // 整行都能點的列表項目；indent 是名稱前面空幾格（預設 2 給列表項目，標題列給 0）。
+  // 整行都能點的列表項目；indent 是名稱前面空幾格（預設 2；不縮排的列：標題、Files、log、DB、wiki 頁面給 0）。
   // 桌面版：內容照常排，上面疊一顆透明按鈕。按鈕本身是 fit-content，靠一長串不換行空白撐開；
   // 包它的那層比整行寬很多、超出的部分被裁掉，按鈕就不會被壓到整行寬而在最右邊畫出「…」，
   // 看得到的 hover 亮底剛好是整行。
@@ -115,14 +116,14 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
   const nbsp = (text: string) => text.replace(/ /g, NBSP)
 
   // 名稱剛好 width 格：太長截成「…」，太短補空白。
-  const fit = (text: string, width: number) => (text.length > width ? `${text.slice(0, width - 1)}…` : text.padEnd(width))
+  const fit = (text: string, width: number) => truncate(text, width).padEnd(width)
 
   // 固定 width 格寬的一欄字（log 的 sha、作者、時間）。桌面版字寬不一，是固定寬的 Box、太長截尾；
   // 終端機是 Text 補空白（能放進按鈕裡），太長截成「…」。空白不上色：焦點反白整顆按鈕時，上了色的空白會變成一塊色塊。
   const cell = (key: string, text: string, width: number, style: { color?: string; isDim?: boolean; isEnd?: boolean } = {}) => {
     const shown = (
       <Text key={key} color={style.color} dimColor={style.isDim} wrap={isTerminal ? undefined : 'truncate-end'}>
-        {isTerminal ? nbsp(text.length > width ? fit(text, width) : text) : text}
+        {isTerminal ? nbsp(truncate(text, width)) : text}
       </Text>
     )
     if (!isTerminal) {
@@ -143,7 +144,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
       const hasDetail = row.detail !== undefined
       const labelWidth = hasDetail ? undefined : row.labelWidth
       const grows = labelWidth === undefined && (row.isTruncated === true || !row.rest)
-      const fills = labelWidth !== undefined || row.isTruncated === true || !row.rest
+      const fills = labelWidth !== undefined || grows
       const shown = hasDetail && row.labelWidth !== undefined ? fit(row.label, row.labelWidth) : row.label
       const onPress = press(row.onPress, row.ringKey)
       // 按鈕本身吃不到顏色、粗體，名稱包一層 Text（資料夾列的 FOLDER_COLOR、標題列的粗體）。
@@ -356,7 +357,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
     )
   }
 
-  // branch、log 分頁最上面的搜尋框。手機版沒有 Input，就不畫。邊打邊過濾；桌面版拔不掉框旁邊的 submit 按鈕，
+  // branch、log、Files 分頁最上面的搜尋框。手機版沒有 Input，就不畫。邊打邊過濾；桌面版拔不掉框旁邊的 submit 按鈕，
   // 就讓它（和 Enter）清空搜尋（onInput('')）。框不能設寬度、撐不滿，所以整組水平置中。
   // trailing：同一行最右邊的按鈕（branch 的 Fetch／Pull），搜尋框靠左、中間一條直線隔開 Clear；沒有搜尋框時只剩它，靠右。
   // 終端機的框旁邊沒有 submit 按鈕（只在有焦點時畫一個「↵ Clear」提示），自己補一顆 [ Clear ]，跟桌面版一樣。
@@ -395,7 +396,6 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
     )
   }
 
-  // 項目之間插入直線分隔。
   const withDividers = (items: RenderChildren[], prefix: string) =>
     items.flatMap((item, i) => (i === 0 ? [item] : [<Text key={`${prefix}:div:${i}`} dimColor>│</Text>, item]))
 
@@ -405,10 +405,10 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
     prefix: string,
     items: { id: T; label: string; icon: IconName }[],
     active: T,
-    select: (id: T) => unknown,
+    onSelect: (id: T) => unknown,
     tints: Partial<Record<T, Tint>> = {},
   ) => {
-    const buttons = items.map(t => iconButton(`${prefix}:${t.id}`, t.icon, t.label, t.id === active, () => select(t.id), tints[t.id]))
+    const buttons = items.map(t => iconButton(`${prefix}:${t.id}`, t.icon, t.label, t.id === active, () => onSelect(t.id), tints[t.id]))
 
     return (
       <Box gap={isTerminal ? 2 : 1} alignItems="center" justifyContent="center" width="100%">

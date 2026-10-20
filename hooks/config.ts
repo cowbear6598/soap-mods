@@ -93,7 +93,7 @@ export const MENU_WIDTH = 26
 // 用不換行空白（ ），一般空白會被吃掉。
 export const ICON_BUTTON_LABEL = ' '.repeat(10)
 // 一長串字元要多長才比任何面板都寬（超出的部分被裁掉）：整行按鈕的 label、終端機的分隔線和用量 bar。
-export const OVERFLOW_CHARS = 400
+const OVERFLOW_CHARS = 400
 // 整行按鈕的 label：比任何面板都寬，超出整行的部分被裁掉。
 export const ROW_BUTTON_LABEL = ' '.repeat(OVERFLOW_CHARS)
 // 包住那顆按鈕的那層有多寬（欄數；百分比最多 100%，不夠用）：比按鈕寬，按鈕才不會被壓窄而在最右邊畫出「…」。
@@ -116,7 +116,7 @@ export const GOOD: Tint = { theme: 'success', hex: '#4eba65' }
 export const WARN: Tint = { theme: 'warning', hex: '#d4a72c' }
 // 危險／不好的紅色：剩餘用量低、停止鈕、有衝突的子分頁。
 export const DANGER: Tint = { theme: 'error', hex: '#e5534b' }
-// 分支的打勾：紅底白勾（終端機是按鈕前的紅色方塊），一看就知道再按會刪。
+// 要按兩次的按鈕的打勾：紅底白勾（終端機是紅色方塊加紅字），一看就知道再按會做。
 export const ARMED_TINT: Tint = { theme: DANGER.theme, hex: ACTIVE_ICON, background: DANGER.hex }
 // 分支名稱複製好了：綠底白勾，COPIED_MS 後換回複製圖示。
 export const COPIED_TINT: Tint = { theme: GOOD.theme, hex: ACTIVE_ICON, background: GOOD.hex }
@@ -228,7 +228,7 @@ export const GIT_REFRESH_MS = 5_000
 // 服務要一點時間才會 LISTEN）。這段時間內掛掉就算重跑失敗，在面板上提示。
 export const RESTART_GAP_MS = 500
 export const RESTART_CHECK_MS = [2_000, 5_000, 15_000, 30_000]
-// 分支、Spec 的垃圾桶換成打勾後，或分支那列標成再按一次切換後，多久沒再按就收回去。
+// 要按兩次的按鈕（刪除、切換分支、rollback、abort）按了一次後，多久沒再按就收回去。
 export const DELETE_ARM_MS = 3_000
 // 分支按了一次、等著再按一次切換時，那列後面寫的提示。
 export const SWITCH_ARMED_HINT = 'press again to switch'

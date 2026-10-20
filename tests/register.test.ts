@@ -1,5 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
+import type { ScanResult } from '../types'
 import { DANGER, GOOD, SWITCH_ARMED_HINT, WARN } from '../hooks/config'
 import {
   CONFLICTED,
@@ -10,6 +11,7 @@ import {
   MAC_SCAN_OUT,
   ROOT,
   SCAN,
+  type Pane,
   type TestOn,
   branchLine,
   endTurn,
@@ -20,6 +22,7 @@ import {
   ok,
   openPanel,
   posix,
+  proc,
   stubPanel,
   waitFor,
 } from './test-fixtures'
@@ -140,6 +143,41 @@ test('pressing a changed file shows its diff over the tabs, Next/Previous step t
   await ui.unmount()
 })
 
+const WORD_DIFF = [
+  'diff --git a/a.ts b/a.ts',
+  '--- a/a.ts',
+  '+++ b/a.ts',
+  '@@ -10,4 +10,4 @@ fn',
+  ' keep',
+  '-const timeout = 3000',
+  '-alpha beta',
+  '+const timeout = 5000',
+  '+gamma delta',
+  '\\ No newline at end of file',
+  '',
+].join('\n')
+
+test('a diff numbers each line, marks only the words that changed, and leaves a rewritten line unmarked', async ($, on) => {
+  stubPanel(on)
+  gitRepo(on, { status: '## main\0 M a.ts\0', run: cmd => (cmd[0] === 'diff' ? ok(WORD_DIFF) : undefined) })
+  await openPanel($)
+
+  const ui = await mountPane($, 'desktop')
+  await ui.press({ key: 'file:unstaged:a.ts' })
+  const rows = (await ui.findAll({ type: 'Box' })).filter(b => /^diff:\d+$/.test(b.key ?? '')).map(b => b.text)
+  expect(rows).toEqual([
+    '@@ -10,4 +10,4 @@ fn',
+    '10   keep',
+    '11 - const timeout = 3000',
+    '12 - alpha beta',
+    '11 + const timeout = 5000',
+    '12 + gamma delta',
+  ])
+  const marked = (await ui.findAll({ type: 'Text' })).filter(t => t.props.backgroundColor !== undefined).map(t => t.text)
+  expect(marked).toEqual(['3000', '5000'])
+  await ui.unmount()
+})
+
 test('a diff tab row asks with a check first: the trash only deletes the file, rollback only takes it back to HEAD', async ($, on) => {
   const runs: string[] = []
   stubPanel(on)
@@ -155,6 +193,7 @@ test('a diff tab row asks with a check first: the trash only deletes the file, r
         ...(isDone('git restore --source=HEAD --staged --worktree -- a.ts') ? [] : [' M a.ts']),
         isDone('rm -rf -- /repo/d.ts') ? ' D d.ts' : ' M d.ts',
         ...(isDone('rm -rf -- /repo/b.ts') ? [] : ['?? b.ts']),
+        '?? nested/',
         '',
       ].join('\0'),
     run: (cmd, e) => {
@@ -177,6 +216,9 @@ test('a diff tab row asks with a check first: the trash only deletes the file, r
   expect(await ui.find({ key: 'rollback:untracked:b.ts' })).toBeUndefined()
   expect(await ui.find({ key: 'rollback:staged:c.ts' })).toBeUndefined()
   expect(await ui.find({ key: 'remove:staged:c.ts' })).toBeDefined()
+  // 結尾是 / 的是裡面另一個 repo：整個資料夾不給刪。
+  expect(await ui.find({ key: 'file:untracked:nested/' })).toBeDefined()
+  expect(await ui.find({ key: 'remove:untracked:nested/' })).toBeUndefined()
 
   // 按一下只換成打勾，再按才刪。
   await ui.press({ key: 'remove:untracked:b.ts' })
@@ -284,7 +326,7 @@ test('switching to another branch moves the current marker there, and the log ta
 
   await ui.press({ key: 'sub:branch' })
   expect(await marked('main')).toBe(true)
-  // 按一次只把那列標成再按一次，還不切；按別列就改標那列；再按同一列才切。
+  // 按一次只把那列標成再按一次，還不切；再按同一列才切。
   await ui.press({ key: 'switch:l:dev' })
   expect(switches).toEqual([])
   expect((await ui.find({ key: 'switch:l:dev:row' }))?.text.includes(SWITCH_ARMED_HINT)).toBe(true)
@@ -309,7 +351,7 @@ test('deleting a local branch asks with a check first, and forces the delete whe
   stubPanel(on)
   gitRepo(on, {
     status: '## main\0',
-    branches: () => [branchLine('main', { isCurrent: true }), ...(deletes.includes('branch -D dev') ? [] : [branchLine('dev')])],
+    branches: () => [branchLine('main', { isCurrent: true }), ...(deletes.includes('branch -D -- dev') ? [] : [branchLine('dev')])],
     run: cmd => {
       if (cmd[0] !== 'branch') return undefined
       deletes.push(cmd.join(' '))
@@ -328,41 +370,51 @@ test('deleting a local branch asks with a check first, and forces the delete whe
   await ui.press({ key: 'delete:l:dev' })
   expect(deletes).toEqual([])
   await ui.press({ key: 'delete:l:dev' })
-  expect(deletes).toEqual(['branch -d dev'])
+  expect(deletes).toEqual(['branch -d -- dev'])
   expect(await ui.find({ type: 'Text', text: 'dev has unmerged commits; press again to force delete and lose them.' })).toBeDefined()
   await ui.press({ key: 'delete:l:dev' })
-  expect(deletes).toEqual(['branch -d dev', 'branch -D dev'])
+  expect(deletes).toEqual(['branch -d -- dev', 'branch -D -- dev'])
   expect(await ui.find({ key: 'switch:l:dev' })).toBeUndefined()
   await ui.unmount()
 })
 
-test('deleting a remote branch asks with a check first, then pushes the delete to that remote', async ($, on) => {
-  const pushes: string[] = []
-  stubPanel(on)
-  gitRepo(on, {
-    status: '## main\0',
-    branches: () => [branchLine('main', { isCurrent: true }), ...(pushes.length > 0 ? [] : [branchLine('origin/feature/x')])],
-    run: cmd => {
-      if (cmd[0] !== 'push') return undefined
-      pushes.push(cmd.join(' '))
+// 遠端分支名稱開頭是哪個遠端：取最長的那個（my/fork/x 是 my/fork 的 x，不是 my 的 fork/x）。
+for (const [remotes, branch, push] of [
+  [['origin'], 'origin/feature/x', 'push origin :refs/heads/feature/x'],
+  [['my', 'my/fork'], 'my/fork/x', 'push my/fork :refs/heads/x'],
+] as const) {
+  test(`deleting the remote branch ${branch} asks with a check first, then runs git ${push}`, async ($, on) => {
+    const pushes: string[] = []
+    stubPanel(on)
+    gitRepo(on, {
+      status: '## main\0',
+      branches: () => [
+        branchLine('main', { isCurrent: true }),
+        ...(pushes.length > 0 ? [] : [[' ', `refs/remotes/${branch}`, branch, '', '', '1 day ago', 'Wip'].join('\t')]),
+      ],
+      run: cmd => {
+        if (cmd[0] === 'remote') return ok(`${remotes.join('\n')}\n`)
+        if (cmd[0] !== 'push') return undefined
+        pushes.push(cmd.join(' '))
 
-      return ok('')
-    },
+        return ok('')
+      },
+    })
+    await openPanel($)
+
+    const ui = await mountPane($)
+    await ui.press({ key: 'sub:branch' })
+    await ui.press({ key: 'remote:toggle' })
+
+    await ui.press({ key: `delete:r:${branch}` })
+    expect(pushes).toEqual([])
+    expect(await ui.find({ type: 'Text', text: `Press again to delete ${branch} on the remote.` })).toBeDefined()
+    await ui.press({ key: `delete:r:${branch}` })
+    expect(pushes).toEqual([push])
+    expect(await ui.find({ key: `switch:r:${branch}` })).toBeUndefined()
+    await ui.unmount()
   })
-  await openPanel($)
-
-  const ui = await mountPane($)
-  await ui.press({ key: 'sub:branch' })
-  await ui.press({ key: 'remote:toggle' })
-
-  await ui.press({ key: 'delete:r:origin/feature/x' })
-  expect(pushes).toEqual([])
-  expect(await ui.find({ type: 'Text', text: 'Press again to delete origin/feature/x on the remote.' })).toBeDefined()
-  await ui.press({ key: 'delete:r:origin/feature/x' })
-  expect(pushes).toEqual(['push origin --delete feature/x'])
-  expect(await ui.find({ key: 'switch:r:origin/feature/x' })).toBeUndefined()
-  await ui.unmount()
-})
+}
 
 test('an armed branch switch moves to the row pressed next and wears off after 3s', async ($, on) => {
   const clock = mock.clock(on)
@@ -912,6 +964,7 @@ test('pressing a .md file in the Files tab draws it as Markdown, not Code', asyn
   await ui.press({ key: 'files:file:README.md' })
   expect((await ui.find({ type: 'Markdown' }))?.props).toMatchObject({ text: '# Hi\n**bold**\n' })
   expect(await ui.find({ type: 'Code' })).toBeUndefined()
+  await ui.unmount()
 })
 
 test('pressing a file in the Files tab shows its text over the tabs, steps with Next, and Back returns', async ($, on) => {
@@ -1164,6 +1217,125 @@ test('a restart that dies right away says so, and the next scan does not wipe th
   await ui.unmount()
 })
 
+// Windows 上的 Services：PowerShell 掃描回 scan（重跑的 4321 一直活著）；記下砍的 PID 和重跑時給的環境變數。
+function winServices(on: TestOn, scan: ScanResult, root = ROOT) {
+  const kills: string[] = []
+  const launches: Record<string, string>[] = []
+  on('clock.now', () => ({ value: 0 }))
+  on('clock.sleep', () => ({ value: undefined }))
+  on('clock.after', () => ({ value: undefined }))
+  on('session.root', () => ({ value: root }))
+  on('ui.toast', () => ({ value: undefined }))
+  on('env.get', (_$, e) => ({ value: e.name === 'OS' ? 'Windows_NT' : undefined }))
+  on('process.run', (_$, e) => {
+    if (e.init?.env?.SOAP_PID !== undefined) {
+      kills.push(e.init.env.SOAP_PID)
+
+      return ok('')
+    }
+    if (e.argv[0] === 'powershell' && e.init?.env?.SOAP_CMD !== undefined) {
+      launches.push(e.init.env)
+
+      return ok('4321\r\n')
+    }
+    if (e.argv[0] === 'powershell') return ok(JSON.stringify({ ...scan, pids: [...scan.pids, 4321] }))
+
+    return ok('')
+  })
+
+  return { kills, launches }
+}
+
+// 每一列服務畫出來的字：● 工具 · 專案名 · port。
+const serviceRows = async (ui: Pane) => (await ui.findAll({ type: 'Box' })).filter(b => /^svc:\d+$/.test(b.key ?? '')).map(b => b.text.replace(/^●|Restart.*$/g, ''))
+
+test('the Services tab matches the session folder in any case, and restarts go -C from the folder it was run in', async ($, on) => {
+  const { launches } = winServices(on, SCAN, 'C:\\Proj\\')
+
+  const ui = await mountPane($)
+  await ui.press({ key: 'tab:services' })
+  expect(await serviceRows(ui)).toEqual(['go · go-server · :8081', 'node · proj · :4000', 'dotnet · Api · :5000 :5001', 'cargo · app · :7000', 'npm · web · :5173'])
+  await ui.press({ key: 'svc:restart:70' })
+  expect(launches[0]?.SOAP_DIR).toBe('C:\\proj')
+  await ui.unmount()
+})
+
+test('a service wrapped in cmd /c shows the real tool, and restart reruns the wrapper as is', async ($, on) => {
+  const WRAPPER = 'cmd.exe /d /s /c "set ASPNETCORE_ENVIRONMENT=Development && dotnet run --project dotnet/InventoryApi"'
+  const procs = [
+    proc({ pid: 7, ppid: 1, name: 'Claude.exe' }),
+    proc({ pid: 8, ppid: 7, name: 'cmd.exe', cmd: WRAPPER, cwd: 'C:\\proj\\' }),
+    proc({ pid: 9, ppid: 8, name: 'dotnet.exe', cmd: '"C:\\Program Files\\dotnet\\dotnet.exe" run --project dotnet/InventoryApi', cwd: 'C:\\proj\\', started: 2000 }),
+    proc({
+      pid: 10,
+      ppid: 9,
+      name: 'InventoryApi.exe',
+      exe: 'C:\\proj\\dotnet\\InventoryApi\\bin\\Debug\\net10.0\\InventoryApi.exe',
+      cwd: 'C:\\proj\\dotnet\\InventoryApi\\',
+      started: 3000,
+    }),
+  ]
+  const { kills, launches } = winServices(on, { self: [], pids: procs.map(p => p.pid), procs, ports: [{ port: 5001, pid: 10 }] })
+
+  const ui = await mountPane($)
+  await ui.press({ key: 'tab:services' })
+  expect(await serviceRows(ui)).toEqual(['dotnet · InventoryApi · :5001'])
+  // 砍最上層的 cmd（整棵）；重跑照原樣跑 cmd，set 環境變數那段才不會掉。
+  await ui.press({ key: 'svc:restart:8' })
+  expect(kills).toEqual(['8'])
+  expect(launches[0]).toMatchObject({ SOAP_CMD: WRAPPER, SOAP_DIR: 'C:\\proj' })
+  await ui.unmount()
+})
+
+const GO_TEMP = 'C:\\Temp\\go-build1\\b001\\exe\\inventory-service.exe'
+// 一串程序（最上層在前，最後一個開著 port）：指令、工作目錄、執行檔 → Services 分頁上的名字。session 資料夾是 C:\company。
+const NAMED: [chain: [cmd: string, cwd: string, exe?: string][], name: string][] = [
+  [[['go run ./inventory-service', 'C:\\company\\test2'], [GO_TEMP, 'C:\\company\\test2', GO_TEMP]], 'inventory-service'],
+  [[['go run .', 'C:\\company\\test2']], 'test2'],
+  [[['cargo run --bin api', 'C:\\company\\ws'], ['', 'C:\\company\\ws', 'C:\\company\\ws\\target\\debug\\api.exe']], 'api'],
+  [[['cargo run --manifest-path services/billing/Cargo.toml', 'C:\\company\\ws']], 'billing'],
+  [
+    [
+      ['dotnet run --project src/Acme.Orders.Api', 'C:\\company\\test'],
+      ['', 'C:\\company\\test\\src\\Acme.Orders.Api', 'C:\\company\\test\\src\\Acme.Orders.Api\\bin\\Debug\\net8.0\\Acme.Orders.Api.exe'],
+    ],
+    'Acme.Orders.Api',
+  ],
+  [[['"C:\\jdk\\bin\\java.exe" -cp C:\\company\\orders\\target\\classes;C:\\Users\\me\\.m2\\spring-core-6.1.0.jar com.acme.App', 'C:\\company']], 'orders'],
+  [
+    [
+      [
+        '"C:\\jdk\\bin\\java.exe" -classpath "C:\\maven\\boot\\plexus-classworlds-2.8.0.jar" -Dmaven.multiModuleProjectDirectory=C:\\company\\shop org.codehaus.plexus.classworlds.launcher.Launcher spring-boot:run',
+        'C:\\company\\shop',
+      ],
+    ],
+    'shop',
+  ],
+  [
+    [
+      ['C:\\WINDOWS\\system32\\cmd.exe /d /s /c "pnpm --filter web dev"', 'C:\\company\\mono'],
+      ['node C:\\company\\mono\\apps\\web\\node_modules\\vite\\bin\\vite.js', 'C:\\company\\mono\\apps\\web'],
+    ],
+    'web',
+  ],
+  [[['node node/notify-svc/server.js', 'C:\\company\\test3']], 'notify-svc'],
+  [[['app --config conf/dev/app.json --url http://localhost:3000/api', 'C:\\company\\svc']], 'svc'],
+  [[['python -m uvicorn app.main:app', 'C:\\company\\py-api', 'C:\\company\\py-api\\.venv\\Scripts\\python.exe']], 'py-api'],
+  [[['node server.js', 'C:\\company']], 'company'],
+]
+
+for (const [chain, name] of NAMED) {
+  test(`the Services tab names ${chain[0]?.[0]} after ${name}`, async ($, on) => {
+    const procs = chain.map(([cmd, cwd, exe], i) => proc({ pid: i + 1, ppid: i, name: 'x.exe', cmd, cwd, exe: exe ?? null }))
+    winServices(on, { self: [], pids: procs.map(p => p.pid), procs, ports: [{ port: 8080, pid: procs.length }] }, 'C:\\company')
+
+    const ui = await mountPane($)
+    await ui.press({ key: 'tab:services' })
+    expect((await serviceRows(ui))[0]?.split(' · ')[1]).toBe(name)
+    await ui.unmount()
+  })
+}
+
 // macOS 上的 Services：ps、lsof 照 MAC_* 回；argsOut 是 ps -o pid=,args= 讀到的指令。記下 kill 和重跑。
 function macServices(on: TestOn, argsOut = MAC_ARGS_OUT) {
   const kills: string[][] = []
@@ -1208,18 +1380,30 @@ test('on macOS the Services tab scans with ps and lsof, stops with kill -9 on th
   await ui.unmount()
 })
 
-test('on macOS a service whose command has quotes or $ is not restarted, and the pane says why', async ($, on) => {
-  // ps 讀到的指令已經沒有原本的引號了，交給 sh 重跑會變成別的意思。
-  const { kills, launches } = macServices(on, MAC_ARGS_OUT.replace('npm run dev', 'npm run dev -- --host "$HOST"'))
+for (const cmd of ['npm run dev -- --host "$HOST"', 'node server.js --banner $(whoami)', 'sh -c vite; rm -rf x', 'ls *']) {
+  test(`on macOS a service run as ${cmd} is not restarted, and the pane says why`, async ($, on) => {
+    // ps 讀到的指令已經沒有原本的引號了，交給 sh 重跑會變成別的意思。
+    const { kills, launches } = macServices(on, MAC_ARGS_OUT.replace('npm run dev', cmd))
+
+    const ui = await mountPane($)
+    await ui.press({ key: 'tab:services' })
+    await ui.press({ key: 'svc:restart:11' })
+    expect(kills).toEqual([])
+    expect(launches).toEqual([])
+    expect(await ui.find({ type: 'Text', text: /^Restart failed: Cannot rerun .*: its command has quotes or shell characters/ })).toBeDefined()
+    expect(await ui.find({ key: 'svc:restart:11' })).toBeDefined()
+    await ui.unmount()
+  })
+}
+
+test('on macOS a service whose command has only letters, paths and flags restarts as it was run', async ($, on) => {
+  const cmd = 'node /Users/me/專案/web/server.js --port=5173'
+  const { launches } = macServices(on, MAC_ARGS_OUT.replace('npm run dev', cmd))
 
   const ui = await mountPane($)
   await ui.press({ key: 'tab:services' })
   await ui.press({ key: 'svc:restart:11' })
-  // 不砍、也不重跑，留著原本的服務。
-  expect(kills).toEqual([])
-  expect(launches).toEqual([])
-  expect(await ui.find({ type: 'Text', text: /^Restart failed: Cannot rerun npm · web: its command has quotes or shell characters/ })).toBeDefined()
-  expect(await ui.find({ key: 'svc:restart:11' })).toBeDefined()
+  expect(launches).toEqual([{ SOAP_CMD: cmd, SOAP_DIR: `${MAC_ROOT}/web` }])
   await ui.unmount()
 })
 
@@ -1561,6 +1745,69 @@ test('in the merge view a side, all ours or all theirs fills the middle, and an 
   expect(writes).toEqual([{ path: '/repo/src/a.ts', text: 'import a\nconst x = 2\nkeep\nconst y = 0\nend\n' }])
   await ui.unmount()
 })
+
+test('a diff3 conflict shows its base, and Apply writes the file back with its CRLF and no final newline', async ($, on) => {
+  const text = ['<<<<<<< HEAD', 'a', '||||||| base', 'o', '=======', 'b', '>>>>>>> dev'].join('\r\n')
+  const { writes } = conflictRepo(on, { text, stages: {} })
+  await openPanel($)
+
+  const ui = await mountPane($)
+  await ui.press({ key: 'sub:conflict' })
+  await ui.press({ key: 'conflict:src/a.ts' })
+  expect(await ui.find({ type: 'Text', text: 'Base (before either side changed it):' })).toBeDefined()
+  expect(await ui.find({ type: 'Code', text: 'o' })).toBeDefined()
+  await ui.press({ key: 'merge:both-rev:0' })
+  await ui.press({ key: 'merge:apply' })
+  expect(writes).toEqual([{ path: '/repo/src/a.ts', text: 'b\r\na' }])
+  await ui.unmount()
+})
+
+// git 留著的三個版本（base 給 null：兩邊都新增了這個檔案，沒有共同祖先）。
+const stagesOf = (base: string | null, ours: string, theirs: string) => ({
+  ...(base === null ? {} : { ':1:src/a.ts': base }),
+  ':2:src/a.ts': ours,
+  ':3:src/a.ts': theirs,
+})
+
+const MERGES = [
+  {
+    name: 'the same change on both sides is no conflict',
+    stages: stagesOf('a\nb\n', 'a\nX\n', 'a\nX\n'),
+    shows: 'Same change on both sides',
+    presses: [],
+    written: 'a\nX\n',
+  },
+  {
+    name: 'edits on adjacent lines are one conflict, as git sees them',
+    stages: stagesOf('a\nc\nd\nz\n', 'a\nC\nd\nz\n', 'a\nc\nD\nz\n'),
+    shows: '0 of 1 conflicts resolved',
+    presses: ['merge:ours:1'],
+    written: 'a\nC\nd\nz\n',
+  },
+  {
+    name: 'with no base every difference is a conflict and the lines both sides share stay',
+    stages: stagesOf(null, 'a\nb\nc\n', 'a\nx\nc\n'),
+    shows: 'Pick a side, or both.',
+    presses: ['merge:theirs:1'],
+    written: 'a\nx\nc\n',
+  },
+]
+
+for (const { name, stages, shows, presses, written } of MERGES) {
+  test(`in the merge view ${name}`, async ($, on) => {
+    const { writes } = conflictRepo(on, { stages })
+    await openPanel($)
+
+    const ui = await mountPane($)
+    await ui.press({ key: 'sub:conflict' })
+    await ui.press({ key: 'conflict:src/a.ts' })
+    expect(await ui.find({ type: 'Text', text: shows })).toBeDefined()
+    for (const key of presses) await ui.press({ key })
+    await ui.press({ key: 'merge:apply' })
+    expect(writes).toEqual([{ path: '/repo/src/a.ts', text: written }])
+    await ui.unmount()
+  })
+}
 
 // ───── 回合結束 ─────
 

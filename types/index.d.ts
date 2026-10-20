@@ -470,7 +470,8 @@ declare module 'claude-code' {
       tab: TabId
       /** The sub tab each tab with sub tabs shows. */
       subTabs: SubTabs
-      view: GitView
+      /** Shaped, like wiki. */
+      view: Shaped<GitView>
       /** Whether the remote branches section is expanded. */
       showRemote: boolean
       /** Branch tab folders opened or closed by hand, keyed `l:<path>` / `r:<path>`; the rest use their default. */
@@ -482,7 +483,8 @@ declare module 'claude-code' {
       /** Which page of files the diff tab draws (from 0); Previous / Next change it. */
       filePage: number
       services: ServicesView
-      files: FilesView
+      /** Shaped, like wiki. */
+      files: Shaped<FilesView>
       spec: SpecView
       /** Shaped: the atom's shape changes with WikiView, so a hot reload drops what older code kept. */
       wiki: Shaped<WikiView>

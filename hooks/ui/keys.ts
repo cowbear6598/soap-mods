@@ -37,7 +37,7 @@ export function tabIconKey(tab: string, sub: string | undefined): string {
 
 /**
  * Where the focus ring lands once the pressed button is gone: `prefer` (the
- * button a press swaps in), the drawn `*:back` (diff, merge, commit, folder; one at a time), else the tab
+ * button a press swaps in), the drawn `*:back` (any view's; one is drawn at a time), else the tab
  * icon. The first of these that is drawn; undefined when none is.
  */
 export function ringAnchor(keys: Set<string>, tab: string, sub: string | undefined, prefer?: string): string | undefined {

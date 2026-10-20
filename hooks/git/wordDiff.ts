@@ -3,7 +3,7 @@
 import { diffLines } from '../merge/algo'
 
 /** A piece of a diff line: `isChanged` when it differs from the line it is paired with. */
-export type DiffSeg = { text: string; isChanged: boolean }
+type DiffSeg = { text: string; isChanged: boolean }
 
 export type DiffRow =
   | { kind: 'hunk'; text: string }

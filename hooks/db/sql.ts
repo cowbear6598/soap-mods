@@ -132,6 +132,8 @@ const BLOCKED =
 export function selectOnlyError(sql: string): string {
   const bare = stripSql(sql).trim().replace(/[;\s]+$/, '')
   if (bare === '') return 'Type a SELECT to run.'
+  // sqlcmd 送出前會先處理 :setvar、!! 這類指令和 $(var)，連字串裡的也算，所以看原文。
+  if (/^\s*(:|!!)/m.test(sql) || sql.includes('$(')) return 'sqlcmd commands and $( ) are not allowed: only SELECT runs here.'
   if (bare.includes(';')) return 'Only one statement at a time.'
   if (!/^(SELECT|WITH)\b/i.test(bare)) return 'Only SELECT runs here.'
   const blocked = BLOCKED.exec(bare)?.[1]
@@ -144,7 +146,8 @@ const DB_SEPARATOR = '\t'
 
 /**
  * sqlcmd's arguments to run `query` on `c`: errors to stderr and a nonzero
- * exit (-r 1, -b), tab separated with trailing spaces trimmed (-s, -W).
+ * exit (-r 1, -b), tab separated with trailing spaces trimmed (-s, -W), no
+ * scripting variables or commands (-x, -X).
  * No -f: go-sqlcmd (brew, winget) prints UTF-8 and refuses it. The password
  * goes in SQLCMDPASSWORD, never here.
  */
@@ -157,6 +160,8 @@ export function sqlcmdArgv(c: DbConnection, query: string): string[] {
     ...(c.isIntegrated ? ['-E'] : ['-U', c.user]),
     ...(c.trustCert ? ['-C'] : []),
     '-b',
+    '-x',
+    '-X',
     '-r',
     '1',
     '-W',
@@ -176,7 +181,7 @@ export function sqlcmdArgv(c: DbConnection, query: string): string[] {
 
 /**
  * sqlcmd's printed table → columns and rows: the header line, a line of
- * dashes, then a row per line until a blank one. Keeps the first DB_ROW_LIMIT
+ * dashes, then a row per line up to the trailing blank lines. Keeps the first DB_ROW_LIMIT
  * rows; a value holding a line break splits its row (sqlcmd prints it as is).
  */
 export function parseTable(out: string, isTruncated = false): DbResult {
@@ -185,9 +190,10 @@ export function parseTable(out: string, isTruncated = false): DbResult {
   if (start === -1) return { columns: [], rows: [], total: 0, isTruncated }
   const columns = lines[start]?.split(DB_SEPARATOR) ?? []
   const body = lines.slice(start + 2)
-  const end = body.findIndex(l => l === '')
-  // 輸出被截斷時最後一列可能不完整，丟掉。
-  const all = end === -1 ? body.slice(0, isTruncated ? -1 : undefined) : body.slice(0, end)
+  // 單欄的空字串值也印成空行，所以只去掉結尾的空行；被截斷時最後一列可能不完整，也丟掉。
+  let end = body.length
+  while (end > 0 && body[end - 1] === '') end--
+  const all = body.slice(0, isTruncated && end === body.length ? -1 : end)
 
   return { columns, rows: all.slice(0, DB_ROW_LIMIT).map(l => l.split(DB_SEPARATOR)), total: all.length, isTruncated }
 }

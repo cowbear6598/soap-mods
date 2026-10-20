@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { type TestOn, endTurn, fsEntry, mountPane, ok, posix, stubPanel, stubStore } from '../test-fixtures'
+import { type Pane, type TestOn, endTurn, fsEntry, mountPane, ok, posix, stubPanel, stubStore } from '../test-fixtures'
 
 const WIKI = '/proj/.soap/wiki'
 const CHECKED = 'wiki.checked:/proj'
@@ -62,10 +62,10 @@ function disk(
   })
 }
 
-const drawnRows = async (ui: Awaited<ReturnType<typeof mountPane>>, prefix: string) =>
+const drawnRows = async (ui: Pane, prefix: string) =>
   (await ui.findAll({ type: 'Button' })).map(b => String(b.props.key)).filter(k => k.startsWith(prefix))
 
-test('the Spec tab has a book icon and Spec / Wiki sub tabs; Spec is the plan list as before and Wiki lists the pages', async ($, on) => {
+test('the Spec tab has a book icon and Spec / Wiki sub tabs; Spec is the plan list and Wiki lists the pages', async ($, on) => {
   const files: Record<string, string> = { [`${WIKI}/style.md`]: '# Style\n' }
   disk(on, files)
 
@@ -475,18 +475,36 @@ test('writing a wiki draft with Write checks its first line: one the Wiki tab ca
   })
   on('fs.read', (_$, e) => ({ value: files[posix(e.path) ?? ''] ?? '' }))
   on('tool.call', (_$, e) => {
-    if (e.tool === 'Write') files[e.file_path] = e.content
+    if (e.tool === 'Write') files[posix(e.file_path) ?? ''] = e.content
 
     return { result: { ok: true } as never }
   })
+  const write = (file_path: string, content: string) => $.tool.call({ tool: 'Write', file_path, content })
+  const flagged = async (file_path: string, content: string) => ((await write(file_path, content)).context ?? []).length > 0
 
-  const bad = await $.tool.call({ tool: 'Write', file_path: `${WIKI}/.drafts/1-goals.md`, content: '# Goals\n' })
+  const bad = await write(`${WIKI}/.drafts/1-goals.md`, '# Goals\n')
   expect(bad.context?.at(-1)).toMatch(/is not a valid soap-mods wiki draft[\s\S]*`move: <page>\.md -> <new page>\.md`/)
   expect(toasts).toHaveLength(1)
-  const good = await $.tool.call({ tool: 'Write', file_path: `${WIKI}/.drafts/2-goals.md`, content: 'target: project/goals.md\n\n# Goals\n' })
-  expect(good.context ?? []).toEqual([])
-  // 頁面本身不檢查。
-  const page = await $.tool.call({ tool: 'Write', file_path: `${WIKI}/goals.md`, content: '# Goals\n' })
-  expect(page.context ?? []).toEqual([])
-  expect(toasts).toHaveLength(1)
+
+  for (const [content, isBad] of [
+    ['target: project/goals.md\n\n# Goals\n', false],
+    ['move: style.md -> conventions/style.md\n', false],
+    ['delete:  naming.md', false],
+    ['target: ../escape.md\n\nx', true],
+    ['move: a.md -> a.md', true],
+    ['move: a.md ->', true],
+    ['move: a.md -> b.md -> c.md', true],
+    ['delete: .drafts/x.md', true],
+    ['rename: a.md -> b.md', true],
+  ] as const) {
+    expect({ content, isFlagged: await flagged(`${WIKI}/.drafts/2-x.md`, content) }).toEqual({ content, isFlagged: isBad })
+  }
+
+  for (const [path, isChecked] of [
+    ['C:\\proj\\.soap\\wiki\\.drafts\\3-x.md', true],
+    [`${WIKI}/.drafts/old/4-x.md`, false],
+    [`${WIKI}/goals.md`, false],
+  ] as const) {
+    expect({ path, isFlagged: await flagged(path, '# Goals\n') }).toEqual({ path, isFlagged: isChecked })
+  }
 })
