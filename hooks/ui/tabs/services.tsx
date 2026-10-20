@@ -49,7 +49,14 @@ export const servicesTab: TabBody = ({ w, d, a }) => {
   return (
     <Box flexDirection="column" gap={1}>
       {sv.error !== '' && <Text color="error">{sv.error}</Text>}
-      {sv.actionError !== '' && <Text color="error">{sv.actionError}</Text>}
+      {sv.actionError !== '' && (
+        <Box gap={1} alignItems="center">
+          <Box flexGrow={1} flexShrink={1}>
+            <Text color="error">{sv.actionError}</Text>
+          </Box>
+          <Box flexShrink={0}>{w.iconButton('svc:dismiss-error', 'x', 'Dismiss', false, a.dismissServiceError)}</Box>
+        </Box>
+      )}
       {!sv.isLoaded ? (
         <Text dimColor>Scanning…</Text>
       ) : sv.items.length === 0 ? (

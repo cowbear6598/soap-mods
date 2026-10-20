@@ -1102,6 +1102,9 @@ test('a restart that dies right away says so, and the next scan does not wipe th
   await ui.press({ key: 'tab:git' })
   await ui.press({ key: 'tab:services' })
   expect(await ui.find({ type: 'Text', text: /Restart failed/ })).toBeDefined()
+  // 按 × 才關掉。
+  await ui.press({ key: 'svc:dismiss-error' })
+  expect(await ui.find({ type: 'Text', text: /Restart failed/ })).toBeUndefined()
   await ui.unmount()
 })
 

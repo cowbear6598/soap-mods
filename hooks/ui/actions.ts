@@ -120,6 +120,8 @@ export type Actions = {
   selectWikiModel: (model: WikiModel) => unknown
   // services
   runServiceAction: (s: Service, action: ServiceAction) => unknown
+  // 關掉停止／重跑失敗的提示（定時掃描不會洗掉它）。
+  dismissServiceError: () => unknown
   // db：text 是貼上的連線字串、輸入的查詢；id 是存著的連線。
   addDbConnection: (text: string) => unknown
   // 刪連線：按第一次只是待確認（打勾），再按才刪（連 Keychain 裡的密碼）。

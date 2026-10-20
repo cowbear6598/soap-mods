@@ -250,7 +250,7 @@ export type ServicesView = {
   items: Service[]
   /** Last scan error, '' when none; cleared by the next good scan. */
   error: string
-  /** Why the last stop or restart failed, '' when none; kept until the next action. */
+  /** Why the last stop or restart failed, '' when none; kept until the next action or the × that dismisses it. */
   actionError: string
 }
 

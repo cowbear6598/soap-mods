@@ -2280,6 +2280,7 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     continueOp: () => continueOp($),
     // 不等它做完：停掉、重跑要好幾秒，按鈕先換成「Stopping…」。
     runServiceAction: (s, action) => void runServiceAction($, s, action),
+    dismissServiceError: () => setServices($, { actionError: '' }),
     openDir: dir => loadFiles($, dir),
     openFile: path => Promise.all([setFiles($, NO_FILE_MENU), showFile($, path)]),
     stepFile: step => stepFile($, step),
