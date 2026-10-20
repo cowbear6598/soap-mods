@@ -6,7 +6,7 @@ import { hasQuery } from '../../search'
 import { backButton } from '../stepBar'
 import type { TabBody, TabContext } from './context'
 
-// Files 分頁：session 資料夾（或點進去的子資料夾）裡有什麼。資料夾在前、點了進去。
+// Files 分頁（列不縮排，左邊只留面板內容共用的一格）：session 資料夾（或點進去的子資料夾）裡有什麼。資料夾在前、點了進去。
 // 子資料夾裡最上面是 ← Back（b）回上一層、旁邊是路徑；session 資料夾本身兩個都不畫，也就走不出去。
 // 檔案列名稱和大小，點了在 Soap Panel 裡看內容（fileView）；register 只存前 FILES_ROW_LIMIT 筆，其餘寫「… N more」。
 // 最上面的搜尋框有字時，改列整個 session 資料夾裡檔名符合的檔案（searchBody）。
@@ -34,12 +34,13 @@ export const filesTab: TabBody = ctx => {
     const trailing = moreButton(ctx, path)
 
     return e.kind === 'dir'
-      ? w.pressRow({ key: `files:dir:${e.name}`, label: `${e.name}/`, color: FOLDER_COLOR, trailing, onPress: () => a.openDir(path) })
+      ? w.pressRow({ key: `files:dir:${e.name}`, label: `${e.name}/`, color: FOLDER_COLOR, indent: 0, trailing, onPress: () => a.openDir(path) })
       : w.pressRow({
           key: `files:file:${e.name}`,
           label: e.name,
           isDim: e.kind === 'other',
           isTruncated: true,
+          indent: 0,
           rest: size !== undefined && sizeCell(ctx, size, widths),
           trailing,
           onPress: () => a.openFile(path),
@@ -85,7 +86,7 @@ function searchBody(ctx: TabContext) {
 
   return (
     <Box flexDirection="column" position="relative">
-      {found.paths.map(path => w.pathRow(`files:found:${path}`, path, () => a.openFile(path), { trailing: moreButton(ctx, path) }))}
+      {found.paths.map(path => w.pathRow(`files:found:${path}`, path, () => a.openFile(path), { indent: 0, trailing: moreButton(ctx, path) }))}
       {hidden > 0 && note(ctx, `… ${hidden} more`)}
       {found.isCapped && note(ctx, `Only the first ${FILES_WALK_LIMIT} files were searched.`)}
       {menuCard(ctx, found.paths, Number(hidden > 0) + Number(found.isCapped))}
@@ -169,11 +170,7 @@ function menuCard({ w, d, a }: TabContext, paths: readonly string[], notes: numb
 
 // 列表底下淡色的一行說明（還有幾筆沒畫、只找了前幾個檔案）。
 function note({ w }: TabContext, text: string) {
-  const { Box, Text } = w
+  const { Text } = w
 
-  return (
-    <Box paddingLeft={2}>
-      <Text dimColor>{text}</Text>
-    </Box>
-  )
+  return <Text dimColor>{text}</Text>
 }

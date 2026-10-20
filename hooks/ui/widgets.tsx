@@ -187,7 +187,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
     key: string,
     path: string,
     onPress: () => unknown,
-    { status, note = '', trailing }: { status?: { letter: string; kind: FileKind }; note?: string; trailing?: RenderChildren } = {},
+    { status, note = '', trailing, indent }: { status?: { letter: string; kind: FileKind }; note?: string; trailing?: RenderChildren; indent?: number } = {},
   ) => {
     const { name, dir } = splitPath(path)
     const detail = [note, dir].filter(s => s !== '').join(' · ')
@@ -197,6 +197,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
       label: name,
       onPress,
       labelWidth: PATH_NAME_WIDTH,
+      indent,
       lead: status && (
         <Text bold color={KIND_STYLE[status.kind].theme}>
           {status.letter}

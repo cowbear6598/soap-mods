@@ -65,10 +65,13 @@ function repoBar({ w, d, a }: TabContext) {
           />
         ))}
       </Box>
-      {w.divider}
+      {divider(w)}
     </Box>
   )
 }
+
+// 面板上的分隔線左右各空一格，跟分頁內容一樣不貼邊。
+const divider = ({ Box, divider }: Widgets) => <Box paddingX={1}>{divider}</Box>
 
 // 子分頁圖示列；tints 是要上色的子分頁。
 function subTabBar<T extends keyof SubTabs>({ w, d, a }: TabContext, tab: T, tints: Partial<Record<SubTabs[T], Tint>> = {}) {
@@ -77,7 +80,7 @@ function subTabBar<T extends keyof SubTabs>({ w, d, a }: TabContext, tab: T, tin
   return (
     <Box flexDirection="column">
       {w.iconBar<SubTabs[T]>('sub', SUB_TABS[tab], d.subTabs[tab], id => a.selectSubTab(tab, id), tints)}
-      {w.divider}
+      {divider(w)}
     </Box>
   )
 }
@@ -116,13 +119,16 @@ export function renderPanel(drawUi: Ui, d: PanelData, a: Actions, press: Press) 
       <Box flexDirection="column" gap={1} flexGrow={1}>
         <Box flexDirection="column">
           {w.iconBar('tab', TABS, d.tab, id => a.selectTab(id))}
-          {w.divider}
+          {divider(w)}
           {isGit && repoBar(ctx)}
           {/* Git 有衝突時 conflict 變紅。 */}
           {isGit ? subTabBar(ctx, 'git', d.view.files.some(isConflict) ? { conflict: DANGER } : {}) : hasSubTabs(d.tab) && subTabBar(ctx, d.tab)}
         </Box>
-        {isGit && d.view.error !== '' && <Text color="error">{d.view.error}</Text>}
-        {TAB_BODIES[d.tab](ctx)}
+        {/* 分頁內容左右各空一格，不貼著面板邊。 */}
+        <Box flexDirection="column" gap={1} paddingX={1}>
+          {isGit && d.view.error !== '' && <Text color="error">{d.view.error}</Text>}
+          {TAB_BODIES[d.tab](ctx)}
+        </Box>
       </Box>
     )
 
@@ -132,7 +138,7 @@ export function renderPanel(drawUi: Ui, d: PanelData, a: Actions, press: Press) 
     <Box flexDirection="column" minHeight={d.bodyRows}>
       {content}
       <Box flexDirection="column" marginTop={1}>
-        {w.divider}
+        {divider(w)}
         {usageBar(w, d.usage, d.now)}
       </Box>
       {!isTerminal && strayKeys(w, bound)}
