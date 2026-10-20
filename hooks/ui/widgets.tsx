@@ -85,19 +85,47 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
   // 桌面版：內容照常排，上面疊一顆透明按鈕。按鈕本身是 fit-content，靠一長串不換行空白撐開；
   // 包它的那層比整行寬很多、超出的部分被裁掉，按鈕就不會被壓到整行寬而在最右邊畫出「…」，
   // 看得到的 hover 亮底剛好是整行。
-  // 終端機：疊上去的空白會蓋掉底下的字，所以只有名稱是按鈕。
+  // 終端機：疊上去的空白會蓋掉底下的字，所以是名稱自己當按鈕，名稱後面接一長串空白撐滿名稱那格（跟桌面版一樣用外層裁掉），
+  // 點名稱右邊的空白也算。名稱那格：有 labelWidth 就那麼寬；isTruncated 或沒有 rest 時吃掉剩下的寬度；
+  // 其餘（rest 要緊跟在名稱後面，branch 的切換提示）只有名稱。trailing 貼最右邊。
   // isTruncated：名稱撐滿剩下的寬度、太長時在桌面版截成「…」，rest 留在同一行、貼著最右邊（commit 的 subject 和時間）。
   // 要 minWidth 0 才縮得比內容窄，不然長的名稱會把 rest 擠出畫面。
   // labelWidth：名稱固定這麼寬、太長時截尾，rest 從同一個位置開始，一列一列對齊（檔案列的檔名和資料夾）。
   // trailing：放在整行最右邊、自己能按的東西（branch 列的 log 圖示），不在透明按鈕底下，才按得到。
+  // 疊在一格上面、比它寬很多再裁掉的那層，按鈕放在裡面（兩種版面共用）。
+  const rowOverlay = (button: RenderChildren) => (
+    <Box position="absolute" top={0} left={0} right={0} bottom={0} overflow="hidden">
+      <Box width={ROW_OVERLAY_WIDTH} flexShrink={0}>
+        {button}
+      </Box>
+    </Box>
+  )
+
   const pressRow = (row: Row) => {
     if (isTerminal) {
+      const grows = row.labelWidth === undefined && (row.isTruncated === true || !row.rest)
+      const fills = row.labelWidth !== undefined || row.isTruncated === true || !row.rest
+      const onPress = press(row.onPress, row.ringKey)
+
       return (
         <Box key={`${row.key}:row`} gap={1} paddingLeft={row.indent ?? 2} hover={{ backgroundColor: ACTIVE_BG }}>
           {row.lead}
-          <Button key={row.key} label={row.label} plain dimColor={row.isDim} onPress={press(row.onPress, row.ringKey)} />
-          {row.rest}
-          {row.trailing}
+          {fills ? (
+            // 底下照常排的名稱只用來撐出寬度（被上面蓋住）；按鈕放在 absolute 那層，那串空白才不會把 rest、trailing 擠出畫面。
+            <Box position="relative" width={row.labelWidth} flexGrow={grows ? 1 : undefined} flexShrink={1} minWidth={0} overflow="hidden">
+              <Text wrap="truncate-end">{row.label}</Text>
+              {rowOverlay(
+                <Button key={row.key} label={row.label} plain dimColor={row.isDim} onPress={onPress}>
+                  {row.label}
+                  {ROW_BUTTON_LABEL}
+                </Button>,
+              )}
+            </Box>
+          ) : (
+            <Button key={row.key} label={row.label} plain dimColor={row.isDim} onPress={onPress} />
+          )}
+          {grows && row.rest ? <Box flexShrink={0}>{row.rest}</Box> : row.rest}
+          {row.trailing !== undefined && <Box flexShrink={0}>{row.trailing}</Box>}
         </Box>
       )
     }
@@ -127,11 +155,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
           )}
           {row.rest}
         </Box>
-        <Box position="absolute" top={0} left={0} right={0} bottom={0} overflow="hidden">
-          <Box width={ROW_OVERLAY_WIDTH} flexShrink={0}>
-            <Button key={row.key} label={ROW_BUTTON_LABEL} plain onPress={press(row.onPress, row.ringKey)} />
-          </Box>
-        </Box>
+        {rowOverlay(<Button key={row.key} label={ROW_BUTTON_LABEL} plain onPress={press(row.onPress, row.ringKey)} />)}
       </Box>
     )
 
@@ -232,20 +256,22 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
     items.flatMap((item, i) => (i === 0 ? [item] : [<Text key={`${prefix}:div:${i}`} dimColor>│</Text>, item]))
 
   // 一排置中的圖示分頁，中間用直線隔開。tints：某幾個分頁的圖示固定用這個顏色（有衝突時 conflict 變紅）。
+  // 終端機不畫直線：[ label ] 的括號本身就隔開了，直線夾在中間左右空白不一樣寬，看起來很散；改成等寬的空白。
   const iconBar = <T extends string>(
     prefix: string,
     items: { id: T; label: string; icon: IconName }[],
     active: T,
     select: (id: T) => unknown,
     tints: Partial<Record<T, Tint>> = {},
-  ) => (
-    <Box gap={1} alignItems="center" justifyContent="center" width="100%">
-      {withDividers(
-        items.map(t => iconButton(`${prefix}:${t.id}`, t.icon, t.label, t.id === active, () => select(t.id), tints[t.id])),
-        prefix,
-      )}
-    </Box>
-  )
+  ) => {
+    const buttons = items.map(t => iconButton(`${prefix}:${t.id}`, t.icon, t.label, t.id === active, () => select(t.id), tints[t.id]))
+
+    return (
+      <Box gap={isTerminal ? 2 : 1} alignItems="center" justifyContent="center" width="100%">
+        {isTerminal ? buttons : withDividers(buttons, prefix)}
+      </Box>
+    )
+  }
 
   // 拉滿整行的橫條圖（stretchedSvg 畫的），落在這一列的正中間。
   const stretched = (source: string, alt: string, heightPx: number) =>

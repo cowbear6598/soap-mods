@@ -54,15 +54,23 @@ export function viewText(raw: string): { text: string; isTruncated: boolean } | 
   return cutAtLineEnd(raw.replace(/\r\n?|[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, m => (m[0] === '\r' ? '\n' : '')))
 }
 
-/** `812 B`, `4.2 KB`, `13 MB`: one decimal below 10. */
-export function formatSize(bytes: number) {
+/** `{ num: '4.2', unit: 'KB' }`: one decimal past bytes, at most three digits before it. */
+export function sizeParts(bytes: number) {
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
   let n = bytes
   let i = 0
-  while (n >= 1024 && i < units.length - 1) {
+  // 到 1000 就換下一個單位（四捨五入後的也算），數字最多三位整數：最寬是「999.9 KB」。
+  while (Number(n.toFixed(1)) >= 1000 && i < units.length - 1) {
     n /= 1024
     i += 1
   }
 
-  return `${i === 0 || n >= 10 ? Math.round(n) : n.toFixed(1)} ${units[i]}`
+  return { num: i === 0 ? String(n) : n.toFixed(1), unit: units[i] ?? '' }
+}
+
+/** `812 B`, `4.2 KB`, `13.0 MB`. */
+export function formatSize(bytes: number) {
+  const { num, unit } = sizeParts(bytes)
+
+  return `${num} ${unit}`
 }

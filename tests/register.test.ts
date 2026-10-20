@@ -49,9 +49,9 @@ test('the bottom of the pane shows 5h and weekly remaining, half each, on both s
     expect(await ui.find({ type: 'Text', text: '15%' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: ' · 2h 13m' })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: ' · 3d 3h 0m' })).toBeDefined()
-    // 終端機的 bar 是一排 █░，顏色跟剩下的多少走。
+    // 終端機的 bar 是一段 █ 接一段 ░，顏色跟剩下的多少走。
     if (surface === 'terminal') {
-      expect((await ui.findAll({ type: 'Text', text: /^[█░]+$/ })).map(t => t.props.color)).toEqual(['success', 'error'])
+      expect((await ui.findAll({ type: 'Text', text: /^█+$/ })).map(t => t.props.color)).toEqual(['success', 'error'])
     }
     await ui.unmount()
   }
@@ -807,7 +807,9 @@ test('the Files tab lists the session folder, folders first, opens a folder and 
   expect(await ui.find({ key: 'sub:diff' })).toBeUndefined()
   expect(await ui.find({ key: 'files:dir:src' })).toBeDefined()
   expect(await ui.find({ key: 'files:file:README.md' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '4.2 KB' })).toBeDefined()
+  // 大小那欄：數字、單位分兩格。
+  expect(await ui.find({ type: 'Text', text: '4.2' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'KB' })).toBeDefined()
   // session 資料夾本身：沒有路徑、沒有 Back。
   expect(await ui.find({ key: 'files:back' })).toBeUndefined()
 

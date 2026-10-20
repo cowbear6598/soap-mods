@@ -90,8 +90,10 @@ export const MENU_WIDTH = 26
 // 圖示按鈕的寬度：這串空白撐出按鈕，底色、hover、圖示都對齊這塊區域。
 // 用不換行空白（ ），一般空白會被吃掉。
 export const ICON_BUTTON_LABEL = ' '.repeat(10)
+// 一長串字元要多長才比任何面板都寬（超出的部分被裁掉）：整行按鈕的 label、終端機的分隔線和用量 bar。
+export const OVERFLOW_CHARS = 400
 // 整行按鈕的 label：比任何面板都寬，超出整行的部分被裁掉。
-export const ROW_BUTTON_LABEL = ' '.repeat(400)
+export const ROW_BUTTON_LABEL = ' '.repeat(OVERFLOW_CHARS)
 // 包住那顆按鈕的那層有多寬（欄數；百分比最多 100%，不夠用）：比按鈕寬，按鈕才不會被壓窄而在最右邊畫出「…」。
 export const ROW_OVERLAY_WIDTH = ROW_BUTTON_LABEL.length * 2
 
@@ -103,7 +105,7 @@ export const ACTIVE_ICON = '#ffffff'
 // 分隔線。桌面版把 Svg 畫成 max-width:100% 的圖，寬度會被壓到面板寬、高度固定 1px；
 // preserveAspectRatio="none" 讓線跟著拉伸，不會被等比縮到看不見。終端機沒有 Svg，用一長串橫線字元。
 export const DIVIDER_PX = 4000
-export const DIVIDER_TEXT = '─'.repeat(400)
+export const DIVIDER_TEXT = '─'.repeat(OVERFLOW_CHARS)
 
 // 一種顏色：theme 給 Text（跟著主題），hex 給 Svg（要色碼）。
 export type Tint = { theme: string; hex: string; background?: string }
@@ -211,9 +213,10 @@ export const USAGE_WINDOWS = [
 ]
 // 重置倒數多久重畫一次。
 export const USAGE_TICK_MS = 60_000
-// bar 的高度（桌面版，px）；終端機的文字 bar 有幾格。
+// bar 的高度（桌面版，px）；終端機的文字 bar：剩餘、用掉的各一長串方塊，被裁到那段的寬度。
 export const USAGE_BAR_PX = 4
-export const USAGE_BAR_CELLS = 10
+export const USAGE_BAR_FULL = '█'.repeat(OVERFLOW_CHARS)
+export const USAGE_BAR_EMPTY = '░'.repeat(OVERFLOW_CHARS)
 
 // Services 分頁開著時多久重新掃一次程序（掃一次大約 1 秒）。
 export const SERVICES_SCAN_MS = 5_000

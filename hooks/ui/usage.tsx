@@ -1,6 +1,6 @@
 // 面板最底下的用量：左邊 5h、右邊 weekly，各占一半。
 
-import { ACTIVE_BG, DANGER, GOOD, USAGE_BAR_CELLS, USAGE_BAR_PX, USAGE_WINDOWS, WARN } from '../config'
+import { ACTIVE_BG, DANGER, GOOD, USAGE_BAR_EMPTY, USAGE_BAR_FULL, USAGE_BAR_PX, USAGE_WINDOWS, WARN } from '../config'
 import type { UsageReading } from './actions'
 import { stretchedSvg } from './svg'
 import type { Widgets } from './widgets'
@@ -28,14 +28,28 @@ function formatResetIn(resetsAt: string | undefined, now: number) {
 export function usageBar(w: Widgets, windows: readonly UsageReading[], now: number) {
   const { Box, Text } = w
 
+  // 終端機的文字 bar：剩餘、用掉的各一格百分比寬的 Box，裡面一長串方塊被裁到那個寬度，填滿那一半。
+  const segment = (width: number, glyphs: string, color: string) => (
+    <Box width={`${width}%`} height={1} overflow="hidden">
+      <Text color={color}>{glyphs}</Text>
+    </Box>
+  )
+  // 百分比寬只收整數：rounded 是四捨五入過的剩餘。
+  const textBar = (rounded: number, color: string) => (
+    <Box width="100%">
+      {segment(rounded, USAGE_BAR_FULL, color)}
+      {segment(100 - rounded, USAGE_BAR_EMPTY, color)}
+    </Box>
+  )
+
   // 其中一半：「5h · 93% · 2h 26m」一行，下面一條剩餘用量的 bar；還沒有讀數就是「5h · —」。
   const half = (u: (typeof USAGE_WINDOWS)[number]) => {
     const reading = windows.find(r => r.kind === u.kind)
     const remaining = reading === undefined ? 0 : Math.max(0, Math.min(100, 100 - reading.percentUsed))
-    const percent = `${Math.round(remaining)}%`
+    const rounded = Math.round(remaining)
+    const percent = `${rounded}%`
     const resetIn = reading === undefined ? '' : formatResetIn(reading.resetsAt, now)
     const level = usageLevel(remaining)
-    const cells = Math.round((remaining / 100) * USAGE_BAR_CELLS)
 
     return (
       <Box key={`usage:${u.kind}`} width="50%" flexDirection="column" paddingX={1}>
@@ -60,7 +74,7 @@ export function usageBar(w: Widgets, windows: readonly UsageReading[], now: numb
                 `${percent} left`,
                 USAGE_BAR_PX,
               )
-            : <Text color={level.theme}>{`${'█'.repeat(cells)}${'░'.repeat(USAGE_BAR_CELLS - cells)}`}</Text>)}
+            : textBar(rounded, level.theme))}
       </Box>
     )
   }

@@ -1,5 +1,5 @@
 import type { FolderEntry } from '../../../types'
-import { childPath, formatSize } from '../../files/list'
+import { childPath, sizeParts } from '../../files/list'
 import { DANGER, FILES_WALK_LIMIT, FOLDER_COLOR, MENU_BG, MENU_WIDTH, MUTED } from '../../config'
 import { splitPath } from '../../git/parse'
 import { hasQuery } from '../../search'
@@ -19,10 +19,18 @@ export const filesTab: TabBody = ctx => {
   const isSearching = hasQuery(f.query)
 
   const paths = f.entries.map(e => childPath(f.dir, e.name))
+  // 大小那欄的數字、單位各自照這頁最寬的排，不留多的空白；資料夾不算。
+  const sizes = new Map(f.entries.filter(e => e.kind === 'file').map(e => [e.name, sizeParts(e.size)]))
+  const widths: SizeWidths = { num: 0, unit: 0 }
+  for (const s of sizes.values()) {
+    widths.num = Math.max(widths.num, s.num.length)
+    widths.unit = Math.max(widths.unit, s.unit.length)
+  }
 
   // 資料夾點了進去；檔案（連結也是）點了看內容，大小貼在最右邊。
   const entryRow = (e: FolderEntry, i: number) => {
     const path = paths[i] ?? ''
+    const size = sizes.get(e.name)
     const trailing = moreButton(ctx, path)
 
     return e.kind === 'dir'
@@ -32,7 +40,7 @@ export const filesTab: TabBody = ctx => {
           label: e.name,
           isDim: e.kind === 'other',
           isTruncated: true,
-          rest: e.kind === 'file' && <Text dimColor>{formatSize(e.size)}</Text>,
+          rest: size !== undefined && sizeCell(ctx, size, widths),
           trailing,
           onPress: () => a.openFile(path),
         })
@@ -85,11 +93,29 @@ function searchBody(ctx: TabContext) {
   )
 }
 
+// 大小那欄分兩段固定寬的格子（數字、單位），各自靠左，一列一列上下對齊；widths 是這頁最寬的。
+type SizeWidths = Record<'num' | 'unit', number>
+
+function sizeCell({ w }: TabContext, { num, unit }: ReturnType<typeof sizeParts>, widths: SizeWidths) {
+  const { Box, Text } = w
+
+  return (
+    <Box gap={1} flexShrink={0}>
+      <Box width={widths.num}>
+        <Text dimColor>{num}</Text>
+      </Box>
+      <Box width={widths.unit}>
+        <Text dimColor>{unit}</Text>
+      </Box>
+    </Box>
+  )
+}
+
 const moreKey = (path: string) => `files:more:${path}`
 
 // 一列最右邊的 ⋯：選單開著時亮底。
 function moreButton({ w, d, a }: TabContext, path: string) {
-  return w.iconButton(moreKey(path), 'more', 'More', d.files.menu === path, () => a.toggleFileMenu(path))
+  return w.iconButton(moreKey(path), 'more', '...', d.files.menu === path, () => a.toggleFileMenu(path))
 }
 
 // 打開的選單：有框、有底色的卡片，貼著列表右邊，浮在 ⋯ 那列下面（最後幾列放不下就浮在上面）。
