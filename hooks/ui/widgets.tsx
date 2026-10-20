@@ -56,7 +56,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
   // 1. 墊底的 Button 撐出外框大小，選中的底色畫在外框上；它被蓋住，點不到；
   // 2. Svg 那層鋪滿外框、置中；
   // 3. 最上層是一模一樣的 Button，剛好蓋滿外框，接點擊，hover 的亮底也就是外框大小。
-  // tint：圖示固定用這個顏色（停止鈕的紅色）；終端機沒有 Svg，就在按鈕前面放一個同色的方塊。
+  // tint：圖示固定用這個顏色（停止鈕的紅色）；終端機沒有 Svg，就在按鈕前面放一個同色的方塊、字也用這個顏色（Confirm、停止是紅字，Copied 是綠字）。
   // tint.background：外框固定用這個底色（等著確認刪除的紅底），蓋過選中的底色。
   const iconButton = (key: string, icon: IconName, label: string, isActive: boolean, action: () => unknown, tint?: Tint) => {
     const onPress = press(action)
@@ -64,7 +64,9 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
     return Svg === undefined ? (
       <Box key={`${key}:box`}>
         {tint !== undefined && <Text color={tint.theme}>■</Text>}
-        <Button key={key} label={label} variant={isActive ? 'primary' : 'secondary'} onPress={onPress} />
+        <Button key={key} label={label} variant={isActive ? 'primary' : 'secondary'} onPress={onPress}>
+          {tint !== undefined && <Text color={tint.theme}>{label}</Text>}
+        </Button>
       </Box>
     ) : (
       <Box key={`${key}:box`} position="relative" backgroundColor={tint?.background ?? (isActive ? ACTIVE_BG : undefined)}>
@@ -447,7 +449,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
   }
 
   // 差異（unified-diff hunk），改到的字詞反白；終端機以外用等寬字。
-  const diff = (source: string, path: string) => diffBody(ui, source, path, isTerminal)
+  const diff = (source: string, path: string) => diffBody(ui, source, path, isTerminal, divider)
 
   // 分隔線：夾在兩條線中間的東西就會上下對稱。
   const divider =

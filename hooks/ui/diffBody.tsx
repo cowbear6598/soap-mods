@@ -1,5 +1,7 @@
 // 差異本身：一行一列自己畫，加的行綠字、減的行紅字，跟配對那行比起來改到的字詞才反白。
-// 行數太多就交回引擎的 Code（有語法高亮，沒有字詞反白）。由 widgets 的 w.diff 依畫面呼叫。
+// 行數太多就交回引擎的 Code（有語法高亮，沒有字詞反白），一段一個 Code，段落之間一樣有分隔線。由 widgets 的 w.diff 依畫面呼叫。
+
+import type { RenderChildren } from 'claude-code'
 
 import { DIFF_STYLE, WORD_DIFF_MAX_ROWS } from '../config'
 import type { DiffRow } from '../git/wordDiff'
@@ -27,18 +29,33 @@ function rowsOf(source: string) {
 /**
  * `source`: unified-diff hunks, as `Code format="diff"` takes them. Off the
  * terminal the text is drawn monospaced (`mono`), so numbers and indents line
- * up; the terminal is monospaced already and refuses the prop.
+ * up; the terminal is monospaced already and refuses the prop. `divider`:
+ * the panel's divider, drawn above every hunk but the first.
  */
-export function diffBody(ui: Pick<Ui, 'Box' | 'Code' | 'Text'>, source: string, path: string, isTerminal: boolean) {
+export function diffBody(ui: Pick<Ui, 'Box' | 'Code' | 'Text'>, source: string, path: string, isTerminal: boolean, divider: RenderChildren) {
   const { Box, Code, Text } = ui
-  if (source.split('\n').length > WORD_DIFF_MAX_ROWS) return <Code source={source} format="diff" path={path} />
+  // 段落開頭：第二段起上面先空一行、畫分隔線，一看就知道跳到檔案的別處了。
+  const hunk = (i: number, body: RenderChildren) => (
+    <Box key={`diff:${i}`} flexDirection="column" marginTop={i === 0 ? 0 : 1}>
+      {i > 0 && divider}
+      {body}
+    </Box>
+  )
+  if (source.split('\n').length > WORD_DIFF_MAX_ROWS) {
+    // 內容行開頭是空白、+、-、\，只有段落標頭是 @@，在那裡切開。
+    return (
+      <Box key="diff" flexDirection="column">
+        {source.split(/\n(?=@@)/).map((h, i) => hunk(i, <Code source={h} format="diff" path={path} />))}
+      </Box>
+    )
+  }
   const { rows, width } = rowsOf(source)
   const mono = isTerminal ? {} : { mono: true }
 
   return (
     <Box key="diff" flexDirection="column">
       {rows.map((r, i) => {
-        if (r.kind === 'hunk') return <Text key={`diff:${i}`} {...mono} dimColor wrap="truncate-end">{r.text}</Text>
+        if (r.kind === 'hunk') return hunk(i, <Text {...mono} color="suggestion" wrap="truncate-end">{r.text}</Text>)
         const style = ROW_STYLE[r.kind]
         const hasChange = r.segs.some(s => s.isChanged)
 
