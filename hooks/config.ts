@@ -78,6 +78,12 @@ export const LOG_AGO_WIDTH = 4
 export const PATH_NAME_WIDTH = 14
 // 選中的 tab 恆亮的底色。
 export const ACTIVE_BG = '#3a3a3a'
+// 差異的顏色：加的行綠字、減的行紅字（VS Code Dark 的 git 顏色），整行不上底色；
+// 跟配對那行比改到的字詞才上底色、字換成主題的一般字色，跟旁邊的字對比夠才看得出來。
+export const DIFF_STYLE = {
+  add: { text: '#73c991', word: '#2d6a35' },
+  remove: { text: '#f48771', word: '#8b2e2e' },
+} as const
 // Files 分頁 ⋯ 選單的底色（不透明，蓋住底下的列）和寬度（字數，放得下 Press again to delete）。
 export const MENU_BG = '#262626'
 export const MENU_WIDTH = 26
@@ -195,6 +201,8 @@ export const DB_PROCESS_TIMEOUT_MS = (DB_LOGIN_TIMEOUT_S + DB_QUERY_TIMEOUT_S + 
 
 // 差異、檔案內容最多畫前面這麼多字（引擎一次最多畫 100000 字），切在行尾。
 export const CODE_MAX_CHARS = 60_000
+// 差異自己一行一列畫（改到的字詞反白），最多畫這麼多行；超過就交回引擎的 Code 畫（沒有字詞反白），免得幾千個 Text 把桌面版卡住。
+export const WORD_DIFF_MAX_ROWS = 800
 
 // 面板最底下的用量：左邊 5h、右邊 weekly，各占一半。kind 是引擎回報的視窗名稱。
 export const USAGE_WINDOWS = [

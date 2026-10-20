@@ -22,7 +22,7 @@ export function parseStatus(out: string): GitFile[] {
   return files
 }
 
-/** Keep what `Code format="diff"` reads: from the first hunk header on. */
+/** Keep the unified-diff hunks (what diffBody and `Code format="diff"` read): from the first hunk header on. */
 export function toHunks(diff: string): { source: string; isTruncated: boolean } {
   const start = diff.indexOf('@@')
   const { text, isTruncated } = cutAtLineEnd(start === -1 ? '' : diff.slice(start))

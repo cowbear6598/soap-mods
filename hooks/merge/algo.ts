@@ -88,11 +88,11 @@ type DiffHunk = { aStart: number; aEnd: number; bStart: number; bEnd: number }
 const MAX_DIFF_EDITS = 2000
 
 /**
- * The places where two lists of lines differ, in order (Myers' diff, the
+ * The places where two lists of strings (lines, or a line's words) differ, in order (Myers' diff, the
  * shortest edit; the common head and tail are trimmed first). Past
  * MAX_DIFF_EDITS differences, the whole trimmed middle is one change.
  */
-function diffLines(a: string[], b: string[]): DiffHunk[] {
+export function diffLines(a: string[], b: string[]): DiffHunk[] {
   let head = 0
   while (head < a.length && head < b.length && a[head] === b[head]) head += 1
   let endA = a.length

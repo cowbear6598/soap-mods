@@ -120,9 +120,9 @@ test('pressing a changed file shows its diff over the tabs, Next/Previous step t
   expect(await ui.find({ key: 'file:staged:new.ts' })).toBeDefined()
   expect(await ui.find({ key: 'file:staged:old.ts' })).toBeUndefined()
   // 沒點之前不顯示差異；點了在 Soap Panel 裡蓋掉分頁看，Back 回來。
-  expect(await ui.find({ type: 'Code' })).toBeUndefined()
+  expect(await ui.find({ key: 'diff' })).toBeUndefined()
   await ui.press({ key: 'file:unstaged:a.ts' })
-  expect(await ui.find({ type: 'Code' })).toBeDefined()
+  expect(await ui.find({ key: 'diff' })).toBeDefined()
   expect(await ui.find({ key: 'tab:git' })).toBeUndefined()
   // Previous／Next 照 diff 分頁的順序走：new.ts → a.ts → b.ts（未追蹤的對空檔案），到頭了不動。
   expect(await ui.find({ type: 'Text', text: '2 of 3 files' })).toBeDefined()
@@ -135,7 +135,7 @@ test('pressing a changed file shows its diff over the tabs, Next/Previous step t
   await ui.press({ key: 'diff:prev' })
   expect(await ui.find({ type: 'Text', text: '2 of 3 files' })).toBeDefined()
   await ui.press({ key: 'diff:back' })
-  expect(await ui.find({ type: 'Code' })).toBeUndefined()
+  expect(await ui.find({ key: 'diff' })).toBeUndefined()
   expect(await ui.find({ key: 'file:unstaged:a.ts' })).toBeDefined()
   await ui.unmount()
 })
@@ -686,7 +686,7 @@ test('pressing a commit lists its files, a file shows its diff in that commit, a
   expect(await ui.find({ type: 'Text', text: 'Files · 2' })).toBeDefined()
   expect(await ui.find({ key: `commit:${sha(1)}` })).toBeUndefined()
   await ui.press({ key: 'commit-file:src/a.ts' })
-  expect(await ui.find({ type: 'Code' })).toBeDefined()
+  expect(await ui.find({ key: 'diff' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'src/a.ts' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: `@ ${short(0)}` })).toBeDefined()
   // Back 回到 commit 的檔案列表，再 Back 回 commit 列表。
@@ -1517,7 +1517,8 @@ test('at turn end the repo bar and an open diff reread, and the diff closes once
   gitRepo(on, { status: () => status, run: cmd => (cmd[0] === 'diff' ? ok(diff) : undefined) })
   await openPanel($)
   const label = async () => (await ui.find({ key: 'repo:repo' }))?.props.label
-  const source = async () => (await ui.find({ type: 'Code' }))?.props.source
+  // 差異一行一列畫：整塊的字是「行號 標記 內容」接起來。
+  const source = async () => (await ui.find({ key: 'diff' }))?.text
 
   const ui = await mountPane($)
   expect(await label()).toBe('repo*')
@@ -1528,15 +1529,15 @@ test('at turn end the repo bar and an open diff reread, and the diff closes once
 
   // 開著的差異：Claude 又改了 a.ts，換成新的差異。
   await ui.press({ key: 'file:unstaged:a.ts' })
-  expect(await source()).toContain('+b')
+  expect(await source()).toContain('+ b')
   diff = diffOf('c')
   await endTurn($, ui)
-  expect(await source()).toContain('+c')
+  expect(await source()).toContain('+ c')
 
   // Claude 把變更都 commit 了：差異關掉、回到分頁，repo 名稱後面的記號也拿掉。
   status = '## main\0'
   await endTurn($, ui)
-  expect(await ui.find({ type: 'Code' })).toBeUndefined()
+  expect(await ui.find({ key: 'diff' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'No uncommitted changes.' })).toBeDefined()
   expect(await label()).toBe('repo')
   await ui.unmount()

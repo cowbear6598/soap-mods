@@ -217,7 +217,7 @@ test('Distill drafts what is worth keeping into an inbox; Accept writes a draft 
 
   // 改既有頁面的草稿：看差異，Accept 整頁取代，草稿不見。
   await ui.press({ key: 'wiki:draft:0-2.md' })
-  expect((await ui.find({ type: 'Code' }))?.props.source).toBe('@@ -1,2 +1,3 @@\n # Style\n - Tabs\n+- No semicolons')
+  expect((await ui.find({ key: 'diff' }))?.text).toBe('@@ -1,2 +1,3 @@1   # Style2   - Tabs3 + - No semicolons')
   await ui.press({ key: 'wiki:accept' })
   expect(files[`${WIKI}/style.md`]).toBe('# Style\n- Tabs\n- No semicolons\n')
   expect(files[`${WIKI}/.drafts/0-2.md`]).toBeUndefined()

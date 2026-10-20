@@ -5,10 +5,11 @@ import type { DiffPaneView } from '../../types'
 import { KIND_STYLE } from '../config'
 import { commitsLabel } from '../git/parse'
 import type { Actions, Press, Ui } from './actions'
+import type { Widgets } from './widgets'
 import { stepBar } from './stepBar'
 
-export function diffView(ui: Ui, shown: DiffPaneView, a: Actions, press: Press) {
-  const { Box, Code, Text } = ui
+export function diffView(ui: Ui, w: Widgets, shown: DiffPaneView, a: Actions, press: Press) {
+  const { Box, Text } = ui
   const kind = KIND_STYLE[shown.kind]
   const index = shown.files.findIndex(f => f.path === shown.path)
 
@@ -26,7 +27,7 @@ export function diffView(ui: Ui, shown: DiffPaneView, a: Actions, press: Press) 
       {shown.diff === '' ? (
         <Text dimColor>No text diff to show (binary file, or only the mode changed).</Text>
       ) : (
-        <Code source={shown.diff} format="diff" path={shown.path} />
+        w.diff(shown.diff, shown.path)
       )}
       {shown.isTruncated && <Text dimColor>Diff is too long; showing only the beginning.</Text>}
     </Box>

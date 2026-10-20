@@ -1,4 +1,4 @@
-// Soap Panel 上共用的小元件：圖示按鈕、整行可點的列、檔案列、搜尋框、圖示分頁列、分隔線。
+// Soap Panel 上共用的小元件：圖示按鈕、整行可點的列、檔案列、搜尋框、圖示分頁列、差異、分隔線。
 // 依畫面（終端機／桌面版）決定怎麼畫，分頁只管要畫什麼。
 
 import type { RenderChildren } from 'claude-code'
@@ -19,6 +19,7 @@ import {
   ROW_OVERLAY_WIDTH,
 } from '../config'
 import type { Press, Ui } from './actions'
+import { diffBody } from './diffBody'
 import { DIVIDER_SVG, iconSvg } from './svg'
 
 type Row = {
@@ -277,6 +278,9 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
     )
   }
 
+  // 差異（unified-diff hunk），改到的字詞反白；終端機以外用等寬字。
+  const diff = (source: string, path: string) => diffBody(ui, source, path, isTerminal)
+
   // 分隔線：夾在兩條線中間的東西就會上下對稱。
   const divider =
     Svg === undefined ? (
@@ -287,7 +291,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
       stretched(DIVIDER_SVG, 'Divider', 1)
     )
 
-  return { Box, Button, Code, Markdown, Text, hasSvg: Svg !== undefined, press, iconButton, deleteButton, rollbackButton, pressRow, pathRow, pager, searchField, field, select, iconBar, stretched, divider }
+  return { Box, Button, Code, Markdown, Text, diff, hasSvg: Svg !== undefined, press, iconButton, deleteButton, rollbackButton, pressRow, pathRow, pager, searchField, field, select, iconBar, stretched, divider }
 }
 
 export type Widgets = ReturnType<typeof makeWidgets>

@@ -647,7 +647,7 @@ async function selectRepo($: EngineInterface, name: string) {
 
 const DIFF_FLAGS = ['--no-color', '--no-ext-diff', '--no-textconv']
 
-// 跑一次 diff，只留 hunk（Code format="diff" 要的）；讀不到就帶著錯誤訊息。
+// 跑一次 diff，只留 hunk（w.diff 畫的）；讀不到就帶著錯誤訊息。
 // fallback：結束碼不是 0 時改跑的另一個 diff（還沒有任何 commit 時沒有 HEAD，改看已暫存的內容）。
 async function runDiff($: EngineInterface, args: string[], fallback?: string[]) {
   let out = ''

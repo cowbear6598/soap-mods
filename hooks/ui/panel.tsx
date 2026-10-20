@@ -83,13 +83,13 @@ function subTabBar<T extends keyof SubTabs>({ w, d, a }: TabContext, tab: T, tin
 }
 
 // 打開了衝突檔案、檔案的差異或檔案內容：蓋掉分頁畫它；都沒有是 null。
-function coverView(ui: Ui, d: PanelData, a: Actions, press: Press) {
+function coverView(ui: Ui, w: Widgets, d: PanelData, a: Actions, press: Press) {
   const c = d.cover
   switch (c.kind) {
     case 'merge':
       return mergeView(ui, c.data, d.view.op, d.isMergeBusy, a, press)
     case 'diff':
-      return diffView(ui, c.data, a, press)
+      return diffView(ui, w, c.data, a, press)
     case 'file':
       return fileView(ui, c.data, d.files, a, press)
     case 'none':
@@ -105,7 +105,7 @@ export function renderPanel(drawUi: Ui, d: PanelData, a: Actions, press: Press) 
   const { Box, Text } = w
   const ctx: TabContext = { w, d, a }
   const isGit = d.tab === 'git'
-  const cover = coverView(ui, d, a, press)
+  const cover = coverView(ui, w, d, a, press)
 
   const content =
     cover !== null ? (

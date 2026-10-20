@@ -186,7 +186,7 @@ function draftBody({ w, d }: TabContext, draft: WikiDraft) {
   if (draft.kind === 'write') {
     if (draft.isNew) return <Markdown text={s.text} />
 
-    return s.diff === '' ? <Text dimColor>Same as the page now.</Text> : <w.Code source={s.diff} format="diff" path={draft.target} />
+    return s.diff === '' ? <Text dimColor>Same as the page now.</Text> : w.diff(s.diff, draft.target)
   }
   const intro =
     draft.kind === 'move' ? (
