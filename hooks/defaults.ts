@@ -45,6 +45,7 @@ export const EMPTY_WIKI: WikiView = {
   deleteArmed: '',
   deleteError: '',
   model: '',
+  isModelOpen: false,
   distillNote: '',
   ...NO_WIKI_OPEN,
 }

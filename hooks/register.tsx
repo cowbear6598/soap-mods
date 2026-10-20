@@ -222,7 +222,8 @@ const spec = atom({ plugin: 'soap-mods', key: 'spec' } as const, EMPTY_SPEC)
 // 看得到的 Tab 的子分頁；沒有子分頁的 Tab 是 undefined。
 const shownSub = (t: TabId, subs: SubTabs) => (hasSubTabs(t) ? subs[t] : undefined)
 // Wiki 子分頁：.soap/wiki 的頁面、勾了哪幾頁、Distill 的草稿，和打開的那頁或那份草稿。
-const wiki = atom({ plugin: 'soap-mods', key: 'wiki' } as const, EMPTY_WIKI)
+// shape：WikiView 改了樣子（加欄位、改說明文字）就換；熱重載後整個 Wiki 狀態（勾選以外的畫面狀態、打開的頁面）從頭來，不沿用舊程式留下的值。
+const wiki = atom({ plugin: 'soap-mods', key: 'wiki' } as const, EMPTY_WIKI, { shape: 'wiki-2' })
 // 這段對話已經帶給 Claude 的頁面：每頁一段對話只送一次。
 const wikiSent = atom({ plugin: 'soap-mods', key: 'wikiSent' } as const, NO_WIKI_SENT)
 // Wiki 子分頁資料夾的開合，key 是資料夾路徑（含結尾的 /）；沒有的是打開。
@@ -1751,7 +1752,7 @@ async function readWikiModel($: EngineInterface): Promise<WikiModel | ''> {
 }
 
 async function selectWikiModel($: EngineInterface, model: WikiModel) {
-  await setWiki($, { model })
+  await setWiki($, { model, isModelOpen: false })
   await $.store.set(WIKI_MODEL_KEY, model).catch(() => undefined)
 }
 
@@ -1902,11 +1903,9 @@ async function deleteWikiFile($: EngineInterface, path: string) {
   await loadWiki($)
 }
 
-// Distill 沒產生草稿的原因。
-function distillFailure(r: Exclude<ModelForkResult, { isAnswered: true }>): string {
+// Distill 沒產生草稿的原因。還沒有回覆過（nothing-to-fork：新對話、剛 /clear）不算失敗，由呼叫的地方不說話。
+function distillFailure(r: Exclude<ModelForkResult, { isAnswered: true } | { reason: 'nothing-to-fork' }>): string {
   switch (r.reason) {
-    case 'nothing-to-fork':
-      return 'Nothing to distill yet: Claude has not replied in this conversation (it is new or was just cleared).'
     case 'api-error':
       return `Distill failed: the API answered ${r.error}${r.status === null ? '' : ` (${r.status})`}. Try again.`
     case 'empty-reply':
@@ -1917,7 +1916,7 @@ function distillFailure(r: Exclude<ModelForkResult, { isAnswered: true }>): stri
 }
 
 // 問選的模型這段對話值得留下什麼。跟對話同一種（或兩邊都不知道）就從快取接著問（模型就是對話的）；
-// 其他的把對話轉成文字另外問，還沒有回覆過就跟接著問一樣說沒東西可整理。
+// 其他的把對話轉成文字另外問，還沒有回覆過就跟接著問一樣回 nothing-to-fork。
 async function askDistill($: EngineInterface, model: WikiModel | '', current: WikiModel | '', pages: { shown: readonly PageText[]; named: readonly string[] }): Promise<ModelForkResult> {
   if (model === '' || model === current) return $.model.fork({ prompt: distillPrompt(pages.shown, pages.named) })
   const messages = await $.session.messages()
@@ -1951,8 +1950,9 @@ async function distillWiki($: EngineInterface) {
     const drafts = r.isAnswered ? parseDistill(r.text) : []
     const now = await $.clock.now()
     await Promise.all(drafts.map((d, i) => $.fs.write(draftAbs(root, `${now}-${i + 1}.md`), draftText(d.target, d.body))))
-    // 有草稿就不寫說明：Drafts (N) 的標題已經寫了幾份，說明裡的數字會在 Accept／Discard 後過時。
-    note = !r.isAnswered ? distillFailure(r) : drafts.length === 0 ? 'Nothing new worth keeping in this conversation.' : ''
+    // 有草稿就不寫說明：Drafts (N) 的標題已經寫了幾份，說明裡的數字會在 Accept／Discard 後過時。還沒有回覆過也不寫。
+    if (!r.isAnswered) note = r.reason === 'nothing-to-fork' ? '' : distillFailure(r)
+    else note = drafts.length === 0 ? 'Nothing new worth keeping in this conversation.' : ''
   } catch (err) {
     note = `Distill failed: ${errorText(err)}`
   }
@@ -2321,6 +2321,7 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     distillWiki: () => void distillWiki($).catch(() => undefined),
     sendWikiPages: () => sendWikiPages($),
     selectWikiModel: model => selectWikiModel($, model),
+    toggleWikiModel: isOpen => setWiki($, { isModelOpen: isOpen }),
     addDbConnection: text => addDbConnection($, text),
     deleteDbConnection: id => deleteDbConnection($, id),
     openDbConnection: id => openDbConnection($, id),

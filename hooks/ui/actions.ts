@@ -118,6 +118,8 @@ export type Actions = {
   sendWikiPages: () => unknown
   // Summary Conversation 問哪個模型。
   selectWikiModel: (model: WikiModel) => unknown
+  // 終端機的模型選單打開、收起。
+  toggleWikiModel: (isOpen: boolean) => unknown
   // services
   runServiceAction: (s: Service, action: ServiceAction) => unknown
   // 關掉停止／重跑失敗的提示（定時掃描不會洗掉它）。

@@ -399,7 +399,9 @@ export type WikiView = {
   readError: string
   /** The model Summary Conversation asks, as picked in the tab (kept in the mod's store); '' before one is picked: the conversation's own. */
   model: WikiModel | ''
-  /** What the last Distill came to when it made no drafts (nothing to keep, nothing to read yet, an API error); '' otherwise. */
+  /** The terminal's model menu (drawn by the mod, not Select) is open. */
+  isModelOpen: boolean
+  /** What the last Distill came to when it made no drafts (nothing to keep, an API error; said nothing when Claude has not replied yet); '' otherwise. */
   distillNote: string
 }
 
@@ -482,7 +484,8 @@ declare module 'claude-code' {
       services: ServicesView
       files: FilesView
       spec: SpecView
-      wiki: WikiView
+      /** Shaped: the atom's shape changes with WikiView, so a hot reload drops what older code kept. */
+      wiki: Shaped<WikiView>
       wikiSent: WikiSent
       /** Wiki tab folders opened or closed by hand, keyed by the folder's path (`db/`); the rest are open. */
       wikiFolders: Record<string, boolean>

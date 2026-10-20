@@ -31,7 +31,8 @@ function wikiList(ctx: TabContext) {
 
   return (
     <Box flexDirection="column" gap={1}>
-      <Box gap={1} flexWrap="wrap" alignItems="center" justifyContent="center">
+      {/* 靠上：終端機打開模型選單時選項往下長，其他的留在第一行，不跟著置中往下掉。 */}
+      <Box gap={1} flexWrap="wrap" alignItems="flex-start" justifyContent="center">
         <Button
           key="wiki:distill"
           label={d.isDistilling ? 'Summarizing…' : 'Summary Conversation'}
@@ -48,6 +49,8 @@ function wikiList(ctx: TabContext) {
             const model = wikiModelOf(value)
             if (model !== '') void a.selectWikiModel(model)
           },
+          isOpen: s.isModelOpen,
+          onToggle: a.toggleWikiModel,
         })}
       </Box>
       {s.distillNote !== '' && <Text dimColor>{s.distillNote}</Text>}

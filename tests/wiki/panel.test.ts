@@ -236,7 +236,7 @@ test('Distill drafts what is worth keeping into an inbox; Accept writes a draft 
   expect(await ui.find({ type: 'Text', text: 'Nothing new worth keeping in this conversation.' })).toBeDefined()
   reply = { isAnswered: false, reason: 'nothing-to-fork' }
   await ui.press({ key: 'wiki:distill' })
-  expect(await ui.find({ type: 'Text', text: /^Nothing to distill yet/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Nothing new worth keeping/ })).toBeUndefined()
   reply = { isAnswered: false, reason: 'api-error', status: 529, error: 'overloaded', usage: {} }
   await ui.press({ key: 'wiki:distill' })
   expect(await ui.find({ type: 'Text', text: 'Distill failed: the API answered overloaded (529). Try again.' })).toBeDefined()
@@ -267,20 +267,30 @@ test('Summary Conversation asks the model picked beside it: the conversation\'s 
   const ui = await mountPane($)
   await ui.press({ key: 'tab:spec' })
   await ui.press({ key: 'sub:wiki' })
-  // 三種模型，還沒選過停在對話用的那種。
-  const picker = await ui.find({ key: 'wiki:model' })
-  expect(picker?.props.value).toBe('opus')
-  expect((picker?.props.options as { label: string }[] | undefined)?.map(o => o.label)).toEqual(['Opus', 'Sonnet', 'Haiku'])
+  // 終端機的 Select 點不到，自己畫的下拉選單：收著只有選的那個，還沒選過停在對話用的那種；點了隔一條線列出三種，選的在後面打勾，寬度都一樣。
+  const toggle = async () => String((await ui.find({ key: 'wiki:model' }))?.props.label)
+  const options = async () =>
+    (await Promise.all(['opus', 'sonnet', 'haiku'].map(id => ui.find({ key: `wiki:model:${id}` })))).map(b => b?.props.label)
+  expect(await toggle()).toBe(' Opus   ▾ ')
+  expect(await options()).toEqual([undefined, undefined, undefined])
+  await ui.press({ key: 'wiki:model' })
+  expect(await toggle()).toBe(' Opus   ▴ ')
+  expect(await options()).toEqual([' Opus   ✓ ', ' Sonnet   ', ' Haiku    '])
+  // 再點一次收起來。
+  await ui.press({ key: 'wiki:model' })
+  expect(await options()).toEqual([undefined, undefined, undefined])
 
-  // 選 Sonnet：存進 store（之後的 session 還在），對話轉成文字另外問。
-  await ui.select({ key: 'wiki:model', value: 'sonnet' })
-  expect((await ui.find({ key: 'wiki:model' }))?.props.value).toBe('sonnet')
+  // 選 Sonnet：收起來，存進 store（之後的 session 還在），對話轉成文字另外問。
+  await ui.press({ key: 'wiki:model' })
+  await ui.press({ key: 'wiki:model:sonnet' })
+  expect(await toggle()).toBe(' Sonnet ▾ ')
+  expect(await options()).toEqual([undefined, undefined, undefined])
   expect(store['wiki.model']).toBe('sonnet')
 
-  // 還沒有回覆過：不問，說沒東西可整理。
+  // 還沒有回覆過：不問，也不說什麼。
   await ui.press({ key: 'wiki:distill' })
   expect(completes).toEqual([])
-  expect(await ui.find({ type: 'Text', text: /^Nothing to distill yet.*\(Sonnet\)$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /\(Sonnet\)$/ })).toBeUndefined()
 
   messages = [
     { role: 'user', text: 'how do we deploy?', toolUses: [] },
@@ -295,12 +305,24 @@ test('Summary Conversation asks the model picked beside it: the conversation\'s 
   expect(await ui.find({ type: 'Text', text: 'Drafts (1)' })).toBeDefined()
 
   // 換回跟對話一樣的 Opus：從對話本身接著問。
-  await ui.select({ key: 'wiki:model', value: 'opus' })
+  await ui.press({ key: 'wiki:model' })
+  await ui.press({ key: 'wiki:model:opus' })
   await ui.press({ key: 'wiki:distill' })
   expect(forks).toHaveLength(1)
   expect(await ui.find({ type: 'Text', text: 'Nothing new worth keeping in this conversation. (Opus)' })).toBeDefined()
   expect(completes).toHaveLength(1)
   await ui.unmount()
+
+  // 桌面版還是下拉選單。
+  const desktop = await mountPane($, 'desktop')
+  await desktop.press({ key: 'tab:spec' })
+  await desktop.press({ key: 'sub:wiki' })
+  const picker = await desktop.find({ key: 'wiki:model' })
+  expect(picker?.type).toBe('Select')
+  expect((picker?.props.options as { label: string }[] | undefined)?.map(o => o.label)).toEqual(['Opus', 'Sonnet', 'Haiku'])
+  await desktop.select({ key: 'wiki:model', value: 'haiku' })
+  expect(store['wiki.model']).toBe('haiku')
+  await desktop.unmount()
 })
 
 test('the Wiki tab draws the pages as a tree of folders that open and close, Uncheck all clears every check, and @ puts a page path in the prompt box', async ($, on) => {

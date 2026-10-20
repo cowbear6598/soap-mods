@@ -308,9 +308,51 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
     )
   }
 
-  // 下拉選單（Wiki 的模型）；手機版沒有 Select，是 null。
-  const select = (key: string, props: { label: string; value: string; options: { value: string; label: string }[]; onSelect: (value: string) => unknown }) =>
-    'Select' in ui ? <ui.Select key={key} label={props.label} value={props.value} options={props.options} onSelect={value => void props.onSelect(value)} /> : null
+  // 下拉選單（Wiki 的模型）；手機版沒有 Select，是 null。終端機的 Select 只吃鍵盤（滑鼠點選項沒反應、展開還會變寬、點了收不回去），
+  // 自己畫一個：ACTIVE_BG 底的「Opus ▾」點了開合（isOpen、onToggle），底下隔一條線列出選項，選的在箭頭那欄打勾；
+  // 點了就選、收起來，焦點圈回到「Opus ▾」。每一列都補到同一個寬度，開合時不會變寬。
+  const select = (
+    key: string,
+    props: {
+      label: string
+      value: string
+      options: { value: string; label: string }[]
+      onSelect: (value: string) => unknown
+      isOpen: boolean
+      onToggle: (isOpen: boolean) => unknown
+    },
+  ) => {
+    if (!('Select' in ui)) return null
+    if (!isTerminal) {
+      return <ui.Select key={key} label={props.label} value={props.value} options={props.options} onSelect={value => void props.onSelect(value)} />
+    }
+    const width = Math.max(...props.options.map(o => o.label.length))
+    // 每一列「 名稱 ✓ 」：名稱前後各一格、箭頭或勾一格、再一格。
+    const rowWidth = width + 4
+    const current = props.options.find(o => o.value === props.value)?.label ?? props.value
+
+    return (
+      <Box key={`${key}:row`} gap={1} alignItems="flex-start">
+        <Text>{`${props.label}:`}</Text>
+        <Box key={`${key}:bg`} flexDirection="column" backgroundColor={ACTIVE_BG}>
+          <Button key={key} label={` ${fit(current, width)} ${props.isOpen ? '▴' : '▾'} `} plain onPress={press(() => props.onToggle(!props.isOpen))} />
+          {props.isOpen && [
+            <Text key={`${key}:divider`} dimColor>
+              {'─'.repeat(rowWidth)}
+            </Text>,
+            ...props.options.map(o => (
+              <Button
+                key={`${key}:${o.value}`}
+                label={` ${fit(o.label, width)} ${o.value === props.value ? '✓' : ' '} `}
+                plain
+                onPress={press(() => props.onSelect(o.value), key)}
+              />
+            )),
+          ]}
+        </Box>
+      </Box>
+    )
+  }
 
   // branch、log 分頁最上面的搜尋框。手機版沒有 Input，就不畫。邊打邊過濾；桌面版拔不掉框旁邊的 submit 按鈕，
   // 就讓它（和 Enter）清空搜尋（onInput('')）。框不能設寬度、撐不滿，所以整組水平置中。
