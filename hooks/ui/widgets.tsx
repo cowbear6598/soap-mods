@@ -40,6 +40,9 @@ type Row = {
   // 名稱後面淡色的一段字（pathRow 的資料夾），取代 rest：桌面版吃掉剩下的寬度、太長截頭；
   // 終端機畫在名稱同一顆按鈕裡（名稱補滿 labelWidth、太長截尾），點到 trailing 前都算。
   detail?: string
+  // 終端機上整行都要能點（log 的 commit 列）：lead 畫進名稱那顆按鈕裡（一項後面空一格）、rest 自己也是一顆一樣作用的按鈕。
+  // 這時 lead、rest 只能是字串和 Text（按鈕裡不能放 Box），用 cell 排。
+  isWholePressable?: boolean
   trailing?: RenderChildren
 }
 
@@ -106,10 +109,31 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
   )
 
   // 名稱裡的空白換成不換行空白：不然後面那串空白連不上，按鈕在名稱的空白處折行，反白只亮到那裡（Show in Explorer）。
-  const nbsp = (text: string) => text.replace(/ /g, ' ')
+  const NBSP = ' '
+  const nbsp = (text: string) => text.replace(/ /g, NBSP)
 
   // 名稱剛好 width 格：太長截成「…」，太短補空白。
   const fit = (text: string, width: number) => (text.length > width ? `${text.slice(0, width - 1)}…` : text.padEnd(width))
+
+  // 固定 width 格寬的一欄字（log 的 sha、作者、時間）。桌面版字寬不一，是固定寬的 Box、太長截尾；
+  // 終端機是 Text 補空白（能放進按鈕裡），太長截成「…」。空白不上色：焦點反白整顆按鈕時，上了色的空白會變成一塊色塊。
+  const cell = (key: string, text: string, width: number, style: { color?: string; isDim?: boolean; isEnd?: boolean } = {}) => {
+    const shown = (
+      <Text key={key} color={style.color} dimColor={style.isDim} wrap={isTerminal ? undefined : 'truncate-end'}>
+        {isTerminal ? nbsp(text.length > width ? fit(text, width) : text) : text}
+      </Text>
+    )
+    if (!isTerminal) {
+      return (
+        <Box key={key} width={width} flexShrink={0} overflow="hidden" justifyContent={style.isEnd === true ? 'flex-end' : undefined}>
+          {shown}
+        </Box>
+      )
+    }
+    const pad = NBSP.repeat(Math.max(0, width - text.length))
+
+    return style.isEnd === true ? [pad, shown] : [shown, pad]
+  }
 
   const pressRow = (row: Row) => {
     if (isTerminal) {
@@ -127,27 +151,36 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
         </Text>
       )
 
+      const rowButton = (key: string, children: RenderChildren) => (
+        <Button key={key} label={row.label} plain dimColor={row.isDim} onPress={onPress}>
+          {children}
+        </Button>
+      )
+      const isWhole = row.isWholePressable === true
+      const outerLead = isWhole ? undefined : row.lead
+      const innerLead = isWhole && row.lead !== undefined ? [row.lead].flat().flatMap(item => [item, NBSP]) : undefined
+      const rest = isWhole && row.rest ? rowButton(`${row.key}:rest`, row.rest) : row.rest
+
       return (
         <Box key={`${row.key}:row`} gap={1} paddingLeft={row.indent ?? 2} hover={{ backgroundColor: ACTIVE_BG }}>
-          {row.lead}
+          {outerLead}
           {fills ? (
             // 底下照常排的名稱只用來撐出寬度（被上面蓋住）；按鈕放在 absolute 那層，那串空白才不會把 rest、trailing 擠出畫面。
             <Box position="relative" width={labelWidth} flexGrow={grows ? 1 : undefined} flexShrink={1} minWidth={0} overflow="hidden">
               <Text wrap="truncate-end">{row.label}</Text>
               {rowOverlay(
-                <Button key={row.key} label={row.label} plain dimColor={row.isDim} onPress={onPress}>
-                  {name(nbsp(shown))}
-                  {row.detail && <Text dimColor>{nbsp(` ${row.detail}`)}</Text>}
-                  {ROW_BUTTON_LABEL}
-                </Button>,
+                rowButton(row.key, [
+                  innerLead,
+                  name(nbsp(shown)),
+                  row.detail && <Text dimColor>{nbsp(` ${row.detail}`)}</Text>,
+                  ROW_BUTTON_LABEL,
+                ]),
               )}
             </Box>
           ) : (
-            <Button key={row.key} label={row.label} plain dimColor={row.isDim} onPress={onPress}>
-              {name(row.label)}
-            </Button>
+            rowButton(row.key, [innerLead, name(row.label)])
           )}
-          {grows && row.rest ? <Box flexShrink={0}>{row.rest}</Box> : row.rest}
+          {grows && rest ? <Box flexShrink={0}>{rest}</Box> : rest}
           {row.trailing !== undefined && <Box flexShrink={0}>{row.trailing}</Box>}
         </Box>
       )
@@ -384,7 +417,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
       stretched(DIVIDER_SVG, 'Divider', 1)
     )
 
-  return { Box, Button, Code, Markdown, Text, diff, hasSvg: Svg !== undefined, press, iconButton, deleteButton, rollbackButton, pressRow, pathRow, pager, searchField, field, select, iconBar, stretched, divider }
+  return { Box, Button, Code, Markdown, Text, cell, diff, hasSvg: Svg !== undefined, press, iconButton, deleteButton, rollbackButton, pressRow, pathRow, pager, searchField, field, select, iconBar, stretched, divider }
 }
 
 export type Widgets = ReturnType<typeof makeWidgets>

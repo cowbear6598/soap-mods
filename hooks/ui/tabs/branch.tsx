@@ -30,7 +30,7 @@ export const branchTab: TabBody = ({ w, d, a }) => {
     const copyButton = w.iconButton(
       `copy:${id}`,
       isCopied ? 'check' : 'copy',
-      isCopied ? 'Copied' : 'Copy name',
+      isCopied ? 'Copied' : 'Copy',
       false,
       () => a.copyBranchName(b.name),
       isCopied ? COPIED_TINT : undefined,

@@ -80,25 +80,14 @@ function commitList({ w, d, a }: TabContext, lg: LogView) {
       isBold: isStart,
       color: isStart ? 'success' : undefined,
       indent: 0,
+      isWholePressable: true,
+      // git 的短 sha 在大 repo 會變長（10 碼），列表只畫前面幾碼，留一格間距才不會擠進作者欄。
       lead: [
-        <Box key={`commit:${c.sha}:unpushed`} width={1} flexShrink={0}>
-          {isUnpushed && <Text color="warning">↑</Text>}
-        </Box>,
-        <Box key={`commit:${c.sha}:sha`} width={LOG_SHA_WIDTH} flexShrink={0} overflow="hidden">
-          {/* git 的短 sha 在大 repo 會變長（10 碼），列表只畫前面幾碼，留一格間距才不會擠進作者欄。 */}
-          <Text color="suggestion">{c.shortSha.slice(0, LOG_SHA_WIDTH - 1)}</Text>
-        </Box>,
-        <Box key={`commit:${c.sha}:author`} width={LOG_AUTHOR_WIDTH} flexShrink={0} overflow="hidden">
-          <Text dimColor wrap="truncate-end">
-            {c.author}
-          </Text>
-        </Box>,
+        w.cell(`commit:${c.sha}:unpushed`, isUnpushed ? '↑' : '', 1, { color: 'warning' }),
+        w.cell(`commit:${c.sha}:sha`, c.shortSha.slice(0, LOG_SHA_WIDTH - 1), LOG_SHA_WIDTH, { color: 'suggestion' }),
+        w.cell(`commit:${c.sha}:author`, c.author, LOG_AUTHOR_WIDTH, { isDim: true }),
       ],
-      rest: (
-        <Box width={LOG_AGO_WIDTH} flexShrink={0} justifyContent="flex-end">
-          <Text dimColor>{formatAgo(c.time, now)}</Text>
-        </Box>
-      ),
+      rest: w.cell(`commit:${c.sha}:ago`, formatAgo(c.time, now), LOG_AGO_WIDTH, { isDim: true, isEnd: true }),
       onPress: lg.isPicking ? () => a.pickRange(c) : () => a.openCommit(c),
     })
   }
