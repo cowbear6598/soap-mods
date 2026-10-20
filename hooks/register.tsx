@@ -2226,6 +2226,16 @@ function loadTab($: EngineInterface, id: TabId) {
   if (showsGit(id)) void refresh($).catch(() => undefined)
 }
 
+// 已經為哪個 session 讀過看著的 Tab。畫的時候看到 id 換了就讀一次：剛開始的第一次畫，
+// 和 /clear 之後（換了 session id、狀態回到初始值，卻不發 session.start，不讀的話 Files 會一直停在讀取中）。
+let loadedSession: string | undefined
+
+function loadTabOnce($: EngineInterface, id: TabId, session: string) {
+  if (session === loadedSession) return
+  loadedSession = session
+  loadTab($, id)
+}
+
 // 換子分頁。Git 的 log 不在看的時候不讀，換過來才讀；Spec 的（計劃、wiki）換過去就重讀它。
 async function selectSubTab<T extends keyof SubTabs>($: EngineInterface, t: T, id: SubTabs[T]) {
   await Promise.all([update($, subTabs, s => ({ ...s, [t]: id })), leaveTab($)])
@@ -2331,12 +2341,9 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    // 先開面板（畫「讀取中…」），看著的 Tab 的資料在背景讀，不擋住 session 開始。
+    // 先開面板（畫「讀取中…」），看著的 Tab 的資料等第一次畫時在背景讀（loadTabOnce），不擋住 session 開始。
     isOpenPending = e.surface === null
     if (!isOpenPending) void $.ui.open(PANE_ARGS)
-    void read($, tab)
-      .then(t => loadTab($, t))
-      .catch(() => undefined)
     $.clock.every(FOCUS_WATCH_MS, () => void focusWhenShown($))
     // 用量直接跟引擎拿（不花錢），這裡只負責讓重置倒數每分鐘重畫一次。
     $.clock.every(USAGE_TICK_MS, () => $.ui.invalidate('ui.render'))
@@ -2388,7 +2395,7 @@ export const register: Register = on => {
   on('tool.call', { tool: 'Edit' }, async ($, e, next) => checkWrite($, e.file_path, await next(e))).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const [activeTab, subs, v, isRemoteOpen, bf, bq, fp, sv, fileList, specs, wikiView, wf, dbView, lg, lq, shown, usage, now] = await Promise.all([
+    const [activeTab, subs, v, isRemoteOpen, bf, bq, fp, sv, fileList, specs, wikiView, wf, dbView, lg, lq, shown, usage, now, session] = await Promise.all([
       read($, tab),
       read($, subTabs),
       readView($),
@@ -2408,8 +2415,10 @@ export const register: Register = on => {
       // 讀不到用量就當作還沒有讀數，不要讓整個面板畫不出來。
       $.session.usage().catch(() => undefined),
       $.clock.now(),
+      $.session.id().catch(() => ''),
     ])
 
+    loadTabOnce($, activeTab, session)
     const isWikiShown = activeTab === 'spec' && subs.spec === 'wiki'
     // 只有開著時才問：Files 的 ⋯ 選單（Show in Explorer 還是 Finder，問一次就記著）、Wiki 子分頁（模型選單、這段對話送過的頁面）。
     const [onWindows, current, sent] = await Promise.all([
