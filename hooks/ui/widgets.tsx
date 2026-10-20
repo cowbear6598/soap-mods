@@ -37,6 +37,9 @@ type Row = {
   indent?: number
   lead?: RenderChildren
   rest?: RenderChildren
+  // 名稱後面淡色的一段字（pathRow 的資料夾），取代 rest：桌面版吃掉剩下的寬度、太長截頭；
+  // 終端機畫在名稱同一顆按鈕裡（名稱補滿 labelWidth、太長截尾），點到 trailing 前都算。
+  detail?: string
   trailing?: RenderChildren
 }
 
@@ -105,10 +108,17 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
   // 名稱裡的空白換成不換行空白：不然後面那串空白連不上，按鈕在名稱的空白處折行，反白只亮到那裡（Show in Explorer）。
   const nbsp = (text: string) => text.replace(/ /g, ' ')
 
+  // 名稱剛好 width 格：太長截成「…」，太短補空白。
+  const fit = (text: string, width: number) => (text.length > width ? `${text.slice(0, width - 1)}…` : text.padEnd(width))
+
   const pressRow = (row: Row) => {
     if (isTerminal) {
-      const grows = row.labelWidth === undefined && (row.isTruncated === true || !row.rest)
-      const fills = row.labelWidth !== undefined || row.isTruncated === true || !row.rest
+      // 有 detail 時名稱和它一起當按鈕、吃掉剩下的寬度，labelWidth 改成把名稱補滿那麼寬。
+      const hasDetail = row.detail !== undefined
+      const labelWidth = hasDetail ? undefined : row.labelWidth
+      const grows = labelWidth === undefined && (row.isTruncated === true || !row.rest)
+      const fills = labelWidth !== undefined || row.isTruncated === true || !row.rest
+      const shown = hasDetail && row.labelWidth !== undefined ? fit(row.label, row.labelWidth) : row.label
       const onPress = press(row.onPress, row.ringKey)
       // 按鈕本身吃不到顏色、粗體，名稱包一層 Text（資料夾列的 FOLDER_COLOR、標題列的粗體）。
       const name = (text: string) => (
@@ -122,11 +132,12 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
           {row.lead}
           {fills ? (
             // 底下照常排的名稱只用來撐出寬度（被上面蓋住）；按鈕放在 absolute 那層，那串空白才不會把 rest、trailing 擠出畫面。
-            <Box position="relative" width={row.labelWidth} flexGrow={grows ? 1 : undefined} flexShrink={1} minWidth={0} overflow="hidden">
+            <Box position="relative" width={labelWidth} flexGrow={grows ? 1 : undefined} flexShrink={1} minWidth={0} overflow="hidden">
               <Text wrap="truncate-end">{row.label}</Text>
               {rowOverlay(
                 <Button key={row.key} label={row.label} plain dimColor={row.isDim} onPress={onPress}>
-                  {name(nbsp(row.label))}
+                  {name(nbsp(shown))}
+                  {row.detail && <Text dimColor>{nbsp(` ${row.detail}`)}</Text>}
                   {ROW_BUTTON_LABEL}
                 </Button>,
               )}
@@ -165,7 +176,15 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
           ) : (
             label
           )}
-          {row.rest}
+          {row.detail ? (
+            <Box flexGrow={1} flexShrink={3} minWidth={0} overflow="hidden">
+              <Text dimColor wrap="truncate-start">
+                {row.detail}
+              </Text>
+            </Box>
+          ) : (
+            row.rest
+          )}
         </Box>
         {rowOverlay(<Button key={row.key} label={ROW_BUTTON_LABEL} plain onPress={press(row.onPress, row.ringKey)} />)}
       </Box>
@@ -183,6 +202,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
 
   // 一個檔案一列：彩色狀態字母（status，Files 搜尋沒有）、固定寬的檔名、淡色的說明和資料夾。
   // 資料夾吃掉剩下的寬度，太長時截頭，縮得比檔名快，右邊的按鈕才不會被擠出去。diff、log、conflict、Files 搜尋共用。
+  // 終端機上檔名和資料夾是同一顆按鈕（detail），點到右邊的按鈕前都算，沒有資料夾時右邊的按鈕也一樣貼最右邊。
   const pathRow = (
     key: string,
     path: string,
@@ -198,19 +218,12 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
       onPress,
       labelWidth: PATH_NAME_WIDTH,
       indent,
+      detail,
       lead: status && (
         <Text bold color={KIND_STYLE[status.kind].theme}>
           {status.letter}
         </Text>
       ),
-      rest:
-        detail === '' ? null : (
-          <Box flexGrow={1} flexShrink={3} minWidth={0} overflow="hidden">
-            <Text dimColor wrap="truncate-start">
-              {detail}
-            </Text>
-          </Box>
-        ),
       trailing,
     })
   }

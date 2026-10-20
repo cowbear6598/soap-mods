@@ -883,6 +883,37 @@ test('the panel opens on the Files tab; on the terminal the whole search box foc
   await ui.unmount()
 })
 
+test('on the terminal a search result is one button from its name through its folder, the name padded to one width', async ($, on) => {
+  on('clock.now', () => ({ value: 0 }))
+  on('session.root', () => ({ value: '/proj' }))
+  on('fs.list', (_$, e) => ({ value: posix(e.path) === '/proj' ? [fsEntry('CLAUDE.md'), fsEntry('skills', 'dir')] : [fsEntry('SKILL.md')] }))
+  on('process.run', () => ok(''))
+
+  const ui = await mountPane($, 'terminal', 'files')
+  await ui.input({ key: 'files:search', text: '.md', kind: 'change' })
+  const button = await waitFor(() => ui.find({ key: 'files:found:skills/SKILL.md' }))
+  const texts = JSON.stringify(button)
+  expect(texts).toContain('SKILL.md      ')
+  expect(texts).toContain(' skills')
+  expect(await ui.find({ key: 'files:found:CLAUDE.md' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('pressing a .md file in the Files tab draws it as Markdown, not Code', async ($, on) => {
+  on('clock.now', () => ({ value: 0 }))
+  on('session.root', () => ({ value: '/proj' }))
+  on('fs.list', () => ({ value: [fsEntry('README.md', 'file', 12)] }))
+  on('fs.stat', () => ({ value: { kind: 'file', size: 12, mtimeMs: 0, isLink: false } }))
+  on('fs.read', () => ({ value: '# Hi\n**bold**\n' }))
+  on('process.run', () => ok(''))
+
+  const ui = await mountPane($, 'desktop')
+  await ui.press({ key: 'tab:files' })
+  await ui.press({ key: 'files:file:README.md' })
+  expect((await ui.find({ type: 'Markdown' }))?.props).toMatchObject({ text: '# Hi\n**bold**\n' })
+  expect(await ui.find({ type: 'Code' })).toBeUndefined()
+})
+
 test('pressing a file in the Files tab shows its text over the tabs, steps with Next, and Back returns', async ($, on) => {
   const texts: Record<string, string> = { '/proj/a.ts': 'const a = 1\r\n', '/proj/b.png': 'PNG\0\0' }
   on('clock.now', () => ({ value: 0 }))

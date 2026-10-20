@@ -1,4 +1,4 @@
-// Files 分頁點開的檔案內容，畫在 Soap Panel 裡蓋掉分頁。
+// Files 分頁點開的檔案內容，畫在 Soap Panel 裡蓋掉分頁；.md 畫成 Markdown，其他畫成程式碼。
 
 import type { FileView, FilesView } from '../../types'
 import { fileSteps } from '../files/list'
@@ -6,8 +6,9 @@ import type { Actions, Press, Ui } from './actions'
 import { stepBar } from './stepBar'
 
 export function fileView(ui: Ui, shown: FileView, files: FilesView, a: Actions, press: Press) {
-  const { Box, Code, Text } = ui
+  const { Box, Code, Markdown, Text } = ui
   const steps = fileSteps(files)
+  const isMarkdown = /\.(md|markdown)$/i.test(shown.path)
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -15,7 +16,7 @@ export function fileView(ui: Ui, shown: FileView, files: FilesView, a: Actions, 
       <Text bold>{shown.path}</Text>
       {shown.error !== '' && <Text color="error">{shown.error}</Text>}
       {shown.note !== '' && <Text dimColor>{shown.note}</Text>}
-      {shown.text !== '' && <Code source={shown.text} path={shown.path} startLine={1} />}
+      {shown.text !== '' && (isMarkdown ? <Markdown text={shown.text} /> : <Code source={shown.text} path={shown.path} startLine={1} />)}
       {shown.isTruncated && <Text dimColor>File is too long; showing only the beginning.</Text>}
     </Box>
   )
