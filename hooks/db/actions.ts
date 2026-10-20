@@ -1,0 +1,223 @@
+// DB 分頁（SQL Server）的動作：存連線（密碼放 Keychain／DPAPI）、打開、列資料表和欄位、跑 SELECT。
+// 不碰 $ 和 atom，用 register.tsx 給的 DbIo（見 io.ts）。
+
+import type { DbTable, DbView } from '../../types'
+import { DB_PROCESS_TIMEOUT_MS, DB_STORE_KEY } from '../config'
+import { NO_DB_CONNECTION } from '../defaults'
+import { errorText, failure, isMissingCommand } from '../errors'
+import type { Io } from '../io'
+import { latestOnly } from '../latest'
+import { type ArmSlot, isConfirmed, isWindows, runOk } from '../shell'
+import type { DbBusy } from '../ui/actions'
+import { MAC_SAVE_ARGV, WIN_PROTECT_ARGV, WIN_UNPROTECT_ARGV, fromHex, macCheckArgv, macDeleteArgv, macReadArgv, macSaveInput, toHex } from './secret'
+import {
+  KEYCHAIN,
+  type SavedConnection,
+  TABLES_QUERY,
+  columnsQuery,
+  connectionId,
+  connectionName,
+  parseColumns,
+  parseConnectionString,
+  parseTable,
+  parseTables,
+  previewQuery,
+  savedConnections,
+  selectOnlyError,
+  sqlcmdArgv,
+  tableKey,
+  withoutSecret,
+} from './sql'
+
+export type DbIo = Io & {
+  getDb: () => Promise<DbView>
+  setDb: (change: Partial<DbView>) => Promise<void>
+}
+
+// 正在存連線、跑查詢。跟 syncing 一樣放模組變數不放 atom，免得被熱重載中斷後一直停在「Running…」。
+let dbBusy: DbBusy = ''
+
+export const dbBusyNow = () => dbBusy
+
+function setDbBusy(io: DbIo, busy: DbBusy) {
+  if (dbBusy === busy) return
+  dbBusy = busy
+  io.invalidate()
+}
+
+const SQLCMD_MISSING = 'DB needs sqlcmd. Install it: brew install sqlcmd on macOS, winget install sqlcmd on Windows.'
+
+async function readSaved(io: DbIo) {
+  return savedConnections(await io.storeGet(DB_STORE_KEY))
+}
+
+// 存進 $.store，畫面上的清單直接用存進去的那份，不用再讀一次。
+async function writeSaved(io: DbIo, saved: SavedConnection[], change: Partial<DbView> = {}) {
+  await io.storeSet(DB_STORE_KEY, saved)
+  await io.setDb({ ...change, isLoaded: true, connections: saved.map(withoutSecret) })
+}
+
+export async function loadDbConnections(io: DbIo) {
+  try {
+    await io.setDb({ isLoaded: true, connections: (await readSaved(io)).map(withoutSecret) })
+  } catch (err) {
+    await io.setDb({ isLoaded: true, error: `Couldn't read the saved connections: ${errorText(err)}` })
+  }
+}
+
+// 把密碼存起來，回傳跟連線一起存進 $.store 的 secret（見 db/sql.ts 的 SavedConnection）。
+// macOS：security -i 從 stdin 存進 Keychain，它的指令失敗也回 0，所以存完再查一次在不在。
+// Windows：DPAPI 加密，密文存進 $.store。
+async function saveSecret(io: DbIo, id: string, password: string) {
+  if (password === '') return ''
+  if (await isWindows(io)) return (await runOk(io, WIN_PROTECT_ARGV, 'DPAPI', { env: { SOAP_SECRET: toHex(password) } })).stdout.trim()
+  await runOk(io, MAC_SAVE_ARGV, 'security', { stdin: macSaveInput(id, password) })
+  await runOk(io, macCheckArgv(id), 'Keychain')
+
+  return KEYCHAIN
+}
+
+async function readSecret(io: DbIo, c: SavedConnection) {
+  if (c.secret === '') return ''
+  try {
+    const r = c.secret === KEYCHAIN ? await runOk(io, macReadArgv(c.id), 'security') : await runOk(io, WIN_UNPROTECT_ARGV, 'DPAPI', { env: { SOAP_BLOB: c.secret } })
+
+    return fromHex(r.stdout)
+  } catch (err) {
+    throw new Error(`Couldn't read the saved password (delete the connection and add it again): ${errorText(err)}`)
+  }
+}
+
+// Windows 的密文跟著那筆一起刪掉了；Keychain 裡的要另外刪。
+async function deleteSecret(io: DbIo, c: SavedConnection) {
+  if (c.secret === KEYCHAIN) await io.run(macDeleteArgv(c.id)).catch(() => undefined)
+}
+
+// 打開著的連線，和它的密碼（讀一次就留著：每次查詢都開 security／PowerShell 太慢）。換連線、回清單、刪掉就丟掉。
+let opened: { c: SavedConnection; password: Promise<string> } | undefined
+
+// 在打開著的連線上跑一段 SQL，回傳它印的表格。密碼只放在 sqlcmd 的環境變數 SQLCMDPASSWORD，不在命令列上。
+// sqlcmd 跑不起來（沒裝）才說要裝它；連不上之類的錯誤（訊息裡也會有 not found）照 sqlcmd 說的給。
+async function runSql(io: DbIo, query: string) {
+  if (opened === undefined) throw new Error('No connection is open.')
+  const { c } = opened
+  const password = await opened.password
+  // 不用 runOk：只有跑不起來（rejected）才算沒裝，sqlcmd 自己回的錯誤不能拿去比對 not found。
+  const r = await io.run(sqlcmdArgv(c, query), { env: password === '' ? {} : { SQLCMDPASSWORD: password }, timeoutMs: DB_PROCESS_TIMEOUT_MS }).catch((err: unknown) => {
+    throw isMissingCommand(err) ? new Error(SQLCMD_MISSING) : err
+  })
+  if (r.exitCode !== 0) throw failure(r, 'sqlcmd')
+
+  return parseTable(r.stdout, r.isStdoutTruncated)
+}
+
+// 貼上連線字串：拆開、密碼存進 Keychain／DPAPI，其餘存進 $.store。錯誤訊息裡不放連線字串（有密碼）。
+export async function addDbConnection(io: DbIo, text: string) {
+  if (dbBusy !== '' || text.trim() === '') return
+  const p = parseConnectionString(text)
+  if ('error' in p) return io.setDb({ error: p.error })
+  const { password, ...parts } = p.parsed
+  setDbBusy(io, 'adding')
+  try {
+    const id = connectionId(await io.now(), Math.random())
+    const saved: SavedConnection = { id, ...parts, secret: await saveSecret(io, id, password) }
+    await writeSaved(io, [...(await readSaved(io)), saved], { error: '' })
+    io.toast(`Saved ${connectionName(saved)}`)
+  } catch (err) {
+    await io.setDb({ error: `Couldn't save the connection: ${errorText(err)}` })
+  } finally {
+    setDbBusy(io, '')
+  }
+}
+
+const dbArm: ArmSlot = {}
+
+// 刪連線要按兩次，跟 Spec 一樣；刪的時候密碼一起刪。
+export async function deleteDbConnection(io: DbIo, id: string) {
+  const arm = () => io.setDb({ deleteArmed: id, error: '' })
+  if (!(await isConfirmed(io, dbArm, (await io.getDb()).deleteArmed === id, arm, () => io.setDb({ deleteArmed: '' })))) return
+  try {
+    const saved = await readSaved(io)
+    const gone = saved.find(c => c.id === id)
+    await io.leaveRow()
+    await writeSaved(io, saved.filter(c => c.id !== id), { deleteArmed: '' })
+    if (gone === undefined) return
+    if (opened?.c.id === id) opened = undefined
+    await deleteSecret(io, gone)
+  } catch (err) {
+    await io.setDb({ deleteArmed: '', error: `Couldn't delete the connection: ${errorText(err)}` })
+  }
+}
+
+// 打開、展開的讀取和查詢：連點、讀到一半按了 Back，晚到的舊結果不寫。
+const tableLoads = latestOnly()
+const columnLoads = latestOnly()
+const queryRuns = latestOnly()
+
+function dropConnection(io: DbIo) {
+  tableLoads.drop()
+  columnLoads.drop()
+  queryRuns.drop()
+  opened = undefined
+  setDbBusy(io, '')
+}
+
+export async function openDbConnection(io: DbIo, id: string) {
+  dropConnection(io)
+  const isStale = tableLoads.start()
+  const [saved] = await Promise.all([readSaved(io), io.setDb({ ...NO_DB_CONNECTION, open: id, deleteArmed: '' }), io.scrollTop()])
+  const c = saved.find(x => x.id === id)
+  if (c === undefined) return io.setDb({ ...NO_DB_CONNECTION, error: 'That connection was deleted.' })
+  opened = { c, password: readSecret(io, c) }
+  // 沒人等的時候讀不到也不要變成未處理的錯誤；要用時 runSql 會再丟出來。
+  opened.password.catch(() => undefined)
+  try {
+    const tables = parseTables(await runSql(io, TABLES_QUERY))
+    if (!isStale()) await io.setDb({ tables })
+  } catch (err) {
+    if (!isStale()) await io.setDb({ tables: [], error: errorText(err) })
+  }
+}
+
+export async function closeDbConnection(io: DbIo) {
+  dropConnection(io)
+  await io.setDb(NO_DB_CONNECTION)
+}
+
+// 跑一段 SQL（按 Enter 時框裡的字，或點資料表的預覽）：只放行一段 SELECT（selectOnlyError），其他的不跑、說為什麼。
+export async function runDbQuery(io: DbIo, query: string) {
+  const refused = selectOnlyError(query)
+  if (refused !== '') return io.setDb({ query, queryError: refused })
+  const isStale = queryRuns.start()
+  setDbBusy(io, 'query')
+  await io.setDb({ query, queryError: '' })
+  try {
+    const result = await runSql(io, query)
+    if (!isStale()) await io.setDb({ result })
+  } catch (err) {
+    if (!isStale()) await io.setDb({ result: null, queryError: errorText(err) })
+  } finally {
+    if (!isStale()) setDbBusy(io, '')
+  }
+}
+
+async function loadColumns(io: DbIo, t: DbTable) {
+  const isStale = columnLoads.start()
+  try {
+    const columns = parseColumns(await runSql(io, columnsQuery(t)))
+    if (!isStale()) await io.setDb({ columns })
+  } catch (err) {
+    if (!isStale()) await io.setDb({ error: errorText(err) })
+  }
+}
+
+export async function toggleDbTable(io: DbIo, t: DbTable) {
+  const key = tableKey(t)
+  if ((await io.getDb()).table === key) {
+    columnLoads.drop()
+
+    return io.setDb({ table: '', columns: [] })
+  }
+  await io.setDb({ table: key, columns: [] })
+  await Promise.all([loadColumns(io, t), runDbQuery(io, previewQuery(t))])
+}

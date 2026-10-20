@@ -191,13 +191,13 @@ function pageText({ w, d }: TabContext) {
 
 // 打開的草稿的內容：寫整頁的看 Markdown 或差異；搬移、刪除先說會怎樣，底下是那頁現在的內容。
 function draftBody(ctx: TabContext, draft: WikiDraft) {
-  const { w, d } = ctx
+  const { w, d, a } = ctx
   const { Box, Markdown, Text } = w
   const s = d.wiki
   if (draft.kind === 'write') {
     if (draft.isNew) return <Markdown text={s.text} />
 
-    return s.diff === '' ? <Text dimColor>Same as the page now.</Text> : w.diff(s.diff, draft.target)
+    return s.diff === '' ? <Text dimColor>Same as the page now.</Text> : w.diff(s.diff, 'wikidiff', s.diffPage, p => a.showWikiDiffPage(p))
   }
   const intro =
     draft.kind === 'move' ? (

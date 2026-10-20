@@ -425,7 +425,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
       </Box>
     )
 
-  // 換頁列（diff、log 分頁）：← Previous、Next →，後面是這頁的範圍（「31–60」，知道總數再加「of 80」）。只有一頁就不畫。
+  // 換頁列（diff、log 分頁，長的差異）：← Previous、Next →，後面是這頁的範圍（「31–60」，知道總數再加「of 80」）。只有一頁就不畫。
   // 一次只畫一頁、一頁 size 列，不越畫越多：每列有 Svg 圖示鈕或很寬的透明按鈕，畫到一兩百列桌面版就卡住。
   // 按的那顆換頁後不見了（到第一頁、最後一頁），焦點圈移到另一顆。count 是這頁實際有幾列。
   const pager = (
@@ -448,8 +448,9 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
     )
   }
 
-  // 差異（unified-diff hunk），改到的字詞反白；終端機以外用等寬字。
-  const diff = (source: string, path: string) => diffBody(ui, source, path, isTerminal, divider)
+  // 差異（unified-diff hunk），改到的字詞反白；終端機以外用等寬字。長的分頁畫，換頁列的 key 是「prefix:prev」這種。
+  const diff = (source: string, prefix: string, page: number, onPage: (page: number) => unknown) =>
+    diffBody(ui, source, isTerminal, divider, { page, pager: p => pager(prefix, p, onPage) })
 
   // 分隔線：夾在兩條線中間的東西就會上下對稱。
   const divider =

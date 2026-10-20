@@ -27,7 +27,7 @@ export function diffView(ui: Ui, w: Widgets, shown: DiffPaneView, a: Actions, pr
       {shown.diff === '' ? (
         <Text dimColor>No text diff to show (binary file, or only the mode changed).</Text>
       ) : (
-        w.diff(shown.diff, shown.path)
+        w.diff(shown.diff, 'diffpage', shown.page, p => a.showDiffPage(p))
       )}
       {shown.isTruncated && <Text dimColor>Diff is too long; showing only the beginning.</Text>}
     </Box>

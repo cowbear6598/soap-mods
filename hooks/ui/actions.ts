@@ -60,6 +60,9 @@ export type Actions = {
   // log
   searchLog: (text: string) => unknown
   showLogPage: (page: number) => unknown
+  // 長的差異換頁：蓋版的差異、Wiki 草稿的差異。
+  showDiffPage: (page: number) => unknown
+  showWikiDiffPage: (page: number) => unknown
   openCommit: (c: GitCommit) => unknown
   toggleRangePick: () => unknown
   pickRange: (c: GitCommit) => unknown

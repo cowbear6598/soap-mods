@@ -94,6 +94,8 @@ export type DiffPaneView = {
   kind: FileKind
   diff: string
   isTruncated: boolean
+  /** Which page of the diff's rows is drawn (DIFF_PAGE_ROWS a page), from 0. */
+  page: number
   /** Why reading the diff failed, '' when none. */
   error: string
   /** For a commit file: the commits it was opened from (newest first; the title's `@ sha`), [] for a work tree file. */
@@ -393,6 +395,8 @@ export type WikiView = {
   text: string
   /** For an opened draft that changes a page: the page's lines against the draft's, as diff hunks; '' otherwise. */
   diff: string
+  /** Which page of `diff`'s rows is drawn (DIFF_PAGE_ROWS a page), from 0. */
+  diffPage: number
   /** `text` or `diff` was cut to fit. */
   isTruncated: boolean
   /** Why reading the opened page or draft failed, '' when none. */
@@ -493,7 +497,8 @@ declare module 'claude-code' {
       wikiFolders: Record<string, boolean>
       db: DbView
       log: LogView
-      cover: Cover
+      /** Shaped, like wiki. */
+      cover: Shaped<Cover>
     }
   }
 }
