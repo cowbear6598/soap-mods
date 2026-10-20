@@ -11,6 +11,7 @@ import {
   ARMED_TINT,
   DIVIDER_PX,
   DIVIDER_TEXT,
+  FIELD_MIN_WIDTH,
   ICON_BUTTON_LABEL,
   ICON_PX,
   KIND_STYLE,
@@ -101,11 +102,20 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
     </Box>
   )
 
+  // 名稱裡的空白換成不換行空白：不然後面那串空白連不上，按鈕在名稱的空白處折行，反白只亮到那裡（Show in Explorer）。
+  const nbsp = (text: string) => text.replace(/ /g, ' ')
+
   const pressRow = (row: Row) => {
     if (isTerminal) {
       const grows = row.labelWidth === undefined && (row.isTruncated === true || !row.rest)
       const fills = row.labelWidth !== undefined || row.isTruncated === true || !row.rest
       const onPress = press(row.onPress, row.ringKey)
+      // 按鈕本身吃不到顏色、粗體，名稱包一層 Text（資料夾列的 FOLDER_COLOR、標題列的粗體）。
+      const name = (text: string) => (
+        <Text bold={row.isBold} color={row.color}>
+          {text}
+        </Text>
+      )
 
       return (
         <Box key={`${row.key}:row`} gap={1} paddingLeft={row.indent ?? 2} hover={{ backgroundColor: ACTIVE_BG }}>
@@ -116,13 +126,15 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
               <Text wrap="truncate-end">{row.label}</Text>
               {rowOverlay(
                 <Button key={row.key} label={row.label} plain dimColor={row.isDim} onPress={onPress}>
-                  {row.label}
+                  {name(nbsp(row.label))}
                   {ROW_BUTTON_LABEL}
                 </Button>,
               )}
             </Box>
           ) : (
-            <Button key={row.key} label={row.label} plain dimColor={row.isDim} onPress={onPress} />
+            <Button key={row.key} label={row.label} plain dimColor={row.isDim} onPress={onPress}>
+              {name(row.label)}
+            </Button>
           )}
           {grows && row.rest ? <Box flexShrink={0}>{row.rest}</Box> : row.rest}
           {row.trailing !== undefined && <Box flexShrink={0}>{row.trailing}</Box>}
@@ -203,13 +215,14 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
   }
 
   // 一個輸入框（搜尋、DB 分頁的連線字串和查詢）；手機版沒有 Input，是 null。onInput 沒給就只在 Enter 時拿到字。
+  // 終端機的框只有淡色的 placeholder 一行字，看不出能打字：墊一塊至少 FIELD_MIN_WIDTH 寬的 ACTIVE_BG 底色。
   const field = (
     key: string,
     props: { placeholder: string; value: string; submitLabel: string; onInput?: (text: string) => unknown; onSubmit: (text: string) => unknown },
   ) => {
     const { onInput } = props
-
-    return 'Input' in ui ? (
+    if (!('Input' in ui)) return null
+    const input = (
       <ui.Input
         key={key}
         placeholder={props.placeholder}
@@ -218,7 +231,15 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press) {
         onInput={onInput && (text => void onInput(text))}
         onSubmit={text => void props.onSubmit(text)}
       />
-    ) : null
+    )
+
+    return isTerminal ? (
+      <Box key={`${key}:bg`} minWidth={FIELD_MIN_WIDTH} paddingX={1} backgroundColor={ACTIVE_BG}>
+        {input}
+      </Box>
+    ) : (
+      input
+    )
   }
 
   // 下拉選單（Wiki 的模型）；手機版沒有 Select，是 null。

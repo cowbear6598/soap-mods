@@ -78,6 +78,8 @@ export const LOG_AGO_WIDTH = 4
 export const PATH_NAME_WIDTH = 14
 // 選中的 tab 恆亮的底色。
 export const ACTIVE_BG = '#3a3a3a'
+// 終端機的輸入框墊的 ACTIVE_BG 底色至少這麼寬（字數）。
+export const FIELD_MIN_WIDTH = 30
 // 差異的顏色：加的行綠字、減的行紅字（VS Code Dark 的 git 顏色），整行不上底色；
 // 跟配對那行比改到的字詞才上底色、字換成主題的一般字色，跟旁邊的字對比夠才看得出來。
 export const DIFF_STYLE = {
@@ -151,7 +153,7 @@ export const BRANCH_ROW_LIMIT = 50
 // Local、Remote 各最多畫幾列（資料夾、分支都算）：搜尋時資料夾全部打開，每個資料夾各 50 個加起來還是會太多。
 // 每列有三顆 Svg 圖示鈕，上千個分支時搜尋打一個字就幾乎全中，畫到 200 列桌面版會卡住、打字沒反應。
 export const BRANCH_TREE_LIMIT = 50
-// branch 分頁資料夾列的顏色（天空藍；也可以寫主題色名稱）；終端機的按鈕吃不到顏色，只有桌面版看得到。
+// branch、Files 分頁資料夾列的顏色（天空藍；也可以寫主題色名稱）；終端機是包在按鈕裡的 Text 上色。
 export const FOLDER_COLOR = '#38bdf8'
 // diff 分頁一頁最多畫幾個檔案（三組加起來；換頁見 widgets 的 pager）。沒 ignore 的資料夾會冒出上千個 untracked 檔案。
 export const FILE_PAGE = 50
