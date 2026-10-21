@@ -1,5 +1,5 @@
 export type TabId = 'git' | 'files' | 'services' | 'spec' | 'db'
-export type GitSubTab = 'diff' | 'branch' | 'log' | 'ci' | 'conflict'
+export type GitSubTab = 'diff' | 'branch' | 'log' | 'ci' | 'mr' | 'conflict'
 /** The Spec tab's sub tabs: the plans under `.soap/tasks`, and the wiki pages under `.soap/wiki`. */
 export type SpecSubTab = 'spec' | 'wiki'
 /** The tabs that have sub tabs, and the sub tab each one shows. */
@@ -561,6 +561,97 @@ export type CiView = {
   traceError: string
 }
 
+/** An open merge request on the MR tab's list. */
+export type MrItem = {
+  iid: number
+  title: string
+  isDraft: boolean
+  /** Last updated, epoch seconds. */
+  time: number
+}
+
+export type MrPipeline = { iid: number; status: CiStatus; shortSha: string }
+
+export type MrDetail = {
+  iid: number
+  title: string
+  /** `opened`, `merged`, `closed`, `locked`. */
+  state: string
+  source: string
+  target: string
+  author: string
+  webUrl: string
+  /** The source branch's head commit GitLab knows. */
+  sha: string
+  /** GitLab's detailed_merge_status: `mergeable`, `not_approved`, `ci_still_running`, `discussions_not_resolved`… */
+  mergeStatus: string
+  pipeline: MrPipeline | null
+  /** The source branch conflicts with the target: resolved on GitLab's page, not here. */
+  hasConflicts: boolean
+  /** '' before it is merged. */
+  mergedBy: string
+  mergedAt: number
+  mergeCommit: string
+  /** Who approved it (display names). */
+  approvedBy: string[]
+  approvalsLeft: number
+  /** The signed-in account approved it. */
+  hasApproved: boolean
+  /** The signed-in account may approve it (GitLab's own answer). */
+  canApprove: boolean
+}
+
+/** A suggested change in a review thread (a ```suggestion block on a diff line). */
+export type MrSuggestion = {
+  /** The thread's id, to resolve it. */
+  discussion: string
+  note: number
+  author: string
+  time: number
+  path: string
+  /** The commented line in the new file (1-based). */
+  line: number
+  /** The lines it replaces: `from`..`to`, 1-based and inclusive. */
+  from: number
+  to: number
+  comment: string
+  /** The replacement lines. */
+  lines: string[]
+  /** The lines as the reviewer saw them (at `sha`); null while read or when unreadable. */
+  old: string[] | null
+  /** The commit the note was written on. */
+  sha: string
+  isResolved: boolean
+  /** The note has one suggestion block (Apply takes only those). */
+  isSingle: boolean
+  webUrl: string
+}
+
+/** The Git tab's MR sub tab: open merge requests of the repo's GitLab project that ask the token's account to review. */
+export type MrView = {
+  isLoaded: boolean
+  /** The GitLab host of the repo's remote, '' when not one. */
+  host: string
+  /** A token is saved for `host` (the CI tab saves it). */
+  hasToken: boolean
+  list: MrItem[]
+  /** Why reading the list failed, '' when none. */
+  error: string
+  /** The merge request opened, null for the list. */
+  open: MrDetail | null
+  /** The iid being opened, 0 when none (open stays null while it is read). */
+  opening: number
+  /** Why reading the opened one failed, '' when none. */
+  detailError: string
+  /** Its suggestions, oldest first; null while read. */
+  suggestions: MrSuggestion[] | null
+  showResolved: boolean
+  /** A button pressed once and waiting for a second (`merge`, `apply:<note>`), '' when none. */
+  armed: string
+  /** Why the last action failed, '' when none. */
+  actionError: string
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'soap-mods': {
@@ -591,6 +682,8 @@ declare module 'claude-code' {
       db: DbView
       /** Shaped, like wiki. */
       ci: Shaped<CiView>
+      /** Shaped, like wiki. */
+      mr: Shaped<MrView>
       log: LogView
       /** Shaped, like wiki. */
       cover: Shaped<Cover>

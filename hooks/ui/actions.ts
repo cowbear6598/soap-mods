@@ -8,6 +8,8 @@ import type {
   CiJobAction,
   CiPipeline,
   CiView,
+  MrSuggestion,
+  MrView,
   CommitFile,
   Cover,
   DbTable,
@@ -157,6 +159,17 @@ export type Actions = {
   // 跑、重跑：都要按兩次。pipeline 的 Retry 重跑裡面失敗的 job；job 的 Run（play）跑 manual job、Retry 重跑跑完的。
   retryCiPipeline: () => unknown
   actOnCiJob: (j: CiJob, kind: CiJobAction) => unknown
+  // mr（GitLab）：點 MR 看它的狀態和建議，Back 回清單；Refresh 重讀看得到的那層。
+  openMr: (iid: number) => unknown
+  closeMr: () => unknown
+  refreshMr: () => unknown
+  // Approve（false 是取消）一按就做；Merge、套用建議要按兩次。
+  approveMr: (isApprove: boolean) => unknown
+  mergeMr: () => unknown
+  applyMrSuggestion: (s: MrSuggestion) => unknown
+  toggleMrResolved: () => unknown
+  // 在瀏覽器打開 GitLab 的頁面。
+  openMrLink: (url: string) => unknown
   // 合併（畫在 Soap Panel 裡）
   editChunks: (edit: (chunks: MergeChunk[]) => MergeChunk[]) => unknown
   jumpConflict: (step: 1 | -1) => unknown
@@ -205,6 +218,9 @@ export type PanelData = {
   ciSaving: boolean
   // 正在跑、重跑（等 GitLab 回）。
   ciActing: boolean
+  mr: MrView
+  // 正在 approve、merge、套用建議（等 GitLab 回）。
+  mrActing: boolean
   // 正在停掉／重跑的服務。
   servicePending: readonly ServicePending[]
   log: LogView

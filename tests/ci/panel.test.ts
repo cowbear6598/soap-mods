@@ -3,7 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import { CI_IDLE_REFRESH_MS, CI_REFRESH_MS, CI_SEARCH_DEBOUNCE_MS, CI_STORE_KEY } from '../../hooks/config'
 import { KEYCHAIN, OLD_KEYCHAIN, fromHex, toHex } from '../../hooks/secret'
-import { type TestEngine, type TestOn, branchLine, fakeKeychain, gitRepo, mountPane, ok, stubPanel, stubStore } from '../test-fixtures'
+import { type TestEngine, type TestOn, branchLine, fakeKeychain, gitRepo, json, mountPane, ok, stubPanel, stubStore } from '../test-fixtures'
 
 type Run = { argv: readonly string[]; init?: ProcessRunInit }
 type Fetch = { url: string; init?: HttpInit }
@@ -43,10 +43,6 @@ const RAW_TRACE = [
   `section_end:1760000001:step_script\r${ESC}[0K`,
   '',
 ].join('\n')
-
-const json = (status: number, body: unknown, headers: Record<string, string> = {}) => ({
-  value: { status, ok: status >= 200 && status < 300, headers, text: typeof body === 'string' ? body : JSON.stringify(body) },
-})
 
 // CI 子分頁要的引擎回應：/repo 是 repo（目前分支 develop，origin 是 remote，預設 git.example 的 web-team/app），
 // $.store 放在記憶體、Keychain 是 fakeKeychain，GitLab API 只認 valid 裡的 token。
@@ -365,7 +361,7 @@ test('the CI sub tab reads the GitLab project from an ssh remote too', async ($,
 test('a GitHub remote says the CI tab cannot read it instead of asking for a token', async ($, on) => {
   const world = ciWorld(on, { remote: 'git@github.com:owner/repo.git' })
   const ui = await openCi($)
-  expect(await ui.find({ type: 'Text', text: "This repo's remote is not a GitLab project the CI tab can read." })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: "This repo's remote is not a GitLab project." })).toBeDefined()
   expect(await ui.find({ key: 'ci:token' })).toBeUndefined()
   expect(world.fetches).toHaveLength(0)
   await ui.unmount()

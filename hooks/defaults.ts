@@ -1,6 +1,6 @@
 // 各個狀態的初始值，和換分頁時要清掉的訊息。狀態本身（atom）在 register.tsx：引擎只認得那裡宣告的。
 
-import type { CiView, DbView, DiffPaneView, FileView, FilesView, GitView, LogView, MergeView, Plan, ServicesView, SpecView, WikiSent, WikiView } from '../types'
+import type { CiView, MrView, DbView, DiffPaneView, FileView, FilesView, GitView, LogView, MergeView, Plan, ServicesView, SpecView, WikiSent, WikiView } from '../types'
 
 export const EMPTY: GitView = {
   isLoaded: false,
@@ -46,6 +46,21 @@ export const EMPTY_CI: CiView = {
   trace: null,
   isTraceTruncated: false,
   traceError: '',
+}
+
+export const EMPTY_MR: MrView = {
+  isLoaded: false,
+  host: '',
+  hasToken: false,
+  list: [],
+  error: '',
+  open: null,
+  opening: 0,
+  detailError: '',
+  suggestions: null,
+  showResolved: false,
+  armed: '',
+  actionError: '',
 }
 
 export const EMPTY_SERVICES: ServicesView = { isLoaded: false, items: [], error: '', actionError: '' }

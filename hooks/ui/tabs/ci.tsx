@@ -11,6 +11,7 @@ import { CI_PAGE, CI_RECENT, LOG_AGO_WIDTH } from '../../config'
 import { JOBS_LIMIT, formatDuration, stageGroups, statusStyle } from '../../ci/parse'
 import { formatAgo } from '../../git/parse'
 import { hasQuery } from '../../search'
+import { isProd } from '../../text'
 import { backButton } from '../stepBar'
 import type { TabBody, TabContext } from './context'
 
@@ -18,8 +19,6 @@ import type { TabBody, TabContext } from './context'
 const PIPELINE_RETRY_STATUS = new Set(['failed', 'canceled'])
 const JOB_RETRY_STATUS = new Set(['failed', 'canceled', 'success'])
 
-// 名稱（job、分支）有 prod 的：確認時寫 Confirm PROD。
-const isProd = (...names: string[]) => names.some(n => /prod/i.test(n))
 
 // pipeline 編號那欄的寬度（「#20653」再留一格）；sha 那欄（8 個字再留一格）。
 const IID_WIDTH = 8
@@ -81,16 +80,8 @@ const statusMark = ({ w }: TabContext, key: string, status: string | null) => {
 
 const refreshButton = ({ w, a }: TabContext) => w.iconButton('ci:refresh', 'restart', 'Refresh', false, () => a.refreshCi())
 
-// Run、Retry：按一次變成 Confirm（名稱有 prod 的寫 Confirm PROD），再按一次才跑；GitLab 回之前寫 Working…。
-function actButton({ w, d }: TabContext, ci: CiView, key: string, armed: string, label: string, action: () => unknown, isProd = false) {
-  const { Button, Text } = w
-  if (d.ciActing) return <Text key={key} dimColor>Working…</Text>
-  const isArmed = ci.armed === armed
-
-  return (
-    <Button key={key} label={isArmed ? (isProd ? 'Confirm PROD' : 'Confirm') : label} variant={isArmed ? 'primary' : 'secondary'} onPress={w.press(action)} />
-  )
-}
+const actButton = ({ w, d }: TabContext, ci: CiView, key: string, armed: string, label: string, action: () => unknown, prod = false) =>
+  w.confirmButton(key, label, { isArmed: ci.armed === armed, isBusy: d.ciActing, isProd: prod }, action)
 
 // job 列的 hover 群組：指到右邊的 Run、Retry 時，同一列的名稱跟著亮，看得出按的是哪個 job。
 const jobScope = (j: CiJob) => `ci-job-${j.id}`

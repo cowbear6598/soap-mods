@@ -1,3 +1,5 @@
 {
-  "extends": "./.claude-plugin/types/tsconfig.json"
+  "extends": "./.claude-plugin/types/tsconfig.json",
+  // 引擎不一定放 claude-code-tools、claude-code-mcp（這台只有 claude-code），列了找不到 tsc 就整個失敗；hooks 不靠它們。
+  "compilerOptions": { "types": ["claude-code"] }
 }

@@ -145,6 +145,11 @@ export const branchLine = (
   { isCurrent = false, upstream = '', track = '', ago = '1 day ago', subject = 'Wip' }: { isCurrent?: boolean; upstream?: string; track?: string; ago?: string; subject?: string } = {},
 ) => [isCurrent ? '*' : ' ', `refs/${name.startsWith('origin/') ? 'remotes' : 'heads'}/${name}`, name, upstream, track, ago, subject].join('\t')
 
+// http.fetch 的結果：body 不是字串就轉成 JSON。
+export const json = (status: number, body: unknown, headers: Record<string, string> = {}) => ({
+  value: { status, ok: status >= 200 && status < 300, headers, text: typeof body === 'string' ? body : JSON.stringify(body) },
+})
+
 // fs.list 列出的一筆。
 export const fsEntry = (name: string, kind: 'file' | 'dir' | 'other' = 'file', size = 0) => ({ name, kind, size, mtimeMs: 0, isLink: false })
 

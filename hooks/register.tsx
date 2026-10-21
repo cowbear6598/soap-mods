@@ -5,7 +5,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, PaneOpenArgs, Register, RenderSurface } from 'claude-code'
 
-import type { CiView, DbView, FilesView, GitBranch, GitView, LogView, ServicesView, SubTabs, SpecView, TabId, WikiView } from '../types'
+import type { CiView, DbView, FilesView, GitBranch, GitView, LogView, MrView, ServicesView, SubTabs, SpecView, TabId, WikiView } from '../types'
 import { CI_REFRESH_MS, FOCUS_WATCH_MS, GIT_REFRESH_MS, PANEL_TITLE, SERVICES_SCAN_MS, USAGE_TICK_MS, hasSubTabs } from './config'
 import {
   type CiIo,
@@ -46,6 +46,7 @@ import {
   EMPTY_FILE_VIEW,
   EMPTY_FILES,
   EMPTY_LOG,
+  EMPTY_MR,
   EMPTY_SERVICES,
   EMPTY_SPEC,
   EMPTY_WIKI,
@@ -77,6 +78,20 @@ import type { GitIo } from './git/run'
 import { refresh, refreshRepoList, refreshTab, selectRepo } from './git/status'
 import type { Io } from './io'
 import { applyMerge, askClaude, editChunks, jumpConflict, mergeBusy, openMerge, resetMerge, takeSide } from './merge/actions'
+import {
+  type MrIo,
+  applySuggestion,
+  approveMr,
+  clearMr,
+  closeMr,
+  loadMrList,
+  mergeMr,
+  mrActingNow,
+  openMr,
+  openMrLink,
+  refreshMr,
+  toggleMrResolved,
+} from './mr/actions'
 import { patch } from './patch'
 import { type ServicesIo, pendingServices, refreshServices, runServiceAction } from './services/actions'
 import { isWindows } from './shell'
@@ -144,6 +159,8 @@ const log = atom({ plugin: 'soap-mods', key: 'log' } as const, EMPTY_LOG)
 const db = atom({ plugin: 'soap-mods', key: 'db' } as const, EMPTY_DB)
 // CI 分頁（GitLab）：分支清單、點開的分支的 pipeline、點開的 pipeline 的 job、點開的 job 的 log。shape 同 wiki。
 const ci = atom({ plugin: 'soap-mods', key: 'ci' } as const, EMPTY_CI, { shape: 'ci-6' })
+// MR 分頁（GitLab）：開著的 MR、點開的那個的狀態和建議。shape 同 wiki。
+const mr = atom({ plugin: 'soap-mods', key: 'mr' } as const, EMPTY_MR, { shape: 'mr-3' })
 // 蓋住分頁的畫面：差異、三欄合併或檔案內容，一次一個（cover.ts）。
 const cover = atom({ plugin: 'soap-mods', key: 'cover' } as const, NO_COVER, { shape: 'cover-2' })
 // 長的差異看到第幾頁，照地方（diffpage、wikidiff）記；換一份差異（id 不同）就從頭。
@@ -190,6 +207,10 @@ async function setDb($: EngineInterface, change: Partial<DbView>) {
 
 async function setCi($: EngineInterface, change: Partial<CiView>) {
   await update($, ci, c => patch(c, change))
+}
+
+async function setMr($: EngineInterface, change: Partial<MrView>) {
+  await update($, mr, m => patch(m, change))
 }
 
 // ───── 面板與焦點（ui/focus.ts） ─────
@@ -361,16 +382,34 @@ async function loadCi($: EngineInterface) {
   await refreshCi(ciIo($))
 }
 
-// CI 子分頁看得到時才定時重讀；跑完了的 pipeline、job 不再問（refreshCi 的 isTimer）。
-async function refreshCiWhenShown($: EngineInterface) {
-  if (!(await isCiShown($)) || !(await isPaneShown(focusIo($)))) return
-  await refreshCi(ciIo($), { isTimer: true })
+
+// ───── Git 的 MR 子分頁（GitLab） ─────
+
+function mrIo($: EngineInterface): MrIo {
+  return { ...baseIo($), getMr: () => read($, mr), setMr: change => setMr($, change), fetch: (url, init) => $.http.fetch(url, init) }
 }
 
-// 換 repo：Git 分頁重讀；CI 不管開著沒都清掉上一個 repo 的，開著就從新 repo 的分支清單重讀。
+const isMrShown = async ($: EngineInterface) => (await read($, tab)) === 'git' && (await read($, subTabs)).git === 'mr'
+
+// 看到 MR 子分頁：同 CI，先找 repo 再讀看得到的那層。
+async function loadMr($: EngineInterface) {
+  await refreshRepoList(gitIo($))
+  await refreshMr(mrIo($))
+}
+
+// CI、MR 子分頁看得到時才定時重讀；跑完了的 pipeline、job 不再問，沒在跑的隔久一點（refreshCi、refreshMr 的 isTimer）。
+async function refreshGitLabWhenShown($: EngineInterface) {
+  const [t, subs] = await Promise.all([read($, tab), read($, subTabs)])
+  if (t !== 'git' || (subs.git !== 'ci' && subs.git !== 'mr') || !(await isPaneShown(focusIo($)))) return
+  if (subs.git === 'ci') await refreshCi(ciIo($), { isTimer: true })
+  else await refreshMr(mrIo($), { isTimer: true })
+}
+
+// 換 repo：Git 分頁重讀；CI、MR 不管開著沒都清掉上一個 repo 的，開著就從新 repo 的清單重讀。
 async function selectRepoTab($: EngineInterface, name: string) {
-  await Promise.all([selectRepo(gitIo($), name), clearCi(ciIo($))])
+  await Promise.all([selectRepo(gitIo($), name), clearCi(ciIo($)), clearMr(mrIo($))])
   if (await isCiShown($)) await loadBranches(ciIo($))
+  if (await isMrShown($)) await loadMrList(mrIo($))
 }
 
 // ───── 蓋住分頁的畫面 ─────
@@ -408,6 +447,7 @@ function loadTab($: EngineInterface, id: TabId) {
   if (id === 'spec') void reloadSpecTab($).catch(() => undefined)
   if (id === 'db') void loadDbConnections(dbIo($)).catch(() => undefined)
   if (id === 'git') void isCiShown($).then(isCi => (isCi ? loadCi($) : undefined)).catch(() => undefined)
+  if (id === 'git') void isMrShown($).then(isMr => (isMr ? loadMr($) : undefined)).catch(() => undefined)
   void refreshTab(gitIo($), id)?.catch(() => undefined)
 }
 
@@ -421,12 +461,13 @@ function loadTabOnce($: EngineInterface, id: TabId, session: string) {
   loadTab($, id)
 }
 
-// 換子分頁。Git 的 log、CI 不在看的時候不讀，換過來才讀；Spec 的（計劃、wiki）換過去就重讀它。
+// 換子分頁。Git 的 log、CI、MR 不在看的時候不讀，換過來才讀；Spec 的（計劃、wiki）換過去就重讀它。
 async function selectSubTab<T extends keyof SubTabs>($: EngineInterface, t: T, id: SubTabs[T]) {
   await Promise.all([update($, subTabs, s => ({ ...s, [t]: id })), leaveTab($)])
   if (t === 'spec') await reloadSpecTab($)
   else if (id === 'log') await loadLog(gitIo($))
   else if (id === 'ci') await loadCi($)
+  else if (id === 'mr') await loadMr($)
 }
 
 // branch 分頁的 log 按鈕：換到 log 分頁看那個分支，從最近的 LOG_PAGE 筆開始。
@@ -523,6 +564,14 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     toggleCiToken: isOpen => toggleCiToken(ciIo($), isOpen),
     retryCiPipeline: () => retryCiPipeline(ciIo($)),
     actOnCiJob: (j, kind) => actOnJob(ciIo($), j, kind),
+    openMr: iid => openMr(mrIo($), iid),
+    closeMr: () => closeMr(mrIo($)),
+    refreshMr: () => refreshMr(mrIo($)),
+    approveMr: isApprove => approveMr(mrIo($), isApprove),
+    mergeMr: () => mergeMr(mrIo($)),
+    applyMrSuggestion: s => applySuggestion(mrIo($), s),
+    toggleMrResolved: () => toggleMrResolved(mrIo($)),
+    openMrLink: url => openMrLink(mrIo($), url),
     editChunks: edit => editChunks(gitIo($), edit),
     jumpConflict: step => jumpConflict(gitIo($), step),
     takeSide: side => takeSide(gitIo($), side),
@@ -534,6 +583,8 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
 
 // ───── 事件 ─────
 
+const asText = (v: unknown) => (typeof v === 'string' ? v : '')
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     // 先開面板（畫「Loading…」），看著的 Tab 的資料等第一次畫時在背景讀（loadTabOnce），不擋住 session 開始。
@@ -544,7 +595,7 @@ export const register: Register = on => {
     $.clock.every(USAGE_TICK_MS, () => $.ui.invalidate('ui.render'))
     $.clock.every(SERVICES_SCAN_MS, () => void scanWhenShown($).catch(() => undefined))
     $.clock.every(GIT_REFRESH_MS, () => void refreshWhenShown($).catch(() => undefined))
-    $.clock.every(CI_REFRESH_MS, () => void refreshCiWhenShown($).catch(() => undefined))
+    $.clock.every(CI_REFRESH_MS, () => void refreshGitLabWhenShown($).catch(() => undefined))
 
     return next(e)
   })
@@ -588,16 +639,17 @@ export const register: Register = on => {
   })
 
   // Bash 碰到面板存的機密（GitLab token、DB 密碼）就擋下（secret-guard.ts）。
+  // 工具的輸入照字串讀：引擎沒在 .claude-plugin/types 放 claude-code-tools 時它的型別是 unknown。
   on('tool.call', { tool: 'Bash' }, ($, e, next) => {
-    const reason = secretCommandReason(e.command)
+    const reason = secretCommandReason(asText(e.command))
 
     return reason === '' ? next(e) : { deny: reason }
   })
-  on('tool.call', { tool: 'Write' }, async ($, e, next) => checkWrite(baseIo($), e.file_path, await next(e))).catch(($, e, next) => next(e))
-  on('tool.call', { tool: 'Edit' }, async ($, e, next) => checkWrite(baseIo($), e.file_path, await next(e))).catch(($, e, next) => next(e))
+  on('tool.call', { tool: 'Write' }, async ($, e, next) => checkWrite(baseIo($), asText(e.file_path), await next(e))).catch(($, e, next) => next(e))
+  on('tool.call', { tool: 'Edit' }, async ($, e, next) => checkWrite(baseIo($), asText(e.file_path), await next(e))).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const [activeTab, subs, v, isRemoteOpen, bf, bq, fp, sv, fileList, specs, wikiView, wf, dbView, ciView, lg, lq, shown, sentWiki, pages, usage, now, session] = await Promise.all([
+    const [activeTab, subs, v, isRemoteOpen, bf, bq, fp, sv, fileList, specs, wikiView, wf, dbView, ciView, mrView, lg, lq, shown, sentWiki, pages, usage, now, session] = await Promise.all([
       read($, tab),
       read($, subTabs),
       read($, view),
@@ -612,6 +664,7 @@ export const register: Register = on => {
       read($, wikiFolders),
       read($, db),
       read($, ci),
+      read($, mr),
       read($, log),
       read($, logQuery),
       read($, cover),
@@ -659,6 +712,8 @@ export const register: Register = on => {
         ci: ciView,
         ciSaving: ciSavingNow(),
         ciActing: ciActingNow(),
+        mr: mrView,
+        mrActing: mrActingNow(),
         servicePending: pendingServices(),
         log: lg,
         logQuery: lq,

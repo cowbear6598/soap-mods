@@ -475,7 +475,7 @@ test('writing a wiki draft with Write checks its first line: one the Wiki tab ca
   })
   on('fs.read', (_$, e) => ({ value: files[posix(e.path) ?? ''] ?? '' }))
   on('tool.call', (_$, e) => {
-    if (e.tool === 'Write') files[posix(e.file_path) ?? ''] = e.content
+    if (e.tool === 'Write') files[posix(String(e.file_path)) ?? ''] = String(e.content)
 
     return { result: { ok: true } as never }
   })

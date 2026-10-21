@@ -8,6 +8,9 @@ export const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$
 /** `text` cut to `width` characters, its last one an ellipsis, when it is longer. */
 export const truncate = (text: string, width: number) => (text.length > width ? `${text.slice(0, width - 1)}…` : text)
 
+/** A name (a job, a branch) that looks like production: its confirm button says Confirm PROD. */
+export const isProd = (...names: string[]) => names.some(n => /prod/i.test(n))
+
 /** `page` (from 0), or the last page of `total` items `size` a page when it is past it: the list got shorter. */
 export const clampPage = (page: number, total: number, size: number) => Math.min(page, Math.max(0, Math.ceil(total / size) - 1))
 

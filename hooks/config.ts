@@ -63,6 +63,7 @@ export const ICONS = {
   at: '<circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   ci: '<rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/>',
+  mr: '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" x2="6" y1="9" y2="21"/>',
   copy: '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
 }
 export type IconName = keyof typeof ICONS
@@ -134,11 +135,12 @@ export const TABS: { id: TabId; label: string; icon: IconName }[] = [
 // 有子分頁的 Tab 和它的子分頁。內容：Git 在 ui/panel.tsx 的 GIT_SUB_TAB_BODIES，Spec（計劃和 wiki）在 ui/tabs/spec.tsx 的 SPEC_SUB_TAB_BODIES。
 export const SUB_TABS: { [T in keyof SubTabs]: { id: SubTabs[T]; label: string; icon: IconName }[] } = {
   git: [
-    { id: 'diff', label: 'diff', icon: 'diff' },
-    { id: 'branch', label: 'branch', icon: 'branch' },
-    { id: 'log', label: 'log', icon: 'log' },
+    { id: 'diff', label: 'Diff', icon: 'diff' },
+    { id: 'branch', label: 'Branch', icon: 'branch' },
+    { id: 'log', label: 'Log', icon: 'log' },
     { id: 'ci', label: 'CI', icon: 'ci' },
-    { id: 'conflict', label: 'conflict', icon: 'conflict' },
+    { id: 'mr', label: 'MR', icon: 'mr' },
+    { id: 'conflict', label: 'Conflict', icon: 'conflict' },
   ],
   spec: [
     { id: 'spec', label: 'Spec', icon: 'spec' },
@@ -235,6 +237,9 @@ export const CI_TRACE_MAX_CHARS = 60_000
 // Windows 是 DPAPI 密文。哪些主機存了 token（macOS 是記號、Windows 是密文）和登入的帳號放在 $.store 的 CI_STORE_KEY。
 export const CI_KEYCHAIN_SERVICE = 'soap-mods-gitlab'
 export const CI_STORE_KEY = 'ci.tokens'
+// Git 的 MR 子分頁（GitLab API，token 同 CI）：最多列幾個 MR。
+// 開著時跟 CI 一起每 CI_REFRESH_MS 看一次：點開的 MR 的 pipeline 在跑就重讀，不然隔 CI_IDLE_REFRESH_MS。
+export const MR_LIST_LIMIT = 50
 // Keychain 讀機密（GitLab token、DB 密碼）會跳視窗等人輸入密碼，最多等這麼久。
 export const KEYCHAIN_TIMEOUT_MS = 120_000
 // pipeline、job 狀態的顏色和符號；沒列到的（created、preparing…）照 pending 畫（ci/parse 的 statusStyle）。

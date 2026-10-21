@@ -94,6 +94,22 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
 
   const rollbackButton = (key: string, isArmed: boolean, action: () => unknown) => armedButton(key, 'rollback', 'Rollback', isArmed, action)
 
+  // 要按兩次的文字按鈕（CI 的 Run、Retry，MR 的 Merge、Apply）：按一次變成 Confirm（isProd 時寫 Confirm PROD），再按才做；
+  // isBusy（等 GitLab 回）時寫 Working…。
+  const confirmButton = (key: string, label: string, state: { isArmed: boolean; isBusy: boolean; isProd?: boolean }, action: () => unknown) =>
+    state.isBusy ? (
+      <Text key={key} dimColor>
+        Working…
+      </Text>
+    ) : (
+      <Button
+        key={key}
+        label={state.isArmed ? (state.isProd === true ? 'Confirm PROD' : 'Confirm') : label}
+        variant={state.isArmed ? 'primary' : 'secondary'}
+        onPress={press(action)}
+      />
+    )
+
   // 整行都能點的列表項目；indent 是名稱前面空幾格（預設 2；不縮排的列：標題、Files、log、DB、wiki 頁面給 0）。
   // 桌面版：內容照常排，上面疊一顆透明按鈕。按鈕本身是 fit-content，靠一長串不換行空白撐開；
   // 包它的那層比整行寬很多、超出的部分被裁掉，按鈕就不會被壓到整行寬而在最右邊畫出「…」，
@@ -470,7 +486,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
       stretched(DIVIDER_SVG, 'Divider', 1)
     )
 
-  return { Box, Button, Code, Markdown, Text, cell, diff, hasSvg: Svg !== undefined, press, iconButton, deleteButton, rollbackButton, pressRow, pathRow, pager, searchField, field, select, iconBar, stretched, divider }
+  return { Box, Button, Code, Markdown, Text, cell, diff, hasSvg: Svg !== undefined, press, iconButton, deleteButton, rollbackButton, confirmButton, pressRow, pathRow, pager, searchField, field, select, iconBar, stretched, divider }
 }
 
 export type Widgets = ReturnType<typeof makeWidgets>

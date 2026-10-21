@@ -2,20 +2,7 @@
 
 import type { CiBranch, CiJob, CiJobAction, CiPipeline } from '../../types'
 import { CI_PAGE, CI_RECENT, CI_STATUS_STYLE, CI_TRACE_MAX_CHARS } from '../config'
-
-// GitLab 給的 JSON 裡用得到的欄位；不信任它的型別，每個都檢查過才用。
-type Json = Record<string, unknown>
-
-const isObject = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v)
-const str = (v: unknown) => (typeof v === 'string' ? v : '')
-const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
-
-// ISO 時間轉成 epoch 秒（跟 GitCommit.time 一樣，formatAgo 用）；讀不懂是 0。
-const seconds = (iso: unknown) => {
-  const ms = Date.parse(str(iso))
-
-  return Number.isNaN(ms) ? 0 : Math.floor(ms / 1000)
-}
+import { type Json, isObject, num, parseArray, parseObject, seconds, str } from '../json'
 
 function toPipeline(p: Json): CiPipeline {
   return {
@@ -43,28 +30,11 @@ function toJob(j: Json): CiJob {
   }
 }
 
-function parseArray(out: string): Json[] {
-  const data: unknown = JSON.parse(out)
-  if (!Array.isArray(data)) throw new Error('GitLab did not return a list.')
-
-  return data.filter(isObject)
-}
-
 export const parsePipelines = (out: string) => parseArray(out).map(toPipeline)
 
-export function parsePipeline(out: string): CiPipeline {
-  const data: unknown = JSON.parse(out)
-  if (!isObject(data)) throw new Error('GitLab did not return a pipeline.')
+export const parsePipeline = (out: string): CiPipeline => toPipeline(parseObject(out, 'a pipeline'))
 
-  return toPipeline(data)
-}
-
-export function parseJob(out: string): CiJob {
-  const data: unknown = JSON.parse(out)
-  if (!isObject(data)) throw new Error('GitLab did not return a job.')
-
-  return toJob(data)
-}
+export const parseJob = (out: string): CiJob => toJob(parseObject(out, 'a job'))
 
 // GitLab 照 id 由新到舊給；畫的時候要由舊到新（跟 stage 的順序一樣）。
 export const parseJobs = (out: string) => parseArray(out).map(toJob).sort((a, b) => a.id - b.id)
@@ -119,7 +89,7 @@ export function parseRemote(url: string): GitLabProject | undefined {
   return { api: `${scheme}://${host}/api/v4`, host, path }
 }
 
-const projectUrl = (p: GitLabProject) => `${p.api}/projects/${encodeURIComponent(p.path)}`
+export const projectUrl = (p: GitLabProject) => `${p.api}/projects/${encodeURIComponent(p.path)}`
 
 // 最新的 CI_RECENT 條（整理成分支清單）。
 export const recentPipelinesUrl = (p: GitLabProject) => `${projectUrl(p)}/pipelines?per_page=${CI_RECENT}`

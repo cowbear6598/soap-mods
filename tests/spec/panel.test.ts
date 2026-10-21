@@ -292,8 +292,10 @@ test('writing a plan.yaml with Write or Edit checks it: a broken one adds what t
   on('fs.read', (_$, e) => ({ value: files[posix(e.path) ?? ''] ?? '' }))
   // 測試的 hook 站在引擎的位置：照實寫檔，回一個工具結果。
   on('tool.call', (_$, e) => {
-    if (e.tool === 'Write') files[e.file_path] = e.content
-    if (e.tool === 'Edit') files[e.file_path] = (files[e.file_path] ?? '').replace(e.old_string, e.new_string)
+    // 工具的輸入照字串讀：沒有 claude-code-tools 的型別時是 unknown。
+    const path = String(e.file_path)
+    if (e.tool === 'Write') files[path] = String(e.content)
+    if (e.tool === 'Edit') files[path] = (files[path] ?? '').replace(String(e.old_string), String(e.new_string))
 
     return { result: { ok: true } as never }
   })

@@ -1,14 +1,13 @@
 // CI 子分頁（GitLab）的動作：讀選中的 repo 最近跑過 pipeline 的分支、點開的分支的 pipeline、點開的 pipeline 的 job、點開的 job 的 log，和存 GitLab token。Run、Retry 要按兩次才跑。
-// 不碰 $ 和 atom，用 register.tsx 給的 CiIo（見 io.ts）。直接打 GitLab API（$.http.fetch），不用 glab：
+// 不碰 $ 和 atom，用 register.tsx 給的 CiIo（見 io.ts）。直接打 GitLab API（gitlab.ts），不用 glab：
 // token 只有這個 mod 拿得到（ci/token.ts），Claude 在終端機沒有現成登入好的工具能操作 GitLab。
 
-import type { HttpInit, HttpResponse, Timer } from 'claude-code'
+import type { Timer } from 'claude-code'
 
 import type { CiBranch, CiJob, CiJobAction, CiPipeline, CiView } from '../../types'
-import { CI_IDLE_REFRESH_MS, CI_PAGE, CI_SEARCH_DEBOUNCE_MS } from '../config'
+import { CI_PAGE, CI_SEARCH_DEBOUNCE_MS } from '../config'
 import { errorText } from '../errors'
-import { git, repos } from '../git/run'
-import type { Io } from '../io'
+import { type GitLabIo, TokenRefused, api, isDue, repoProject } from '../gitlab'
 import { latestOnly } from '../latest'
 import { filterWords, hasQuery, searchWords } from '../search'
 import { type ArmSlot, busyFlag, isConfirmed } from '../shell'
@@ -21,14 +20,12 @@ import {
   isActive,
   jobActionUrl,
   jobsUrl,
-  parseApiMessage,
   parseBranchNames,
   parseCommitTitles,
   parseJob,
   parseJobs,
   parsePipeline,
   parsePipelines,
-  parseRemote,
   parseUser,
   pipelineUrl,
   pipelinesUrl,
@@ -39,17 +36,12 @@ import {
   traceUrl,
   userUrl,
 } from './parse'
-import { readToken, saveToken, savedToken } from './token'
+import { saveToken, savedToken } from './token'
 
-export type CiIo = Io & {
+export type CiIo = GitLabIo & {
   getCi: () => Promise<CiView>
   setCi: (change: Partial<CiView>) => Promise<void>
-  fetch: (url: string, init?: HttpInit) => Promise<HttpResponse>
 }
-
-const NO_REPO = 'This folder is not a git repo.'
-const NOT_GITLAB = "This repo's remote is not a GitLab project the CI tab can read."
-const TOKEN_REFUSED = 'GitLab refused the saved token (401): it expired or was revoked. Paste a new one.'
 
 // 關掉點開的 job，回 pipeline。
 const NO_CI_JOB = { job: null, trace: null, isTraceTruncated: false, traceError: '', armed: '', actionError: '' } satisfies Partial<CiView>
@@ -61,54 +53,6 @@ const NO_CI_REF = { ref: null, pipelines: null, pipelinePage: 0, hasNext: false,
 // 正在檢查、存 token：模組變數不放 atom（同 DB 的 dbBusy），熱重載後不會一直停在「Checking…」。
 const tokenBusy = busyFlag(false)
 export const ciSavingNow = tokenBusy.get
-
-// 選中的 repo 的 GitLab 專案：看 origin，沒有 origin 就看第一個 remote。
-// 照 repo 記著：定時重讀每 10 秒好幾個讀取都要它，remote 幾乎不會變；換 repo、讀失敗就重問 git。
-let project: { root: string; load: Promise<GitLabProject> } | undefined
-
-function repoProject(io: Io): Promise<GitLabProject> {
-  const root = repos.current?.root
-  if (root === undefined) return Promise.reject(new Error(NO_REPO))
-  if (project?.root === root) return project.load
-  const load = (async () => {
-    const remotes = (await git(io, ['remote'])).stdout.split('\n').map(r => r.trim()).filter(r => r !== '')
-    const name = remotes.includes('origin') ? 'origin' : remotes[0]
-    const url = name === undefined ? undefined : await git(io, ['remote', 'get-url', name])
-    const found = url?.exitCode === 0 ? parseRemote(url.stdout) : undefined
-    if (found === undefined) throw new Error(NOT_GITLAB)
-
-    return found
-  })()
-  project = { root, load }
-  load.catch(() => {
-    if (project?.load === load) project = undefined
-  })
-
-  return load
-}
-
-// 401：token 失效，畫面要打開換 token 的框；其他錯誤照狀況說。
-class TokenRefused extends Error {}
-
-// 打 GitLab API（沒給 token 就用存著的）；不是 2xx 就丟出看得懂的錯誤。method 是 POST 時是跑、重跑（Run、Retry）。
-async function api(io: CiIo, p: GitLabProject, url: string, { method = 'GET', token }: { method?: 'GET' | 'POST'; token?: string } = {}) {
-  const r = await io.fetch(url, { method, headers: { 'PRIVATE-TOKEN': token ?? (await readToken(io, p.host)) } })
-  if (r.ok) return r
-  if (r.status === 401) throw new TokenRefused(TOKEN_REFUSED)
-  if (r.status === 403) {
-    throw new Error(
-      method === 'POST'
-        ? "GitLab won't let this token run it (403): the token needs the api scope, and your role on the project must allow running pipelines (a protected branch may need more)."
-        : "The token can't read this (403): it needs the read_api or api scope.",
-    )
-  }
-  if (r.status === 404) {
-    throw new Error(`GitLab can't find ${repos.current?.name ?? 'this repo'}'s project with the saved token (404): your account (or a project token) has no access to it.`)
-  }
-  const message = parseApiMessage(r.text)
-
-  throw new Error(`GitLab answered ${r.status}${message === '' ? '' : `: ${message}`}`)
-}
 
 // 讀失敗：401 時把換 token 的框打開，錯誤寫在框旁邊；其他的寫在 field 那裡。
 async function failed(io: CiIo, err: unknown, field: 'error' | 'pipelinesError' | 'jobsError' | 'traceError' | 'actionError', extra: Partial<CiView> = {}) {
@@ -141,7 +85,6 @@ function dropCi() {
   jobLoads.drop()
   traceLoads.drop()
   recent = undefined
-  project = undefined
   titles.clear()
 }
 
@@ -335,10 +278,7 @@ async function resetCi(io: CiIo) {
   await loadBranches(io)
 }
 
-// 定時重讀分支清單、分支的 pipeline：列著的有跑著的就每次讀；沒有就隔 CI_IDLE_REFRESH_MS 才讀（新開的 pipeline 晚一點才出現）。
-async function isListDue(io: CiIo, isRunning: boolean) {
-  return isRunning || (await io.now()) - listReadAt >= CI_IDLE_REFRESH_MS
-}
+const isListDue = async (io: CiIo, isRunning: boolean) => isDue(await io.now(), listReadAt, isRunning)
 
 // 重讀看得到的那層：分支清單、點開的分支的 pipeline、點開的 pipeline 的 job，點開的 job 還在跑就連 log。
 // 定時重讀時（isTimer）跑完了的 pipeline、job 不再問：結果不會變了。

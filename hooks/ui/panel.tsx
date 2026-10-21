@@ -17,6 +17,7 @@ import { dbTab } from './tabs/db'
 import { diffTab } from './tabs/diff'
 import { filesTab } from './tabs/files'
 import { logTab } from './tabs/log'
+import { mrTab } from './tabs/mr'
 import { servicesTab } from './tabs/services'
 import { specTab } from './tabs/spec'
 import { usageBar } from './usage'
@@ -27,6 +28,7 @@ const GIT_SUB_TAB_BODIES: Record<GitSubTab, TabBody> = {
   branch: branchTab,
   log: logTab,
   ci: ciTab,
+  mr: mrTab,
   conflict: conflictTab,
 }
 
