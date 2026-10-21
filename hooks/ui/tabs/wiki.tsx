@@ -39,7 +39,8 @@ function wikiList(ctx: TabContext) {
           hotkey="d"
           onPress={w.press(() => a.distillWiki())}
         />
-        <Text dimColor>│</Text>
+        {/* 終端機的按鈕自帶 [ ]，不用再隔開。 */}
+        {w.hasSvg && <Text dimColor>│</Text>}
         {w.select('wiki:model', {
           label: 'Model',
           // 還沒選過：跟對話同一種；對話的也讀不到就是第一個。
@@ -101,7 +102,7 @@ function fileButtons({ w, d, a }: TabContext, path: string) {
   )
 }
 
-// 樹的一列：資料夾點了開合；頁面是勾選框、名稱（扣掉所在資料夾；點了看內容；這段對話送過的後面標 sent）、@、垃圾桶。
+// 樹的一列：資料夾點了開合；頁面是勾選框（終端機的按鈕自己包 [ ]，label 只給裡面的 x）、名稱（扣掉所在資料夾；點了看內容；這段對話送過的後面標 sent）、@、垃圾桶。
 // 跟同一層的其他列一樣縮排。沒給 limit，不會有「… more」那種列。
 function wikiRow(ctx: TabContext, row: TreeRow) {
   const { w, d, a } = ctx
@@ -114,7 +115,7 @@ function wikiRow(ctx: TabContext, row: TreeRow) {
 
   return (
     <Box key={`wiki:line:${path}`} gap={1} alignItems="center" paddingLeft={indent}>
-      {w.iconButton(`wiki:check:${path}`, isChecked ? 'boxChecked' : 'box', isChecked ? '[x]' : '[ ]', isChecked, () => a.toggleWikiPage(path))}
+      {w.iconButton(`wiki:check:${path}`, isChecked ? 'boxChecked' : 'box', isChecked ? 'x' : ' ', isChecked, () => a.toggleWikiPage(path))}
       <Box flexDirection="column" flexGrow={1} flexShrink={1} minWidth={0}>
         {w.pressRow({
           key: `wiki:page:${path}`,

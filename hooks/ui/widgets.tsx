@@ -63,7 +63,8 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
     const onPress = press(action)
 
     return Svg === undefined ? (
-      <Box key={`${key}:box`}>
+      // 不縮：被同一列擠窄時 [ x ] 會斷成兩行。
+      <Box key={`${key}:box`} flexShrink={0}>
         {tint !== undefined && <Text color={tint.theme}>■</Text>}
         <Button key={key} label={label} variant={isActive ? 'primary' : 'secondary'} onPress={onPress}>
           {tint !== undefined && <Text color={tint.theme}>{label}</Text>}

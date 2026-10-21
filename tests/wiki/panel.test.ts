@@ -108,7 +108,7 @@ test('the Wiki tab lists the pages, keeps checks in the store per session folder
     await ui.press({ key: 'wiki:check:db/schema.md' })
     expect(checked()).toEqual(['style.md', 'db/schema.md'])
     expect(Object.keys(files).filter(p => p.endsWith('checked.txt'))).toEqual([])
-    if (surface === 'terminal') expect((await ui.find({ key: 'wiki:check:style.md' }))?.props.label).toBe('[x]')
+    if (surface === 'terminal') expect((await ui.find({ key: 'wiki:check:style.md' }))?.props.label).toBe('x')
     await ui.press({ key: 'wiki:check:db/schema.md' })
     expect(checked()).toEqual(['style.md'])
 
