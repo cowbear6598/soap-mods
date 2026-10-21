@@ -11,6 +11,7 @@ import { unboundHotkeys } from './keys'
 import { mergeView } from './mergeView'
 import { branchTab } from './tabs/branch'
 import { conflictTab } from './tabs/conflict'
+import { ciTab } from './tabs/ci'
 import type { TabBody, TabContext } from './tabs/context'
 import { dbTab } from './tabs/db'
 import { diffTab } from './tabs/diff'
@@ -25,6 +26,7 @@ const GIT_SUB_TAB_BODIES: Record<GitSubTab, TabBody> = {
   diff: diffTab,
   branch: branchTab,
   log: logTab,
+  ci: ciTab,
   conflict: conflictTab,
 }
 

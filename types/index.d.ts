@@ -1,5 +1,5 @@
 export type TabId = 'git' | 'files' | 'services' | 'spec' | 'db'
-export type GitSubTab = 'diff' | 'branch' | 'log' | 'conflict'
+export type GitSubTab = 'diff' | 'branch' | 'log' | 'ci' | 'conflict'
 /** The Spec tab's sub tabs: the plans under `.soap/tasks`, and the wiki pages under `.soap/wiki`. */
 export type SpecSubTab = 'spec' | 'wiki'
 /** The tabs that have sub tabs, and the sub tab each one shows. */
@@ -467,6 +467,102 @@ export type DbView = {
   deleteArmed: string
 }
 
+/** A GitLab pipeline or job status, as the API gives it: `running`, `success`, `failed`, `manual`, `skipped`… */
+export type CiStatus = string
+
+/** One pipeline of the repo's GitLab project. */
+export type CiPipeline = {
+  id: number
+  /** The project-wide number GitLab shows as `#20653`. */
+  iid: number
+  /** The branch or tag it ran for. */
+  ref: string
+  sha: string
+  shortSha: string
+  /** The commit's title, '' when unknown. */
+  title: string
+  status: CiStatus
+  /** What started it: `push`, `web`, `schedule`, `merge_request_event`… */
+  source: string
+  /** Created time, epoch seconds. */
+  time: number
+  webUrl: string
+}
+
+/** One job of an opened pipeline. */
+export type CiJob = {
+  id: number
+  name: string
+  stage: string
+  status: CiStatus
+  /** Seconds it ran, null before it starts. */
+  duration: number | null
+  allowFailure: boolean
+}
+
+/** What a job's button asks GitLab: run a manual job, or rerun a finished one. */
+export type CiJobAction = 'play' | 'retry'
+
+/** A branch (or tag, merge request ref) on the CI tab's first level, with its newest pipeline. */
+export type CiBranch = {
+  name: string
+  /** Its newest pipeline, null when none ran among the newest ones read (found by search). */
+  pipeline: CiPipeline | null
+}
+
+/** The Git tab's CI sub tab: the GitLab pipelines of the repo the Git tab shows, read through the GitLab API with a token the mod keeps. */
+export type CiView = {
+  /** False before the first read finishes. */
+  isLoaded: boolean
+  /** The GitLab host of the repo's remote, '' when the remote is not one the tab can read. */
+  host: string
+  /** A token is saved for `host` (the Keychain or DPAPI holds it; never here). */
+  hasToken: boolean
+  /** The GitLab account the saved token signs in as, '' when unknown. */
+  user: string
+  /** The form to paste a new token is open (always drawn when there is no token). */
+  isTokenOpen: boolean
+  /** Why the last token save failed or the saved token was refused, '' when none. */
+  tokenError: string
+  /** The branch search box's text. */
+  query: string
+  /** The checked out branch (This branch opens it); '' when unknown (detached HEAD, not read yet). */
+  branch: string
+  /** The branches that ran pipelines lately, newest first; while searching, those that match. */
+  branches: CiBranch[]
+  /** Which page of CI_PAGE branches is listed (from 0). */
+  page: number
+  /** Why reading the branches failed (not a GitLab repo, no access), '' when none. */
+  error: string
+  /** The branch opened to its pipelines, null for the branch list. */
+  ref: string | null
+  /** The opened branch's pipelines, newest first; null while they are read. */
+  pipelines: CiPipeline[] | null
+  /** Which page of CI_PAGE pipelines of the opened branch is listed (from 0). */
+  pipelinePage: number
+  hasNext: boolean
+  /** Why reading the opened branch's pipelines failed, '' when none. */
+  pipelinesError: string
+  /** The Run or Retry button pressed once and waiting for a second press (`retry:pipeline:<id>`, `play:job:<id>`, `retry:job:<id>`), '' when none. */
+  armed: string
+  /** Why the last Run or Retry failed, '' when none. */
+  actionError: string
+  /** The pipeline opened to its jobs, null for the list. */
+  open: CiPipeline | null
+  /** The opened pipeline's jobs, oldest first; null while they are read. */
+  jobs: CiJob[] | null
+  /** Why reading the jobs failed, '' when none. */
+  jobsError: string
+  /** The job opened to its log, null when none. */
+  job: CiJob | null
+  /** The opened job's log, colors and section markers taken out; its end when it is long. null while it is read. */
+  trace: string | null
+  /** Only the end of the log is shown. */
+  isTraceTruncated: boolean
+  /** Why reading the log failed, '' when none. */
+  traceError: string
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'soap-mods': {
@@ -495,6 +591,8 @@ declare module 'claude-code' {
       /** Wiki tab folders opened or closed by hand, keyed by the folder's path (`db/`); the rest are open. */
       wikiFolders: Record<string, boolean>
       db: DbView
+      /** Shaped, like wiki. */
+      ci: Shaped<CiView>
       log: LogView
       /** Shaped, like wiki. */
       cover: Shaped<Cover>

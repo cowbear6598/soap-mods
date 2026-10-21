@@ -4,6 +4,10 @@
 import type { Elements, RenderSurface, SessionUsage, UiPressArgument } from 'claude-code'
 
 import type {
+  CiJob,
+  CiJobAction,
+  CiPipeline,
+  CiView,
   CommitFile,
   Cover,
   DbTable,
@@ -137,6 +141,22 @@ export type Actions = {
   setDbQuery: (text: string) => unknown
   // text：按 Enter 時框裡的字。
   runDbQuery: (text: string) => unknown
+  // ci（GitLab）：搜尋分支、換頁，點分支看它的 pipeline、點 pipeline 看 job、點 job 看 log，Back 回上一層；Refresh 重讀看得到的那層。
+  showCiPage: (page: number) => unknown
+  searchCi: (text: string) => unknown
+  openCiRef: (ref: string) => unknown
+  closeCiRef: () => unknown
+  openPipeline: (p: CiPipeline) => unknown
+  closeCiPipeline: () => unknown
+  openCiJob: (j: CiJob) => unknown
+  closeCiJob: () => unknown
+  refreshCi: () => unknown
+  // 貼上的 GitLab token：GitLab 認得才存（Keychain／DPAPI），換掉舊的；打開、收起換 token 的框。
+  saveCiToken: (text: string) => unknown
+  toggleCiToken: (isOpen: boolean) => unknown
+  // 跑、重跑：都要按兩次。pipeline 的 Retry 重跑裡面失敗的 job；job 的 Run（play）跑 manual job、Retry 重跑跑完的。
+  retryCiPipeline: () => unknown
+  actOnCiJob: (j: CiJob, kind: CiJobAction) => unknown
   // 合併（畫在 Soap Panel 裡）
   editChunks: (edit: (chunks: MergeChunk[]) => MergeChunk[]) => unknown
   jumpConflict: (step: 1 | -1) => unknown
@@ -180,6 +200,11 @@ export type PanelData = {
   isDistilling: boolean
   db: DbView
   dbBusy: DbBusy
+  ci: CiView
+  // 正在檢查、存貼上的 GitLab token。
+  ciSaving: boolean
+  // 正在跑、重跑（等 GitLab 回）。
+  ciActing: boolean
   // 正在停掉／重跑的服務。
   servicePending: readonly ServicePending[]
   log: LogView

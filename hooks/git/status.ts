@@ -36,9 +36,11 @@ async function findRepos(io: GitIo): Promise<Repo[]> {
 }
 
 // 重找 repo：選中的那個還在就留著，不在了（或還沒選過）就換成第一個。
+// 熱重載後模組變數從頭來，選過的那個從畫面狀態（view.repo，重載後還在）找回來，不會跳回第一個。
 async function reloadRepos(io: GitIo) {
   repos.list = await findRepos(io)
-  repos.current = repos.list.find(c => c.root === repos.current?.root) ?? repos.list[0]
+  const picked = repos.current === undefined ? (await io.getView()).repo : repos.current.name
+  repos.current = repos.list.find(c => c.name === picked) ?? repos.list[0]
 }
 
 // 其他 repo 有沒有變更、有沒有衝突；讀不到就當作沒有變更。

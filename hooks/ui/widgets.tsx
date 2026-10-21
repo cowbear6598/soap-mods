@@ -1,7 +1,7 @@
 // Soap Panel 上共用的小元件：圖示按鈕、整行可點的列、檔案列、搜尋框、圖示分頁列、差異、分隔線。
 // 依畫面（終端機／桌面版）決定怎麼畫，分頁只管要畫什麼。
 
-import type { RenderChildren } from 'claude-code'
+import type { RenderChildren, TextHoverProps } from 'claude-code'
 
 import type { FileKind } from '../../types'
 import { splitPath } from '../git/parse'
@@ -45,6 +45,8 @@ type Row = {
   // 這時 lead、rest 只能是字串和 Text（按鈕裡不能放 Box），用 cell 排。
   isWholePressable?: boolean
   trailing?: RenderChildren
+  // 名稱在同一個 hover scope 被指到時換的樣子（CI 的 job 列：指到右邊的 Run，名稱跟著亮）。
+  labelHover?: TextHoverProps
 }
 
 // press：這個面板上的按鈕都經過它，動作做完後丟了焦點會補回來。focusInput：把焦點圈移到某個輸入框。
@@ -150,7 +152,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
       const onPress = press(row.onPress, row.ringKey)
       // 按鈕本身吃不到顏色、粗體，名稱包一層 Text（資料夾列的 FOLDER_COLOR、標題列的粗體）。
       const name = (text: string) => (
-        <Text bold={row.isBold} color={row.color}>
+        <Text bold={row.isBold} color={row.color} hover={row.labelHover}>
           {text}
         </Text>
       )
@@ -191,7 +193,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
     }
     const shrinks = row.isTruncated === true || row.labelWidth !== undefined
     const label = (
-      <Text bold={row.isBold} color={row.color} dimColor={row.isDim} wrap={shrinks ? 'truncate-end' : undefined}>
+      <Text bold={row.isBold} color={row.color} dimColor={row.isDim} hover={row.labelHover} wrap={shrinks ? 'truncate-end' : undefined}>
         {row.label}
       </Text>
     )

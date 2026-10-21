@@ -5,7 +5,7 @@ import type { test } from 'claude-code/testing'
 import type { ScanProc, ScanResult } from '../types'
 
 type TestBody = Extract<Parameters<typeof test>[1], (...args: never[]) => unknown>
-type TestEngine = Parameters<TestBody>[0]
+export type TestEngine = Parameters<TestBody>[0]
 export type TestOn = Parameters<TestBody>[1]
 
 // ───── 面板測試的 helper ─────

@@ -5,8 +5,28 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, PaneOpenArgs, Register, RenderSurface } from 'claude-code'
 
-import type { DbView, FilesView, GitBranch, GitView, LogView, ServicesView, SubTabs, SpecView, TabId, WikiView } from '../types'
-import { FOCUS_WATCH_MS, GIT_REFRESH_MS, PANEL_TITLE, SERVICES_SCAN_MS, USAGE_TICK_MS, hasSubTabs } from './config'
+import type { CiView, DbView, FilesView, GitBranch, GitView, LogView, ServicesView, SubTabs, SpecView, TabId, WikiView } from '../types'
+import { CI_REFRESH_MS, FOCUS_WATCH_MS, GIT_REFRESH_MS, PANEL_TITLE, SERVICES_SCAN_MS, USAGE_TICK_MS, hasSubTabs } from './config'
+import {
+  type CiIo,
+  actOnJob,
+  ciActingNow,
+  ciSavingNow,
+  clearCi,
+  closeJob,
+  closePipeline,
+  closeRef,
+  loadBranches,
+  openJob,
+  openPipeline,
+  openRef,
+  refreshCi,
+  retryCiPipeline,
+  saveCiToken,
+  searchCi,
+  showCiPage,
+  toggleCiToken,
+} from './ci/actions'
 import { NO_COVER, coverData, showCover } from './cover'
 import {
   type DbIo,
@@ -21,6 +41,7 @@ import {
 } from './db/actions'
 import {
   EMPTY,
+  EMPTY_CI,
   EMPTY_DB,
   EMPTY_FILE_VIEW,
   EMPTY_FILES,
@@ -80,6 +101,7 @@ import {
   toggleWikiPage,
   uncheckAllWikiPages,
 } from './wiki/actions'
+import { secretCommandReason } from './secret-guard'
 import { checkWrite } from './write-check'
 
 // ───── 面板 id（引擎要在這個檔案裡直接看到值，不能 import）─────
@@ -120,6 +142,8 @@ const wikiFolders = atom({ plugin: 'soap-mods', key: 'wikiFolders' } as const, {
 const log = atom({ plugin: 'soap-mods', key: 'log' } as const, EMPTY_LOG)
 // DB 分頁：存著的連線（不含密碼）、打開的那個的資料表、查詢和結果。
 const db = atom({ plugin: 'soap-mods', key: 'db' } as const, EMPTY_DB)
+// CI 分頁（GitLab）：分支清單、點開的分支的 pipeline、點開的 pipeline 的 job、點開的 job 的 log。shape 同 wiki。
+const ci = atom({ plugin: 'soap-mods', key: 'ci' } as const, EMPTY_CI, { shape: 'ci-5' })
 // 蓋住分頁的畫面：差異、三欄合併或檔案內容，一次一個（cover.ts）。
 const cover = atom({ plugin: 'soap-mods', key: 'cover' } as const, NO_COVER, { shape: 'cover-2' })
 // 長的差異看到第幾頁，照地方（diffpage、wikidiff）記；換一份差異（id 不同）就從頭。
@@ -162,6 +186,10 @@ async function setWiki($: EngineInterface, change: Partial<WikiView>) {
 
 async function setDb($: EngineInterface, change: Partial<DbView>) {
   await update($, db, v => patch(v, change))
+}
+
+async function setCi($: EngineInterface, change: Partial<CiView>) {
+  await update($, ci, c => patch(c, change))
 }
 
 // ───── 面板與焦點（ui/focus.ts） ─────
@@ -319,6 +347,32 @@ function dbIo($: EngineInterface): DbIo {
   return { ...baseIo($), getDb: () => read($, db), setDb: change => setDb($, change) }
 }
 
+// ───── Git 的 CI 子分頁（GitLab） ─────
+
+function ciIo($: EngineInterface): CiIo {
+  return { ...baseIo($), getCi: () => read($, ci), setCi: change => setCi($, change), fetch: (url, init) => $.http.fetch(url, init) }
+}
+
+const isCiShown = async ($: EngineInterface) => (await read($, tab)) === 'git' && (await read($, subTabs)).git === 'ci'
+
+// 看到 CI 子分頁：先讀 Git 分頁（找 repo，看的是選中的那個），再讀看得到的那層。
+async function loadCi($: EngineInterface) {
+  await refresh(gitIo($))
+  await refreshCi(ciIo($))
+}
+
+// CI 子分頁看得到時才定時重讀；跑完了的 pipeline、job 不再問（refreshCi 的 isTimer）。
+async function refreshCiWhenShown($: EngineInterface) {
+  if (!(await isCiShown($)) || !(await isPaneShown(focusIo($)))) return
+  await refreshCi(ciIo($), { isTimer: true })
+}
+
+// 換 repo：Git 分頁重讀；CI 不管開著沒都清掉上一個 repo 的，開著就從新 repo 的分支清單重讀。
+async function selectRepoTab($: EngineInterface, name: string) {
+  await Promise.all([selectRepo(gitIo($), name), clearCi(ciIo($))])
+  if (await isCiShown($)) await loadBranches(ciIo($))
+}
+
 // ───── 蓋住分頁的畫面 ─────
 
 // 關掉差異、合併、檔案內容，回到分頁：合併選到一半的結果放掉（檔案沒動過，下次打開從頭選），
@@ -353,6 +407,7 @@ function loadTab($: EngineInterface, id: TabId) {
   if (id === 'files') void reloadFiles(filesIo($)).catch(() => undefined)
   if (id === 'spec') void reloadSpecTab($).catch(() => undefined)
   if (id === 'db') void loadDbConnections(dbIo($)).catch(() => undefined)
+  if (id === 'git') void isCiShown($).then(isCi => (isCi ? loadCi($) : undefined)).catch(() => undefined)
   void refreshTab(gitIo($), id)?.catch(() => undefined)
 }
 
@@ -366,11 +421,12 @@ function loadTabOnce($: EngineInterface, id: TabId, session: string) {
   loadTab($, id)
 }
 
-// 換子分頁。Git 的 log 不在看的時候不讀，換過來才讀；Spec 的（計劃、wiki）換過去就重讀它。
+// 換子分頁。Git 的 log、CI 不在看的時候不讀，換過來才讀；Spec 的（計劃、wiki）換過去就重讀它。
 async function selectSubTab<T extends keyof SubTabs>($: EngineInterface, t: T, id: SubTabs[T]) {
   await Promise.all([update($, subTabs, s => ({ ...s, [t]: id })), leaveTab($)])
   if (t === 'spec') await reloadSpecTab($)
   else if (id === 'log') await loadLog(gitIo($))
+  else if (id === 'ci') await loadCi($)
 }
 
 // branch 分頁的 log 按鈕：換到 log 分頁看那個分支，從最近的 LOG_PAGE 筆開始。
@@ -385,7 +441,7 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
   return {
     selectTab: id => selectTab($, id),
     selectSubTab: (t, id) => selectSubTab($, t, id),
-    selectRepo: name => selectRepo(gitIo($), name),
+    selectRepo: name => selectRepoTab($, name),
     openDiff: path => openDiff(gitIo($), path),
     openMerge: path => openMerge(gitIo($), path),
     showFilePage: page => update($, filePage, () => page),
@@ -451,6 +507,22 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     toggleDbTable: t => toggleDbTable(dbIo($), t),
     setDbQuery: text => setDb($, { query: text, queryError: '' }),
     runDbQuery: text => runDbQuery(dbIo($), text),
+    searchCi: text => searchCi(ciIo($), text),
+    showCiPage: async page => {
+      await showCiPage(ciIo($), page)
+      await scrollTop($)
+    },
+    openCiRef: ref => openRef(ciIo($), ref),
+    closeCiRef: () => closeRef(ciIo($)),
+    openPipeline: p => openPipeline(ciIo($), p),
+    closeCiPipeline: () => closePipeline(ciIo($)),
+    openCiJob: j => openJob(ciIo($), j),
+    closeCiJob: () => closeJob(ciIo($)),
+    refreshCi: () => refreshCi(ciIo($)),
+    saveCiToken: text => saveCiToken(ciIo($), text),
+    toggleCiToken: isOpen => toggleCiToken(ciIo($), isOpen),
+    retryCiPipeline: () => retryCiPipeline(ciIo($)),
+    actOnCiJob: (j, kind) => actOnJob(ciIo($), j, kind),
     editChunks: edit => editChunks(gitIo($), edit),
     jumpConflict: step => jumpConflict(gitIo($), step),
     takeSide: side => takeSide(gitIo($), side),
@@ -472,6 +544,7 @@ export const register: Register = on => {
     $.clock.every(USAGE_TICK_MS, () => $.ui.invalidate('ui.render'))
     $.clock.every(SERVICES_SCAN_MS, () => void scanWhenShown($).catch(() => undefined))
     $.clock.every(GIT_REFRESH_MS, () => void refreshWhenShown($).catch(() => undefined))
+    $.clock.every(CI_REFRESH_MS, () => void refreshCiWhenShown($).catch(() => undefined))
 
     return next(e)
   })
@@ -514,11 +587,17 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // Bash 碰到面板存的機密（GitLab token、DB 密碼）就擋下（secret-guard.ts）。
+  on('tool.call', { tool: 'Bash' }, ($, e, next) => {
+    const reason = secretCommandReason(e.command)
+
+    return reason === '' ? next(e) : { deny: reason }
+  })
   on('tool.call', { tool: 'Write' }, async ($, e, next) => checkWrite(baseIo($), e.file_path, await next(e))).catch(($, e, next) => next(e))
   on('tool.call', { tool: 'Edit' }, async ($, e, next) => checkWrite(baseIo($), e.file_path, await next(e))).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const [activeTab, subs, v, isRemoteOpen, bf, bq, fp, sv, fileList, specs, wikiView, wf, dbView, lg, lq, shown, sentWiki, pages, usage, now, session] = await Promise.all([
+    const [activeTab, subs, v, isRemoteOpen, bf, bq, fp, sv, fileList, specs, wikiView, wf, dbView, ciView, lg, lq, shown, sentWiki, pages, usage, now, session] = await Promise.all([
       read($, tab),
       read($, subTabs),
       read($, view),
@@ -532,6 +611,7 @@ export const register: Register = on => {
       read($, wiki),
       read($, wikiFolders),
       read($, db),
+      read($, ci),
       read($, log),
       read($, logQuery),
       read($, cover),
@@ -576,6 +656,9 @@ export const register: Register = on => {
         isDistilling: distilling(),
         db: dbView,
         dbBusy: dbBusyNow(),
+        ci: ciView,
+        ciSaving: ciSavingNow(),
+        ciActing: ciActingNow(),
         servicePending: pendingServices(),
         log: lg,
         logQuery: lq,
