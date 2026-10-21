@@ -24,6 +24,7 @@ import {
   previewQuery,
   savedConnections,
   selectOnlyError,
+  sqlcmdCommandError,
   sqlcmdArgv,
   tableKey,
   withoutSecret,
@@ -40,6 +41,7 @@ const dbBusy = busyFlag<DbBusy>('')
 export const dbBusyNow = dbBusy.get
 
 const SQLCMD_MISSING = 'DB needs sqlcmd. Install it: brew install sqlcmd on macOS, winget install sqlcmd on Windows.'
+const NO_PASSWORD = 'This connection has no password. Delete it and add it again with Password=… in the connection string.'
 
 async function readSaved(io: DbIo) {
   return savedConnections(await io.storeGet(DB_STORE_KEY))
@@ -96,8 +98,12 @@ async function runSql(io: DbIo, query: string) {
   if (opened === undefined) throw new Error('No connection is open.')
   const { c } = opened
   const password = await opened.password
+  // 加入時就擋沒密碼的 SQL 登入；這是擋之前存的那些：sqlcmd 會跳出互動的密碼提示，沒有終端機就印「liner: function not supported in this terminal」。
+  if (!c.isIntegrated && password === '') throw new Error(NO_PASSWORD)
+  const command = sqlcmdCommandError(query)
+  if (command !== '') throw new Error(command)
   // 不用 runOk：只有跑不起來（rejected）才算沒裝，sqlcmd 自己回的錯誤不能拿去比對 not found。
-  const r = await io.run(sqlcmdArgv(c, query), { env: password === '' ? {} : { SQLCMDPASSWORD: password }, timeoutMs: DB_PROCESS_TIMEOUT_MS }).catch((err: unknown) => {
+  const r = await io.run(sqlcmdArgv(c, query), { env: c.isIntegrated ? {} : { SQLCMDPASSWORD: password }, timeoutMs: DB_PROCESS_TIMEOUT_MS }).catch((err: unknown) => {
     throw isMissingCommand(err) ? new Error(SQLCMD_MISSING) : err
   })
   if (r.exitCode !== 0) throw failure(r, 'sqlcmd')

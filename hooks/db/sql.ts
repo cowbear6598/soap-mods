@@ -1,5 +1,5 @@
 // DB 分頁：解析 SQL Server 的連線字串、只放行 SELECT、組 sqlcmd 的參數、解析它印出的表格。
-// 這裡只放純邏輯；跑 sqlcmd、存密碼在 register.tsx，密碼怎麼存在 db/secret.ts。
+// 這裡只放純邏輯；跑 sqlcmd、存密碼在 db/actions.ts，密碼怎麼存在 db/secret.ts。
 
 import type { DbColumn, DbConnection, DbResult, DbTable } from '../../types'
 import { DB_LOGIN_TIMEOUT_S, DB_PREVIEW_ROWS, DB_QUERY_TIMEOUT_S, DB_ROW_LIMIT } from '../config'
@@ -80,6 +80,7 @@ export function parseConnectionString(text: string): { parsed: ParsedConnection 
   }
   if (parsed.server === '') return { error: 'The connection string has no Server (or Data Source).' }
   if (!parsed.isIntegrated && parsed.user === '') return { error: 'The connection string has no User Id, and no Integrated Security.' }
+  if (!parsed.isIntegrated && parsed.password === '') return { error: 'The connection string has no Password, and no Integrated Security.' }
   if (parsed.isIntegrated) return { parsed: { ...parsed, user: '', password: '' } }
 
   return { parsed }
@@ -128,12 +129,22 @@ function stripSql(sql: string) {
 const BLOCKED =
   /\b(INTO|INSERT|UPDATE|DELETE|MERGE|DROP|ALTER|CREATE|TRUNCATE|EXEC|EXECUTE|GRANT|REVOKE|DENY|BACKUP|RESTORE|DBCC|SHUTDOWN|KILL|OPENROWSET|OPENQUERY|OPENDATASOURCE|OPENXML|BULK|USE|SET|DECLARE|BEGIN|COMMIT|ROLLBACK|SAVE|WAITFOR|RECONFIGURE|RECEIVE|SEND|GO)\b/i
 
+/**
+ * Why sqlcmd would not run `sql` as written, '' when it would. sqlcmd runs
+ * :setvar, !! and $(var) before sending, even inside strings, so the raw text
+ * is checked. Every query goes through it in runSql: without -X (see
+ * sqlcmdArgv) nothing else stops them.
+ */
+export function sqlcmdCommandError(sql: string): string {
+  return /^\s*(:|!!)/m.test(sql) || sql.includes('$(') ? 'sqlcmd commands and $( ) are not allowed: only SELECT runs here.' : ''
+}
+
 /** Why `sql` may not run, '' when it is one SELECT (or a WITH … SELECT). */
 export function selectOnlyError(sql: string): string {
   const bare = stripSql(sql).trim().replace(/[;\s]+$/, '')
   if (bare === '') return 'Type a SELECT to run.'
-  // sqlcmd 送出前會先處理 :setvar、!! 這類指令和 $(var)，連字串裡的也算，所以看原文。
-  if (/^\s*(:|!!)/m.test(sql) || sql.includes('$(')) return 'sqlcmd commands and $( ) are not allowed: only SELECT runs here.'
+  const command = sqlcmdCommandError(sql)
+  if (command !== '') return command
   if (bare.includes(';')) return 'Only one statement at a time.'
   if (!/^(SELECT|WITH)\b/i.test(bare)) return 'Only SELECT runs here.'
   const blocked = BLOCKED.exec(bare)?.[1]
@@ -141,13 +152,14 @@ export function selectOnlyError(sql: string): string {
   return blocked === undefined ? '' : `${blocked.toUpperCase()} is not allowed: only SELECT runs here.`
 }
 
-// sqlcmd 印表格用的欄位分隔字元（-s）。
 const DB_SEPARATOR = '\t'
 
 /**
  * sqlcmd's arguments to run `query` on `c`: errors to stderr and a nonzero
  * exit (-r 1, -b), tab separated with trailing spaces trimmed (-s, -W), no
- * scripting variables or commands (-x, -X).
+ * scripting variables (-x). No -X: it also ignores SQLCMDPASSWORD, so sqlcmd
+ * prompts for the password and fails with "liner: function not supported in
+ * this terminal"; sqlcmdCommandError refuses its commands instead.
  * No -f: go-sqlcmd (brew, winget) prints UTF-8 and refuses it. The password
  * goes in SQLCMDPASSWORD, never here.
  */
@@ -161,7 +173,6 @@ export function sqlcmdArgv(c: DbConnection, query: string): string[] {
     ...(c.trustCert ? ['-C'] : []),
     '-b',
     '-x',
-    '-X',
     '-r',
     '1',
     '-W',

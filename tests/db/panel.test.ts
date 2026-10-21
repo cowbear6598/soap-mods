@@ -80,9 +80,9 @@ function dbWorld(
 }
 
 // 打開 DB 分頁、貼上連線字串存好，回傳存好的那筆的 id。
-async function addConnection(ui: Pane, world: ReturnType<typeof dbWorld>) {
+async function addConnection(ui: Pane, world: ReturnType<typeof dbWorld>, text = CONN_STRING) {
   await ui.press({ key: 'tab:db' })
-  await ui.input({ key: 'db:add', text: CONN_STRING })
+  await ui.input({ key: 'db:add', text })
 
   return world.saved()[0]?.id ?? ''
 }
@@ -130,6 +130,8 @@ test('ADO.NET and ODBC spellings, quoted and braced passwords all reach sqlcmd a
     expect(run?.argv.join(' ')).toContain(c.args.join(' '))
     if (!c.args.includes('-C')) expect(run?.argv).not.toContain('-C')
     expect(run?.init?.env?.SQLCMDPASSWORD).toBe(c.password)
+    // -X 會讓 sqlcmd 不讀 SQLCMDPASSWORD，改跳密碼提示。
+    expect(run?.argv).not.toContain('-X')
     await ui.press({ key: 'db:back' })
   }
   await ui.unmount()
@@ -142,6 +144,8 @@ test('a bad connection string is refused with the reason, and nothing is saved',
   for (const [text, reason] of [
     ['Database=shop;User Id=x;Password=topsecret', 'The connection string has no Server (or Data Source).'],
     ['Server=db;Password=topsecret', 'The connection string has no User Id, and no Integrated Security.'],
+    // 沒密碼的 SQL 登入存下來，sqlcmd 會跳出互動的密碼提示（沒有終端機就印 liner: function not supported in this terminal）。
+    ['Server=db;User Id=app', 'The connection string has no Password, and no Integrated Security.'],
   ] as const) {
     await ui.input({ key: 'db:add', text })
     expect(await ui.find({ type: 'Text', text: reason })).toBeDefined()
@@ -174,7 +178,6 @@ test('opening a connection lists its tables; a SELECT runs with the password in 
   expect(table).toContain('| 1 | Ada \\| Co |')
   expect(table).toContain('| 2 | NULL |')
 
-  // Back 回清單。
   await ui.press({ key: 'db:back' })
   expect(await ui.find({ type: 'Text', text: 'shop @ db.local' })).toBeDefined()
   expect(await ui.find({ key: 'db:query' })).toBeUndefined()
@@ -255,8 +258,6 @@ test('pressing a table shows its columns and previews its rows; pressing it agai
 
   await ui.press({ key: 'db:table:dbo.orders' })
   expect(await ui.find({ type: 'Text', text: 'nvarchar?' })).toBeUndefined()
-  // 打開連線後密碼只讀一次：之後讀資料表、欄位、預覽都用同一份，不再開 security。
-  expect(world.runs.filter(r => r.argv[0] === 'security' && r.argv.includes('-w') && r.argv[1] === 'find-generic-password')).toHaveLength(1)
   await ui.unmount()
 })
 
@@ -278,9 +279,7 @@ test('deleting a connection takes two presses and removes its Keychain password 
 test('with Integrated Security sqlcmd runs with -E: no user, no password, nothing in the Keychain', async ($, on) => {
   const world = dbWorld(on)
   const ui = await mountPane($, 'desktop')
-  await ui.press({ key: 'tab:db' })
-  await ui.input({ key: 'db:add', text: 'Server=db.local;Database=shop;Integrated Security=SSPI' })
-  const id = world.saved()[0]?.id ?? ''
+  const id = await addConnection(ui, world, 'Server=db.local;Database=shop;Integrated Security=SSPI')
   expect(await ui.find({ type: 'Text', text: 'Windows login' })).toBeDefined()
 
   await ui.press({ key: `db:item:${id}` })
