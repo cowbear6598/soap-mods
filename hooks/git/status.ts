@@ -170,8 +170,7 @@ async function readGit(io: GitIo) {
           const cur = coverData(c, 'diff')
           if (cur === undefined || cur.path !== shown?.path || cur.commits.length > 0) return c
 
-          // 同一個檔案重讀，看到第幾頁留著。
-          return reread.path === '' ? NO_COVER : showCover(c, 'diff', { ...reread, page: cur.page })
+          return reread.path === '' ? NO_COVER : showCover(c, 'diff', reread)
         }),
   ])
   // log 只在看得到時重讀（換到 log 分頁時也會讀）。

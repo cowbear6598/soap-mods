@@ -34,7 +34,7 @@ export const EMPTY_PLAN: Plan = { branch: '', issueNumber: '', description: '', 
 export const EMPTY_SPEC: SpecView = { isLoaded: false, specs: [], error: '', open: '', deleteArmed: '', deleteError: '', plan: EMPTY_PLAN, problems: [], stamp: '' }
 
 // 關掉 Wiki 子分頁打開的頁面或草稿，回到清單。
-export const NO_WIKI_OPEN = { open: '', draft: '', text: '', diff: '', diffPage: 0, isTruncated: false, readError: '' } satisfies Partial<WikiView>
+export const NO_WIKI_OPEN = { open: '', draft: '', text: '', diff: '', isTruncated: false, readError: '' } satisfies Partial<WikiView>
 
 export const EMPTY_WIKI: WikiView = {
   isLoaded: false,
@@ -89,7 +89,6 @@ export const EMPTY_DIFF: DiffPaneView = {
   kind: 'modified',
   diff: '',
   isTruncated: false,
-  page: 0,
   error: '',
   commits: [],
   files: [],

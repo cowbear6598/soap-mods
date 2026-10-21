@@ -7,7 +7,7 @@ import { NO_DB_CONNECTION } from '../defaults'
 import { errorText, failure, isMissingCommand } from '../errors'
 import type { Io } from '../io'
 import { latestOnly } from '../latest'
-import { type ArmSlot, isConfirmed, isWindows, runOk } from '../shell'
+import { type ArmSlot, busyFlag, isConfirmed, isWindows, runOk } from '../shell'
 import type { DbBusy } from '../ui/actions'
 import { MAC_SAVE_ARGV, WIN_PROTECT_ARGV, WIN_UNPROTECT_ARGV, fromHex, macCheckArgv, macDeleteArgv, macReadArgv, macSaveInput, toHex } from './secret'
 import {
@@ -35,15 +35,9 @@ export type DbIo = Io & {
 }
 
 // 正在存連線、跑查詢。跟 syncing 一樣放模組變數不放 atom，免得被熱重載中斷後一直停在「Running…」。
-let dbBusy: DbBusy = ''
+const dbBusy = busyFlag<DbBusy>('')
 
-export const dbBusyNow = () => dbBusy
-
-function setDbBusy(io: DbIo, busy: DbBusy) {
-  if (dbBusy === busy) return
-  dbBusy = busy
-  io.invalidate()
-}
+export const dbBusyNow = dbBusy.get
 
 const SQLCMD_MISSING = 'DB needs sqlcmd. Install it: brew install sqlcmd on macOS, winget install sqlcmd on Windows.'
 
@@ -113,11 +107,11 @@ async function runSql(io: DbIo, query: string) {
 
 // 貼上連線字串：拆開、密碼存進 Keychain／DPAPI，其餘存進 $.store。錯誤訊息裡不放連線字串（有密碼）。
 export async function addDbConnection(io: DbIo, text: string) {
-  if (dbBusy !== '' || text.trim() === '') return
+  if (dbBusy.get() !== '' || text.trim() === '') return
   const p = parseConnectionString(text)
   if ('error' in p) return io.setDb({ error: p.error })
   const { password, ...parts } = p.parsed
-  setDbBusy(io, 'adding')
+  dbBusy.set(io, 'adding')
   try {
     const id = connectionId(await io.now(), Math.random())
     const saved: SavedConnection = { id, ...parts, secret: await saveSecret(io, id, password) }
@@ -126,7 +120,7 @@ export async function addDbConnection(io: DbIo, text: string) {
   } catch (err) {
     await io.setDb({ error: `Couldn't save the connection: ${errorText(err)}` })
   } finally {
-    setDbBusy(io, '')
+    dbBusy.set(io, '')
   }
 }
 
@@ -159,7 +153,7 @@ function dropConnection(io: DbIo) {
   columnLoads.drop()
   queryRuns.drop()
   opened = undefined
-  setDbBusy(io, '')
+  dbBusy.set(io, '')
 }
 
 export async function openDbConnection(io: DbIo, id: string) {
@@ -189,7 +183,7 @@ export async function runDbQuery(io: DbIo, query: string) {
   const refused = selectOnlyError(query)
   if (refused !== '') return io.setDb({ query, queryError: refused })
   const isStale = queryRuns.start()
-  setDbBusy(io, 'query')
+  dbBusy.set(io, 'query')
   await io.setDb({ query, queryError: '' })
   try {
     const result = await runSql(io, query)
@@ -197,7 +191,7 @@ export async function runDbQuery(io: DbIo, query: string) {
   } catch (err) {
     if (!isStale()) await io.setDb({ result: null, queryError: errorText(err) })
   } finally {
-    if (!isStale()) setDbBusy(io, '')
+    if (!isStale()) dbBusy.set(io, '')
   }
 }
 

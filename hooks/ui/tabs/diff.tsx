@@ -1,6 +1,7 @@
 import { FILE_GROUPS, FILE_PAGE } from '../../config'
 import type { FileEntry, FileGroupId } from '../../git/parse'
 import { canDelete, canRollback, groupFiles } from '../../git/parse'
+import { clampPage } from '../../text'
 import type { TabBody } from './context'
 
 // diff 分頁：未提交的變更，分 Staged／Unstaged／Untracked。點檔案：衝突的開三欄合併，其他看差異（都畫在 Soap Panel 裡）。
@@ -33,8 +34,7 @@ export const diffTab: TabBody = ({ w, d, a }) => {
 
   // 三組當成接起來的一串切頁：每組切出落在 [start, end) 的那段；檔案變少、存的頁數超過了，就夾回最後一頁。
   const total = FILE_GROUPS.reduce((n, g) => n + groups[g.id].length, 0)
-  const pages = Math.ceil(total / FILE_PAGE)
-  const page = Math.min(d.filePage, pages - 1)
+  const page = clampPage(d.filePage, total, FILE_PAGE)
   const start = page * FILE_PAGE
   const end = Math.min(start + FILE_PAGE, total)
   let offset = 0

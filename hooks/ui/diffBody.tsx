@@ -4,8 +4,9 @@
 import type { RenderChildren } from 'claude-code'
 
 import { DIFF_PAGE_ROWS, DIFF_STYLE } from '../config'
-import type { DiffRow } from '../git/wordDiff'
-import { parseDiffRows } from '../git/wordDiff'
+import type { DiffRow, LineRow } from '../git/wordDiff'
+import { markWords, parseDiffRows } from '../git/wordDiff'
+import { clampPage } from '../text'
 import type { Ui } from './actions'
 
 const ROW_STYLE = {
@@ -14,16 +15,24 @@ const ROW_STYLE = {
   same: { mark: ' ', text: undefined, word: undefined },
 } as const
 
-// 面板每次重畫都會走到這裡：同一份差異只解析一次（逐對跑字詞 diff 不便宜）。
-let parsed: { source: string; rows: DiffRow[]; width: number } = { source: '', rows: [], width: 1 }
+// 面板每次重畫都會走到這裡：同一份差異只切一次行，字詞 diff（逐對跑 Myers，不便宜）只算畫的那頁，也只算一次。
+let parsed: { source: string; rows: LineRow[]; width: number } = { source: '', rows: [], width: 1 }
+let marked: { source: string; page: number; rows: DiffRow[] } = { source: '', page: -1, rows: [] }
 function parse(source: string) {
   if (parsed.source === source) return parsed
   const rows = parseDiffRows(source)
   // 行號的寬度照整份算：換頁時數字不會左右跳。
-  const width = String(Math.max(0, ...rows.map(r => (r.kind === 'hunk' ? 0 : r.line)))).length
+  const width = String(rows.reduce((n, r) => Math.max(n, r.kind === 'hunk' ? 0 : r.line), 0)).length
   parsed = { source, rows, width }
 
   return parsed
+}
+function pageRows(source: string, rows: LineRow[], page: number) {
+  if (marked.source !== source || marked.page !== page) {
+    marked = { source, page, rows: markWords(rows, page * DIFF_PAGE_ROWS, (page + 1) * DIFF_PAGE_ROWS) }
+  }
+
+  return marked.rows
 }
 
 /** The page the diff shows and the pager under it: `pager` draws the bar from what this page holds. */
@@ -41,9 +50,9 @@ export type DiffPaging = {
 export function diffBody(ui: Pick<Ui, 'Box' | 'Text'>, source: string, isTerminal: boolean, divider: RenderChildren, paging: DiffPaging) {
   const { Box, Text } = ui
   const { rows, width } = parse(source)
-  const page = Math.min(paging.page, Math.max(0, Math.ceil(rows.length / DIFF_PAGE_ROWS) - 1))
+  const page = clampPage(paging.page, rows.length, DIFF_PAGE_ROWS)
   const from = page * DIFF_PAGE_ROWS
-  const shown = rows.slice(from, from + DIFF_PAGE_ROWS)
+  const shown = pageRows(source, rows, page)
   const mono = isTerminal ? {} : { mono: true }
   const bar = paging.pager({ page, size: DIFF_PAGE_ROWS, count: shown.length, hasNext: from + DIFF_PAGE_ROWS < rows.length, total: rows.length })
   // 段落開頭：這頁第二段起上面先空一行、畫分隔線，一看就知道跳到檔案的別處了。

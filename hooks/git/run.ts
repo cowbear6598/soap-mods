@@ -5,6 +5,7 @@ import type { EngineInterface } from 'claude-code'
 import type { Cover, GitView, LogView, SubTabs } from '../../types'
 import { NO_ARMED, NO_MESSAGES } from '../defaults'
 import { failure } from '../errors'
+import { absPath } from '../files/list'
 import type { Io } from '../io'
 import { type ArmSlot, isConfirmed } from '../shell'
 import type { Repo } from './repo'
@@ -53,7 +54,7 @@ export async function gitOk(io: Io, args: string[], init?: GitInit) {
   return r
 }
 
-export const inRepo = (path: string) => (repos.current === undefined ? path : `${repos.current.root}/${path}`)
+export const inRepo = (path: string) => (repos.current === undefined ? path : absPath(repos.current.root, path))
 
 // 待確認的刪除、捨棄（打勾）、切換（再按一次）一次只有一個。
 export const gitArm: ArmSlot = {}

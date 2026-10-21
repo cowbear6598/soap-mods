@@ -1,7 +1,7 @@
 // 差異（畫在 Soap Panel 裡）：工作區檔案、commit 裡的檔案，和 diff 分頁的刪除、rollback。
 
 import type { CommitFile, DiffPaneView, GitCommit, GitFile } from '../../types'
-import { coverData, patchCover, showCover } from '../cover'
+import { coverData, showCover } from '../cover'
 import { EMPTY_DIFF, NO_MESSAGES } from '../defaults'
 import { errorText } from '../errors'
 import { neighbour } from '../neighbour'
@@ -21,23 +21,25 @@ const DIFF_FLAGS = ['--no-color', '--no-ext-diff', '--no-textconv']
 // fallback：結束碼不是 0 時改跑的另一個 diff（還沒有任何 commit 時沒有 HEAD，改看已暫存的內容）。
 async function runDiff(io: GitIo, args: string[], fallback?: string[]) {
   let out = ''
+  let isTruncated = false
   let error = ''
   try {
     const r = await git(io, args)
     if (r.exitCode === 0 || fallback === undefined) {
       out = r.stdout
+      isTruncated = r.isStdoutTruncated
       if (r.exitCode !== 0) error = r.stderr.trim()
     } else {
       const again = await git(io, fallback)
       out = again.stdout
+      isTruncated = again.isStdoutTruncated
       if (again.exitCode !== 0) error = again.stderr.trim() || r.stderr.trim()
     }
   } catch (err) {
     error = `Failed to read diff: ${errorText(err)}`
   }
-  const { source, isTruncated } = toHunks(out)
 
-  return { diff: source, isTruncated, error }
+  return { diff: toHunks(out), isTruncated, error }
 }
 
 // 讀工作區一個檔案的 diff：已追蹤的對 HEAD，未追蹤的對空檔案。
@@ -94,12 +96,6 @@ async function readCommitDiff(io: GitIo, commits: GitCommit[], f: CommitFile, fi
 
 export async function openCommitDiff(io: GitIo, commits: GitCommit[], f: CommitFile, files: CommitFile[]) {
   await showDiff(io, await readCommitDiff(io, commits, f, files))
-}
-
-// 長的差異換頁，捲回最上面從頭看。
-export async function showDiffPage(io: GitIo, page: number) {
-  await io.updateCover(c => patchCover(c, 'diff', { page }))
-  await io.scrollTop()
 }
 
 export async function stepDiffFile(io: GitIo, step: 1 | -1) {

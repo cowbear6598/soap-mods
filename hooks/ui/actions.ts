@@ -25,6 +25,7 @@ import type {
   TabId,
   WikiModel,
   WikiView,
+  DiffPage,
 } from '../../types'
 
 // $.ui.resolve(e) 給的元件表。
@@ -60,9 +61,8 @@ export type Actions = {
   // log
   searchLog: (text: string) => unknown
   showLogPage: (page: number) => unknown
-  // 長的差異換頁：蓋版的差異、Wiki 草稿的差異。
-  showDiffPage: (page: number) => unknown
-  showWikiDiffPage: (page: number) => unknown
+  // 長的差異換頁：place 是哪裡的差異（diffpage 蓋版、wikidiff 草稿），id 是哪一份。
+  showDiffPage: (place: string, id: string, page: number) => unknown
   openCommit: (c: GitCommit) => unknown
   toggleRangePick: () => unknown
   pickRange: (c: GitCommit) => unknown
@@ -160,6 +160,8 @@ export type PanelData = {
   branchQuery: string
   // diff 分頁看的第幾頁（從 0 開始；檔案變少時畫的那邊會夾回最後一頁）。
   filePage: number
+  // 每個地方的長差異看到第幾頁（ui/widgets 的 w.diff 用）。
+  diffPages: Readonly<Record<string, DiffPage>>
   // 正在跑的 Fetch／Pull，'' 是沒有。
   syncing: GitSync | ''
   services: ServicesView

@@ -91,7 +91,7 @@ function coverView(ui: Ui, w: Widgets, d: PanelData, a: Actions, press: Press) {
     case 'merge':
       return mergeView(ui, c.data, d.view.op, d.isMergeBusy, a, press)
     case 'diff':
-      return diffView(ui, w, c.data, a, press)
+      return diffView(ui, w, c.data, d.diffPages, a, press)
     case 'file':
       return fileView(ui, c.data, d.files, a, press)
     case 'none':

@@ -44,6 +44,24 @@ export async function removePath(io: Io, abs: string) {
 }
 
 // 待確認的按鈕（打勾、紅字）DELETE_ARM_MS 後收回（disarm）。一種一個 slot：再計時、或做了、按了別的就先停掉舊的。
+/**
+ * A flag for work in flight (a sync, a query) that the panel draws: a module
+ * variable, not an atom, so a hot reload in the middle resets it instead of
+ * leaving a "Running…" for good. `set` redraws when it changes.
+ */
+export function busyFlag<T>(init: T) {
+  let value = init
+
+  return {
+    get: () => value,
+    set: (io: Io, next: T) => {
+      if (Object.is(value, next)) return
+      value = next
+      io.invalidate()
+    },
+  }
+}
+
 export type ArmSlot = { timer?: Timer }
 
 export function disarmLater(io: Io, slot: ArmSlot, disarm: () => unknown) {

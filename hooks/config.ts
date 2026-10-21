@@ -203,7 +203,7 @@ export const DB_LOGIN_TIMEOUT_S = 15
 export const DB_QUERY_TIMEOUT_S = 60
 export const DB_PROCESS_TIMEOUT_MS = (DB_LOGIN_TIMEOUT_S + DB_QUERY_TIMEOUT_S + 10) * 1000
 
-// 差異、檔案內容最多畫前面這麼多字（引擎一次最多畫 100000 字），切在行尾。
+// 檔案內容、Wiki 頁面最多畫前面這麼多字（引擎的 Code、Markdown 一次最多畫 100000 字），切在行尾。差異一行一列分頁畫，不切。
 export const CODE_MAX_CHARS = 60_000
 // 差異自己一行一列畫（改到的字詞反白），一頁最多這麼多行，底下用換頁列換頁：一次畫幾千個 Text 會把桌面版卡住。
 export const DIFF_PAGE_ROWS = 800

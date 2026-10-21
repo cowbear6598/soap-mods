@@ -6,7 +6,7 @@ import { RESTART_CHECK_MS, RESTART_GAP_MS } from '../config'
 import { errorText, failure, isMissingCommand } from '../errors'
 import type { Io } from '../io'
 import { coalesce } from '../latest'
-import { isWindows, runOk } from '../shell'
+import { busyFlag, isWindows, runOk } from '../shell'
 import {
   MAC_ENV,
   MAC_LAUNCH_ARGV,
@@ -94,18 +94,17 @@ export function refreshServices(io: ServicesIo, isQuiet = false): Promise<void> 
 }
 
 // 正在停掉／重跑的服務。跟 syncing 一樣放模組變數不放 atom，免得被熱重載中斷後那個 PID 的按鈕永遠按不動。
-let servicePending: ServicePending[] = []
+const servicePending = busyFlag<ServicePending[]>([])
 
-export const pendingServices = () => servicePending
+export const pendingServices = servicePending.get
 
 function setPending(io: ServicesIo, pid: number, action: ServiceAction | undefined) {
-  servicePending = [...servicePending.filter(p => p.pid !== pid), ...(action === undefined ? [] : [{ pid, action }])]
-  io.invalidate()
+  servicePending.set(io, [...servicePending.get().filter(p => p.pid !== pid), ...(action === undefined ? [] : [{ pid, action }])])
 }
 
 // 停掉／重跑一個服務。動手前重新掃一次，確認還是同一個程序（PID 沒有被別人拿去用），才砍整棵程序樹。
 export async function runServiceAction(io: ServicesIo, target: Service, action: ServiceAction) {
-  if (servicePending.some(p => p.pid === target.pid)) return
+  if (servicePending.get().some(p => p.pid === target.pid)) return
   setPending(io, target.pid, action)
   await io.setServices({ actionError: '' })
   try {

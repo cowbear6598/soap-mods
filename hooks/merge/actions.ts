@@ -7,6 +7,7 @@ import { errorText } from '../errors'
 import { isConflict, isPromptSafePath } from '../git/parse'
 import { type GitIo, git, gitOk, inRepo } from '../git/run'
 import { neighbour } from '../neighbour'
+import { busyFlag } from '../shell'
 import { buildResult, isResolved, keepChoices, merge3, nextConflict, parseConflicts, splitLines } from './algo'
 
 // 開著的合併；開著的不是合併就是空的（path 是 ''）。
@@ -91,7 +92,7 @@ export async function jumpConflict(io: GitIo, step: 1 | -1) {
   let m = await readMerge(io)
   let at = nextConflict(m.chunks, conflictCursor.path === m.path ? conflictCursor.at : -1, step)
   if (at === null) {
-    if (isMergeBusy) return
+    if (isMergeBusy.get()) return
     const conflicted = (await io.getView()).files.filter(isConflict)
     const other = neighbour(conflicted, f => f.path === m.path, step)
     if (other === undefined) return
@@ -112,7 +113,7 @@ export async function openMerge(io: GitIo, path: string) {
 
 // refresh 之後：合併的檔案已經不是衝突了（解掉了、abort 了）就回到分頁，否則重讀一次（檔案可能被改過）。
 export async function syncMerge(io: GitIo, files: GitFile[]) {
-  if (isMergeBusy) return
+  if (isMergeBusy.get()) return
   const m = await readMerge(io)
   if (m.path === '') return
   const file = files.find(f => f.path === m.path)
@@ -123,28 +124,22 @@ export async function syncMerge(io: GitIo, files: GitFile[]) {
 
 // 正在套用合併或用某一邊解掉。跟 syncing 一樣放模組變數不放 atom，免得被熱重載中斷後一直卡著；
 // 卡著的話不能再解檔案、也不能換 repo。離開合併時歸零。
-let isMergeBusy = false
+const isMergeBusy = busyFlag(false)
 
-export const mergeBusy = () => isMergeBusy
-
-function setMergeBusy(io: GitIo, isBusy: boolean) {
-  if (isMergeBusy === isBusy) return
-  isMergeBusy = isBusy
-  io.invalidate()
-}
+export const mergeBusy = isMergeBusy.get
 
 // 解掉合併畫面上的檔案：做事的期間顯示處理中；失敗把錯誤留在畫面上，
 // 成功就回到分頁、重讀狀態。
 async function resolveFile(io: GitIo, what: string, work: (path: string) => Promise<unknown>) {
-  if (isMergeBusy) return
+  if (isMergeBusy.get()) return
   const m = await readMerge(io)
   if (m.path === '') return
-  setMergeBusy(io, true)
+  isMergeBusy.set(io, true)
   await setMerge(io, { error: '' })
   try {
     await work(m.path)
   } catch (err) {
-    setMergeBusy(io, false)
+    isMergeBusy.set(io, false)
     await setMerge(io, { error: `${what} failed: ${errorText(err)}` })
 
     return
@@ -198,5 +193,5 @@ export async function askClaude(io: GitIo) {
 // 關掉合併畫面時：選到一半的結果放掉（檔案沒動過，下次打開從頭選），處理中歸零。
 export function resetMerge(io: GitIo) {
   stageCache = undefined
-  setMergeBusy(io, false)
+  isMergeBusy.set(io, false)
 }

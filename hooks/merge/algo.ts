@@ -1,5 +1,4 @@
 import type { GitFile, MergeChoice, MergeChunk, MergeOp, MergeText } from '../../types'
-import { cutAtLineEnd } from '../text'
 
 const OURS_MARK = '<<<<<<<'
 const BASE_MARK = '|||||||'
@@ -173,8 +172,8 @@ export function diffLines(a: string[], b: string[]): DiffHunk[] {
   return hunks
 }
 
-/** `before` → `after` as unified diff hunks (`@@ -a,n +b,m @@`, `context` lines around each change), cut to fit. */
-export function unifiedDiff(before: string, after: string, context = 3): { source: string; isTruncated: boolean } {
+/** `before` → `after` as unified diff hunks (`@@ -a,n +b,m @@`, `context` lines around each change). */
+export function unifiedDiff(before: string, after: string, context = 3) {
   const a = splitLines(before)
   const b = splitLines(after)
   const hunks = diffLines(a, b)
@@ -202,9 +201,8 @@ export function unifiedDiff(before: string, after: string, context = 3): { sourc
     for (; at < aTo; at += 1) out.push(` ${a[at]}`)
     i = j + 1
   }
-  const { text, isTruncated } = cutAtLineEnd(out.join('\n'))
 
-  return { source: text, isTruncated }
+  return out.join('\n')
 }
 
 type SideChange = { side: 'ours' | 'theirs'; baseStart: number; baseEnd: number; lines: string[] }

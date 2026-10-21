@@ -6,6 +6,7 @@ import { NO_COMMIT } from '../defaults'
 import { latestOnly } from '../latest'
 import { patch } from '../patch'
 import { hasQuery } from '../search'
+import { clampPage } from '../text'
 import { LOG_FORMAT, branchRef, commitRange, filterCommits, logBranch, parseCommitFiles, parseLog } from './parse'
 import { gitErrorText } from './repo'
 import { type GitIo, git, repos } from './run'
@@ -76,7 +77,7 @@ export async function loadLog(io: GitIo, { isFresh = true, page }: { isFresh?: b
       : await readLog(io, ref, upstream, { skip: wanted * LOG_PAGE, count: LOG_PAGE })
     if (isStale()) return
     // 搜尋拿到的是整條：自己切，符合的變少了就夾回最後一頁（跟 diff 分頁一樣）。沒搜尋時 git 已經跳過前面幾頁。
-    const index = isSearching ? Math.min(wanted, Math.max(0, Math.ceil(found.commits.length / LOG_PAGE) - 1)) : wanted
+    const index = isSearching ? clampPage(wanted, found.commits.length, LOG_PAGE) : wanted
     const from = isSearching ? index * LOG_PAGE : 0
     const commits = found.commits.slice(from, from + LOG_PAGE)
     // 沒搜尋時不知道總共幾頁：歷史變短了（rebase、換分支），這頁已經沒有東西，就回到第一頁重讀。

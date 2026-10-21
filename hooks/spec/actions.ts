@@ -5,7 +5,7 @@ import type { SpecEntry, SpecView } from '../../types'
 import { SPEC_DIR } from '../config'
 import { EMPTY_PLAN } from '../defaults'
 import { errorText } from '../errors'
-import { absPath } from '../files/list'
+import { absPath, statStamp } from '../files/list'
 import { isPromptSafePath } from '../git/parse'
 import type { Io } from '../io'
 import { latestOnly } from '../latest'
@@ -55,7 +55,7 @@ export async function openSpec(io: SpecIo, name: string) {
   const shown = await (async () => {
     const full = absPath(await io.root(), path)
     const stat = await io.stat(full)
-    const stamp = `${stat.mtimeMs}:${stat.size}`
+    const stamp = statStamp(stat)
     if (prev.open === name && prev.stamp === stamp) return null
 
     return { ...readPlan(await io.readFile(full)), stamp }

@@ -64,14 +64,19 @@ export function wordDiff(before: string, after: string): { before: DiffSeg[]; af
   return { before: toSegs(a, aChanged), after: toSegs(b, bChanged) }
 }
 
+/** A diff line before its words are marked: `pair`, the row of the line it was paired with. */
+export type LineRow =
+  | { kind: 'hunk'; text: string }
+  | { kind: 'same' | 'add' | 'remove'; line: number; text: string; pair?: number }
+
 /**
  * Unified-diff hunks (what toHunks keeps) → one row per line, numbered: a
  * removed line by its old number, any other by its new one, tabs turned into
  * spaces (Text takes no control characters). A run of removed lines followed
- * by added lines is paired line by line, and each pair's changed words are marked.
+ * by added lines is paired line by line; markWords marks each pair's changed words.
  */
-export function parseDiffRows(source: string): DiffRow[] {
-  const rows: DiffRow[] = []
+export function parseDiffRows(source: string): LineRow[] {
+  const rows: LineRow[] = []
   let oldLine = 0
   let newLine = 0
   let removed: string[] = []
@@ -79,13 +84,13 @@ export function parseDiffRows(source: string): DiffRow[] {
 
   const flush = () => {
     const pairs = Math.min(removed.length, added.length)
-    const marked = removed.slice(0, pairs).map((r, i) => wordDiff(r, added[i] ?? ''))
+    const at = rows.length
     removed.forEach((text, i) => {
-      rows.push({ kind: 'remove', line: oldLine, segs: marked[i]?.before ?? whole(text) })
+      rows.push({ kind: 'remove', line: oldLine, text, ...(i < pairs ? { pair: at + removed.length + i } : {}) })
       oldLine += 1
     })
     added.forEach((text, i) => {
-      rows.push({ kind: 'add', line: newLine, segs: marked[i]?.after ?? whole(text) })
+      rows.push({ kind: 'add', line: newLine, text, ...(i < pairs ? { pair: at + i } : {}) })
       newLine += 1
     })
     removed = []
@@ -111,7 +116,7 @@ export function parseDiffRows(source: string): DiffRow[] {
       added.push(text)
     } else if (mark === ' ') {
       flush()
-      rows.push({ kind: 'same', line: newLine, segs: whole(text) })
+      rows.push({ kind: 'same', line: newLine, text })
       oldLine += 1
       newLine += 1
     }
@@ -120,4 +125,28 @@ export function parseDiffRows(source: string): DiffRow[] {
   flush()
 
   return rows
+}
+
+/** Rows `from` to `to` of `rows`, each paired line's changed words marked: only what a page draws pays for the word diff. */
+export function markWords(rows: LineRow[], from: number, to: number): DiffRow[] {
+  // 一對的兩行都在這段裡：只比一次。key 是減的那行。
+  const marked = new Map<number, ReturnType<typeof wordDiff>>()
+  const pairOf = (removeAt: number, before: string, after: string) => {
+    const known = marked.get(removeAt)
+    if (known !== undefined) return known
+    const m = wordDiff(before, after)
+    marked.set(removeAt, m)
+
+    return m
+  }
+
+  return rows.slice(from, to).map((r, i) => {
+    if (r.kind === 'hunk') return r
+    const other = r.pair === undefined ? undefined : rows[r.pair]
+    if (r.pair === undefined || other === undefined || other.kind === 'hunk') return { kind: r.kind, line: r.line, segs: whole(r.text) }
+    const segs =
+      r.kind === 'remove' ? pairOf(from + i, r.text, other.text).before : pairOf(r.pair, other.text, r.text).after
+
+    return { kind: r.kind, line: r.line, segs }
+  })
 }

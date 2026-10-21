@@ -1,8 +1,9 @@
-// Files 分頁的純邏輯：排序資料夾內容、算路徑、整理要看的檔案內容、寫檔案大小。
+// Files 分頁的純邏輯：排序資料夾內容、算路徑、走資料夾樹、整理要看的檔案內容、寫檔案大小。
 
 import type { FsEntry } from 'claude-code'
 
 import type { FilesView, FolderEntry } from '../../types'
+import { FILES_WALK_BATCH } from '../config'
 import { hasWords, searchWords } from '../search'
 import { cutAtLineEnd } from '../text'
 
@@ -74,3 +75,36 @@ export function formatSize(bytes: number) {
 
   return `${num} ${unit}`
 }
+
+export type Found = { path: string; size: number }
+export type WalkRule = { limit: number; skipDir: (name: string) => boolean; keep: (path: string, e: FsEntry) => boolean }
+
+// 由上往下走 base 底下，一次讀 FILES_WALK_BATCH 個資料夾；skipDir 的資料夾不進去，keep 的才收，收滿 limit 個就停。
+// base 本身列不出來就丟出去，底下的資料夾讀不到就略過。走完照 byName 排好。
+export async function walkTree(
+  list: (abs: string) => Promise<FsEntry[]>,
+  base: string,
+  { limit, skipDir, keep }: WalkRule,
+): Promise<{ found: Found[]; isCapped: boolean }> {
+  const found: Found[] = []
+  const queue = ['']
+  while (queue.length > 0 && found.length < limit) {
+    const batch = queue.splice(0, FILES_WALK_BATCH)
+    const lists = await Promise.all(
+      batch.map(async dir => ({ dir, list: dir === '' ? await list(base) : await list(absPath(base, dir)).catch(() => []) })),
+    )
+    for (const { dir, list } of lists) {
+      for (const e of list) {
+        const path = childPath(dir, e.name)
+        if (e.kind !== 'dir') {
+          if (keep(path, e)) found.push({ path, size: e.size })
+        } else if (!skipDir(e.name)) queue.push(path)
+      }
+    }
+  }
+
+  return { found: found.slice(0, limit).sort((a, b) => byName(a.path, b.path)), isCapped: found.length > limit || queue.length > 0 }
+}
+
+/** A file's stamp: its modified time and size. The same stamp, the same contents; a reread skips reading it. */
+export const statStamp = (stat: { mtimeMs: number; size: number }) => `${stat.mtimeMs}:${stat.size}`

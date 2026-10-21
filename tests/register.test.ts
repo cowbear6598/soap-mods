@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import type { ScanResult } from '../types'
-import { DANGER, GOOD, SWITCH_ARMED_HINT, WARN, DIFF_PAGE_ROWS } from '../hooks/config'
+import { DANGER, GOOD, SWITCH_ARMED_HINT, WARN, DIFF_PAGE_ROWS, CODE_MAX_CHARS } from '../hooks/config'
 import {
   CONFLICTED,
   MAC_ARGS_OUT,
@@ -143,9 +143,10 @@ test('pressing a changed file shows its diff over the tabs, Next/Previous step t
   await ui.unmount()
 })
 
-test('a diff longer than DIFF_PAGE_ROWS keeps its rows and pages through them', async ($, on) => {
-  // 兩段，各 DIFF_PAGE_ROWS 行加一行標頭：三頁。
-  const hunk = (at: number) => `@@ -${at},${DIFF_PAGE_ROWS} +${at},${DIFF_PAGE_ROWS} @@\n${'-a\n+b\n'.repeat(DIFF_PAGE_ROWS / 2)}`
+test('a diff longer than DIFF_PAGE_ROWS keeps its rows and pages through them, uncut past CODE_MAX_CHARS', async ($, on) => {
+  // 兩段，各 DIFF_PAGE_ROWS 行加一行標頭：三頁；每行夠長，整份超過 CODE_MAX_CHARS。
+  const line = 'x'.repeat(Math.ceil(CODE_MAX_CHARS / DIFF_PAGE_ROWS))
+  const hunk = (at: number) => `@@ -${at},${DIFF_PAGE_ROWS} +${at},${DIFF_PAGE_ROWS} @@\n${`-${line}a\n+${line}b\n`.repeat(DIFF_PAGE_ROWS / 2)}`
   const total = 2 * (DIFF_PAGE_ROWS + 1)
   stubPanel(on)
   gitRepo(on, {
@@ -166,6 +167,12 @@ test('a diff longer than DIFF_PAGE_ROWS keeps its rows and pages through them', 
   expect(await ui.find({ key: `diff:${DIFF_PAGE_ROWS}` })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: `${DIFF_PAGE_ROWS + 1}–${2 * DIFF_PAGE_ROWS} of ${total}` })).toBeDefined()
 
+  await ui.press({ key: 'diffpage:next' })
+  expect(await ui.find({ key: `diff:${2 * DIFF_PAGE_ROWS + 1}` })).toBeDefined()
+  expect(await ui.find({ key: 'diffpage:next' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'Diff is too long; showing only the beginning.' })).toBeUndefined()
+
+  await ui.press({ key: 'diffpage:prev' })
   await ui.press({ key: 'diffpage:prev' })
   expect(await ui.find({ key: 'diff:0' })).toBeDefined()
   await ui.unmount()

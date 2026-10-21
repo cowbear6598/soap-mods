@@ -20,7 +20,7 @@ import {
   ROW_BUTTON_LABEL,
   ROW_OVERLAY_WIDTH,
 } from '../config'
-import type { Press, Ui } from './actions'
+import type { Actions, PanelData, Press, Ui } from './actions'
 import { diffBody } from './diffBody'
 import { DIVIDER_SVG, iconSvg } from './svg'
 
@@ -448,9 +448,14 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
     )
   }
 
-  // 差異（unified-diff hunk），改到的字詞反白；終端機以外用等寬字。長的分頁畫，換頁列的 key 是「prefix:prev」這種。
-  const diff = (source: string, prefix: string, page: number, onPage: (page: number) => unknown) =>
-    diffBody(ui, source, isTerminal, divider, { page, pager: p => pager(prefix, p, onPage) })
+  // 差異（unified-diff hunk），改到的字詞反白；終端機以外用等寬字。長的分頁畫，換頁列的 key 是「place:prev」這種。
+  // place 是畫在哪（diffpage、wikidiff），id 是哪一份：pages 記的是別份就從第一頁看。
+  const diff = (source: string, place: string, id: string, pages: PanelData['diffPages'], show: Actions['showDiffPage']) => {
+    const at = pages[place]
+    const page = at?.id === id ? at.page : 0
+
+    return diffBody(ui, source, isTerminal, divider, { page, pager: p => pager(place, p, n => show(place, id, n)) })
+  }
 
   // 分隔線：夾在兩條線中間的東西就會上下對稱。
   const divider =

@@ -15,12 +15,11 @@ import {
 } from '../config'
 import { NO_WIKI_OPEN } from '../defaults'
 import { errorText } from '../errors'
-import { type Found, type WalkRule, walkTree } from '../files/actions'
-import { byName } from '../files/list'
+import { type Found, type WalkRule, byName, walkTree } from '../files/list'
 import type { Io } from '../io'
 import { latestOnly } from '../latest'
 import { unifiedDiff } from '../merge/algo'
-import { type ArmSlot, isConfirmed, removePath } from '../shell'
+import { type ArmSlot, busyFlag, isConfirmed, removePath } from '../shell'
 import { cutAtLineEnd } from '../text'
 import {
   type PageText,
@@ -214,23 +213,15 @@ export async function openWikiDraft(io: WikiIo, id: string) {
     }
     const page = await io.readFile(pageAbs(root, d.target)).catch(() => undefined)
     if (page === undefined) return { isNew: true, ...cutAtLineEnd(d.body), diff: '', readError: '' }
-    const diff = unifiedDiff(page, `${d.body}\n`)
 
-    return { isNew: false, text: d.body, diff: diff.source, isTruncated: diff.isTruncated, readError: '' }
+    return { isNew: false, text: d.body, diff: unifiedDiff(page, `${d.body}\n`), isTruncated: false, readError: '' }
   })().catch((err: unknown) => ({ isNew: true, text: '', diff: '', isTruncated: false, readError: `Couldn't read draft ${id}: ${errorText(err)}` }))
   if (isStale()) return
   const prev = await io.getWiki()
   const { isNew, ...view } = shown
   const drafts = prev.drafts.map(x => (x.id === id && x.kind === 'write' ? { ...x, isNew } : x))
-  // 回合結束重讀同一份草稿，看到第幾頁留著。
-  await io.setWiki({ ...NO_WIKI_OPEN, draft: id, ...view, drafts, deleteError: '', diffPage: prev.draft === id ? prev.diffPage : 0 })
+  await io.setWiki({ ...NO_WIKI_OPEN, draft: id, ...view, drafts, deleteError: '' })
   if (prev.draft !== id) await io.scrollTop()
-}
-
-// 草稿的差異換頁，捲回最上面從頭看。
-export async function showWikiDiffPage(io: WikiIo, page: number) {
-  await io.setWiki({ diffPage: page })
-  await io.scrollTop()
 }
 
 export async function closeWiki(io: WikiIo) {
@@ -333,20 +324,15 @@ async function askDistill(io: WikiIo, model: WikiModel | '', current: WikiModel 
 }
 
 // 正在 Distill。跟 dbBusy 一樣放模組變數不放 atom，免得被熱重載中斷後一直停在「Summarizing…」。
-let isDistilling = false
+const isDistilling = busyFlag(false)
 
-export const distilling = () => isDistilling
-
-function setDistilling(io: WikiIo, isBusy: boolean) {
-  isDistilling = isBusy
-  io.invalidate()
-}
+export const distilling = isDistilling.get
 
 // Distill：只有按了才跑。把這段對話和現有頁面給選的模型，請它寫出值得留下的草稿，
 // 存進 .soap/wiki/.drafts 等人看；頁面一頁都不動。一次只跑一個。說明最後寫用了哪個模型。
 export async function distillWiki(io: WikiIo) {
-  if (isDistilling) return
-  setDistilling(io, true)
+  if (isDistilling.get()) return
+  isDistilling.set(io, true)
   const current = await currentModel(io)
   const model = (await io.getWiki()).model || current
   await io.setWiki({ distillNote: '' })
@@ -366,7 +352,7 @@ export async function distillWiki(io: WikiIo) {
     note = `Distill failed: ${errorText(err)}`
   }
   const name = wikiModelLabel(model)
-  setDistilling(io, false)
+  isDistilling.set(io, false)
   await io.setWiki({ distillNote: name === '' || note === '' ? note : `${note} (${name})` })
   await loadWiki(io)
 }

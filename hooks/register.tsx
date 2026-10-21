@@ -48,7 +48,7 @@ import {
   toggleFileMenu,
 } from './files/actions'
 import { copyBranchName, deleteBranch, switchBranch, syncBranches, syncingNow } from './git/branch-actions'
-import { changeFile, openCommitDiff, openDiff, showDiffPage, stepDiffFile } from './git/diff-actions'
+import { changeFile, openCommitDiff, openDiff, stepDiffFile } from './git/diff-actions'
 import { clearLogQuery, dropLog, loadLog, openCommits, pickRange, searchLog } from './git/log-actions'
 import { abortOp, continueOp } from './git/op-actions'
 import { branchRef } from './git/parse'
@@ -77,7 +77,6 @@ import {
   selectWikiModel,
   sendWikiPages,
   settleWikiDraft,
-  showWikiDiffPage,
   toggleWikiPage,
   uncheckAllWikiPages,
 } from './wiki/actions'
@@ -123,6 +122,8 @@ const log = atom({ plugin: 'soap-mods', key: 'log' } as const, EMPTY_LOG)
 const db = atom({ plugin: 'soap-mods', key: 'db' } as const, EMPTY_DB)
 // 蓋住分頁的畫面：差異、三欄合併或檔案內容，一次一個（cover.ts）。
 const cover = atom({ plugin: 'soap-mods', key: 'cover' } as const, NO_COVER, { shape: 'cover-2' })
+// 長的差異看到第幾頁，照地方（diffpage、wikidiff）記；換一份差異（id 不同）就從頭。
+const diffPages = atom({ plugin: 'soap-mods', key: 'diffPages' } as const, {})
 
 // 改一個物件 atom 的其中幾個欄位；改的欄位內容都沒變就不寫（patch），面板不會白白重畫。
 // 引擎要看得出改的是哪個 atom，所以每個 atom 一個，不能寫成通用的。
@@ -400,8 +401,10 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     copyBranchName: name => copyBranchName(gitIo($), name, surface),
     searchLog: text => searchLog(gitIo($), text),
     showLogPage: page => loadLog(gitIo($), { isFresh: false, page }),
-    showDiffPage: page => showDiffPage(gitIo($), page),
-    showWikiDiffPage: page => showWikiDiffPage(wikiIo($), page),
+    showDiffPage: async (place, id, page) => {
+      await update($, diffPages, p => ({ ...p, [place]: { id, page } }))
+      await scrollTop($)
+    },
     openCommit: c => openCommits(gitIo($), [c]),
     toggleRangePick: () => update($, log, l => ({ ...l, isPicking: !l.isPicking, rangeStart: '' })),
     pickRange: c => pickRange(gitIo($), c),
@@ -515,7 +518,7 @@ export const register: Register = on => {
   on('tool.call', { tool: 'Edit' }, async ($, e, next) => checkWrite(baseIo($), e.file_path, await next(e))).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const [activeTab, subs, v, isRemoteOpen, bf, bq, fp, sv, fileList, specs, wikiView, wf, dbView, lg, lq, shown, sentWiki, usage, now, session] = await Promise.all([
+    const [activeTab, subs, v, isRemoteOpen, bf, bq, fp, sv, fileList, specs, wikiView, wf, dbView, lg, lq, shown, sentWiki, pages, usage, now, session] = await Promise.all([
       read($, tab),
       read($, subTabs),
       read($, view),
@@ -533,6 +536,7 @@ export const register: Register = on => {
       read($, logQuery),
       read($, cover),
       read($, wikiSent),
+      read($, diffPages),
       // 讀不到用量就當作還沒有讀數，不要讓整個面板畫不出來。
       $.session.usage().catch(() => undefined),
       $.clock.now(),
@@ -559,6 +563,7 @@ export const register: Register = on => {
         branchFolders: bf,
         branchQuery: bq,
         filePage: fp,
+        diffPages: pages,
         syncing: syncingNow(),
         services: sv,
         files: fileList,

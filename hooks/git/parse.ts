@@ -1,5 +1,4 @@
 import type { CommitFile, FileKind, GitBranch, GitCommit, GitFile, GitView, LogView } from '../../types'
-import { cutAtLineEnd } from '../text'
 import { filterWords } from '../search'
 
 /** `git status --porcelain=v1 -b -z` output → changed files; the `## branch` line is skipped. */
@@ -23,11 +22,10 @@ export function parseStatus(out: string): GitFile[] {
 }
 
 /** Keep the unified-diff hunks (what diffBody reads): from the first hunk header on. */
-export function toHunks(diff: string): { source: string; isTruncated: boolean } {
+export function toHunks(diff: string) {
   const start = diff.indexOf('@@')
-  const { text, isTruncated } = cutAtLineEnd(start === -1 ? '' : diff.slice(start))
 
-  return { source: text, isTruncated }
+  return start === -1 ? '' : diff.slice(start)
 }
 
 // 只要 ref 本身的欄位：不拿 commit 的日期、subject，git 就不用每次 refresh 都去讀上千個 commit。

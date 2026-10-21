@@ -1,9 +1,7 @@
 // Files 分頁的動作。引擎不讓 $ 跨檔，所以這裡不碰 $，只呼叫 register.tsx 給的 FilesIo（每個都是抓著 $ 的閉包）。
 
-import type { FsEntry } from 'claude-code'
-
 import type { FileView, FilesView } from '../../types'
-import { FILES_ROW_LIMIT, FILES_WALK_BATCH, FILES_WALK_LIMIT, FILES_WALK_SKIP, FILE_VIEW_MAX_BYTES } from '../config'
+import { FILES_ROW_LIMIT, FILES_WALK_LIMIT, FILES_WALK_SKIP, FILE_VIEW_MAX_BYTES } from '../config'
 import { EMPTY_FILE_VIEW, NO_FILE_MENU } from '../defaults'
 import { errorText } from '../errors'
 import { splitPath } from '../git/parse'
@@ -14,7 +12,7 @@ import { patch } from '../patch'
 import { hasQuery } from '../search'
 import { powershellArgv } from '../services/scan'
 import { type ArmSlot, isConfirmed, isWindows, removePath, runOk } from '../shell'
-import { absPath, byName, childPath, fileSteps, formatSize, matchPaths, sortEntries, viewText } from './list'
+import { type WalkRule, absPath, fileSteps, formatSize, matchPaths, sortEntries, statStamp, viewText, walkTree } from './list'
 
 export type FilesIo = Io & {
   getFiles: () => Promise<FilesView>
@@ -45,40 +43,11 @@ export async function reloadFiles(io: FilesIo) {
 }
 
 type Walk = { paths: string[]; isCapped: boolean }
-export type Found = { path: string; size: number }
-export type WalkRule = { limit: number; skipDir: (name: string) => boolean; keep: (path: string, e: FsEntry) => boolean }
 
 // 搜尋用的 session 資料夾底下所有檔案，第一次搜的時候才走一遍，之後打字只重新過濾；換分頁、回合結束丟掉。
 let walked: Promise<Walk> | undefined
 // 打字很快時，晚算完的舊搜尋不寫。
 const fileSearches = latestOnly()
-
-// 由上往下走 base 底下，一次讀 FILES_WALK_BATCH 個資料夾；skipDir 的資料夾不進去，keep 的才收，收滿 limit 個就停。
-// base 本身列不出來就丟出去，底下的資料夾讀不到就略過。走完照 byName 排好。
-export async function walkTree(
-  list: (abs: string) => Promise<FsEntry[]>,
-  base: string,
-  { limit, skipDir, keep }: WalkRule,
-): Promise<{ found: Found[]; isCapped: boolean }> {
-  const found: Found[] = []
-  const queue = ['']
-  while (queue.length > 0 && found.length < limit) {
-    const batch = queue.splice(0, FILES_WALK_BATCH)
-    const lists = await Promise.all(
-      batch.map(async dir => ({ dir, list: dir === '' ? await list(base) : await list(absPath(base, dir)).catch(() => []) })),
-    )
-    for (const { dir, list } of lists) {
-      for (const e of list) {
-        const path = childPath(dir, e.name)
-        if (e.kind !== 'dir') {
-          if (keep(path, e)) found.push({ path, size: e.size })
-        } else if (!skipDir(e.name)) queue.push(path)
-      }
-    }
-  }
-
-  return { found: found.slice(0, limit).sort((a, b) => byName(a.path, b.path)), isCapped: found.length > limit || queue.length > 0 }
-}
 
 // 搜尋用的：整個 session 資料夾，跳過 FILES_WALK_SKIP。之後每次打字只要依序挑出符合的，不用再排。
 async function walkFiles(io: FilesIo): Promise<Walk> {
@@ -171,7 +140,7 @@ async function readFileView(io: FilesIo, path: string, known: string): Promise<F
   try {
     const full = absPath(await io.root(), path)
     const stat = await io.stat(full)
-    const stamp = `${stat.mtimeMs}:${stat.size}`
+    const stamp = statStamp(stat)
     if (stamp === known) return null
     const shown = { ...EMPTY_FILE_VIEW, path, stamp }
     if (stat.kind !== 'file') return { ...shown, note: 'Not a file; nothing to show.' }

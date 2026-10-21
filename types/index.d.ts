@@ -88,14 +88,15 @@ export type CommitFile = {
 export type FileKind = 'added' | 'modified' | 'deleted' | 'renamed' | 'conflict'
 
 /** What the diff pane shows: a work tree file (diff tab), or a file in a commit (log tab). */
+/** Which page of a long diff is drawn (DIFF_PAGE_ROWS a page, from 0), and of which diff: another `id` starts at the top. */
+export type DiffPage = { id: string; page: number }
+
 export type DiffPaneView = {
   /** Repo-relative path, '' when nothing is shown. */
   path: string
   kind: FileKind
   diff: string
   isTruncated: boolean
-  /** Which page of the diff's rows is drawn (DIFF_PAGE_ROWS a page), from 0. */
-  page: number
   /** Why reading the diff failed, '' when none. */
   error: string
   /** For a commit file: the commits it was opened from (newest first; the title's `@ sha`), [] for a work tree file. */
@@ -395,8 +396,6 @@ export type WikiView = {
   text: string
   /** For an opened draft that changes a page: the page's lines against the draft's, as diff hunks; '' otherwise. */
   diff: string
-  /** Which page of `diff`'s rows is drawn (DIFF_PAGE_ROWS a page), from 0. */
-  diffPage: number
   /** `text` or `diff` was cut to fit. */
   isTruncated: boolean
   /** Why reading the opened page or draft failed, '' when none. */
@@ -499,6 +498,8 @@ declare module 'claude-code' {
       log: LogView
       /** Shaped, like wiki. */
       cover: Shaped<Cover>
+      /** The page each diff place (`diffpage`, `wikidiff`) shows, keyed by that place. */
+      diffPages: Record<string, DiffPage>
     }
   }
 }

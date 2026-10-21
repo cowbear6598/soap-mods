@@ -5,7 +5,7 @@ import type { RenderSurface, Timer } from 'claude-code'
 import type { GitSync } from '../../types'
 import { COPIED_MS, SYNC_TIMEOUT_MS } from '../config'
 import { NO_ARMED, NO_MESSAGES } from '../defaults'
-import { disarmLater } from '../shell'
+import { busyFlag, disarmLater } from '../shell'
 import { branchId } from './parse'
 import { SYNC_ARGS, gitErrorText } from './repo'
 import { type GitInit, type GitIo, armGit, gitArm, gitOk, isGitConfirmed } from './run'
@@ -70,14 +70,9 @@ export async function deleteBranch(io: GitIo, name: string, isRemote: boolean) {
 
 // 正在跑的 Fetch／Pull，'' 是沒有。放模組變數不放 atom：atom 熱重載後還在，跑到一半被重載中斷的話
 // 會一直停在「Pulling…」；模組變數跟著重載歸零。也順便擋住連按兩下。
-let syncing: GitSync | '' = ''
+const syncing = busyFlag<GitSync | ''>('')
 
-export const syncingNow = () => syncing
-
-function setSyncing(io: GitIo, kind: GitSync | '') {
-  syncing = kind
-  io.invalidate()
-}
+export const syncingNow = syncing.get
 
 // 連遠端的 git（Fetch、Pull、刪遠端分支）：要帳密時 git 不能停下來問（沒有地方打字），GIT_TERMINAL_PROMPT=0 讓它直接失敗；
 // Windows 的認證視窗照常會跳。
@@ -85,8 +80,8 @@ const NO_PROMPT: GitInit = { env: { GIT_TERMINAL_PROMPT: '0' }, timeoutMs: SYNC_
 
 // branch 分頁上方的 Fetch／Pull，按了才跑。跑的時候那顆按鈕寫「Pulling…」、再按不理，跑完重讀分支（ahead／behind 跟著更新）。
 export async function syncBranches(io: GitIo, kind: GitSync) {
-  if (syncing !== '') return
-  setSyncing(io, kind)
+  if (syncing.get() !== '') return
+  syncing.set(io, kind)
   gitArm.timer?.cancel()
   await io.setView(NO_MESSAGES)
   try {
@@ -95,7 +90,7 @@ export async function syncBranches(io: GitIo, kind: GitSync) {
   } catch (err) {
     await io.setView({ branchError: gitErrorText(err) })
   } finally {
-    setSyncing(io, '')
+    syncing.set(io, '')
   }
   await io.refresh()
 }
