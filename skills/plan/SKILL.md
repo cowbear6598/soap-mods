@@ -16,7 +16,7 @@ Derive an English kebab-case feature slug and immediately create:
 <session root>/.soap/tasks/<slug>/plan.yaml
 ```
 
-The session root is the primary working directory this session started in; Soap Panel's Spec tab reads plans only there. Write the plan there even when the change lives in a nested project below it or a Bash `cd` moved the current directory. Paths in the plan are relative to the session root, and each `verify` command runs from it (prefix `cd <project> &&` when needed).
+The session root is the primary working directory this session started in; Soap Panel's Docs tab → Spec reads plans only there. Write the plan there even when the change lives in a nested project below it or a Bash `cd` moved the current directory. Paths in the plan are relative to the session root, and each `verify` command runs from it (prefix `cd <project> &&` when needed).
 
 Never overwrite an unrelated plan. Update an existing directory only when the user refers to it; otherwise append `-2`, `-3`, and so on.
 
@@ -60,4 +60,4 @@ Ask one focused question at a time with the AskUserQuestion tool, offering two o
 
 ## Hand off
 
-Once purpose, behavior, scope, constraints, compatibility, affected surfaces, and verification are clear, reread the YAML against the rules above. Report the plan path and its goals without pasting the file, say when `verify` is empty, and mention that the plan is listed in Soap Panel's Spec tab.
+Once purpose, behavior, scope, constraints, compatibility, affected surfaces, and verification are clear, reread the YAML against the rules above. Report the plan path and its goals without pasting the file, say when `verify` is empty, and mention that the plan is listed in Soap Panel's Docs tab → Spec.

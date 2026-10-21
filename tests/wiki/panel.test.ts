@@ -65,13 +65,13 @@ function disk(
 const drawnRows = async (ui: Pane, prefix: string) =>
   (await ui.findAll({ type: 'Button' })).map(b => String(b.props.key)).filter(k => k.startsWith(prefix))
 
-test('the Spec tab has a book icon and Spec / Wiki sub tabs; Spec is the plan list and Wiki lists the pages', async ($, on) => {
+test('the Docs tab has a book icon and Spec / Wiki sub tabs; Spec is the plan list and Wiki lists the pages', async ($, on) => {
   const files: Record<string, string> = { [`${WIKI}/style.md`]: '# Style\n' }
   disk(on, files)
 
   const ui = await mountPane($, 'desktop')
   const icons = await ui.findAll({ type: 'Svg' })
-  expect(icons.find(i => i.props.alt === 'Spec')?.props.source).toContain('M12 7v14')
+  expect(icons.find(i => i.props.alt === 'Docs')?.props.source).toContain('M12 7v14')
   await ui.press({ key: 'tab:spec' })
   expect(await ui.find({ key: 'sub:spec' })).toBeDefined()
   expect(await ui.find({ key: 'sub:wiki' })).toBeDefined()

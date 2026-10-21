@@ -138,7 +138,7 @@ const asText = (v: Value | null | undefined) => (typeof v === 'string' ? v.trim(
 const asList = (v: Value | null | undefined) => (Array.isArray(v) ? v : [])
 
 /**
- * `text` (a plan.yaml) as the Spec tab draws it, and everything wrong with it: what could not be read,
+ * `text` (a plan.yaml) as the Spec sub tab draws it, and everything wrong with it: what could not be read,
  * a missing or mistyped key, a key the plan does not have. No problems means the plan is valid.
  */
 export function readPlan(text: string): { plan: Plan; problems: string[] } {

@@ -46,7 +46,7 @@ function tasks(on: TestOn, state: { folders: string[]; plans: Plans }, { now = 0
   on('fs.read', (_$, e) => ({ value: planAt(e.path).text }))
 }
 
-test('the Spec tab lists the plans newest first, opens one to its Description, Goals and Verify, and b goes back', async ($, on) => {
+test('the Spec sub tab of Docs lists the plans newest first, opens one to its Description, Goals and Verify, and b goes back', async ($, on) => {
   const state = {
     folders: ['login', 'search', 'draft'],
     plans: {
@@ -257,7 +257,7 @@ test('the trash button of a spec asks with a check first, then deletes its whole
   }
 })
 
-test('with no .soap/tasks the Spec tab says to run /soap-mods:plan, and at turn end it picks up a new plan and rereads the open one', async ($, on) => {
+test('with no .soap/tasks the Spec sub tab says to run /soap-mods:plan, and at turn end it picks up a new plan and rereads the open one', async ($, on) => {
   const state = { folders: [] as string[], plans: {} as Plans }
   tasks(on, state)
 

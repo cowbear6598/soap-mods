@@ -126,7 +126,7 @@ export const TABS: { id: TabId; label: string; icon: IconName }[] = [
   { id: 'files', label: 'Files', icon: 'files' },
   { id: 'git', label: 'Git', icon: 'git' },
   { id: 'services', label: 'Services', icon: 'services' },
-  { id: 'spec', label: 'Spec', icon: 'book' },
+  { id: 'spec', label: 'Docs', icon: 'book' },
   { id: 'db', label: 'DB', icon: 'db' },
 ]
 

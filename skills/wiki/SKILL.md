@@ -56,4 +56,4 @@ Page paths are relative to `.soap/wiki/`, use `/`, end in `.md`, are lowercase-k
 
 ## Hand off
 
-List the drafts you wrote, one line each (what it does to which page), and tell the user to open Soap Panel's Spec tab → Wiki to review them: Accept applies one, Discard drops one.
+List the drafts you wrote, one line each (what it does to which page), and tell the user to open Soap Panel's Docs tab → Wiki to review them: Accept applies one, Discard drops one.
