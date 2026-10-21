@@ -29,7 +29,6 @@ export const EMPTY_CI: CiView = {
   isTokenOpen: false,
   tokenError: '',
   query: '',
-  branch: '',
   branches: [],
   page: 0,
   error: '',

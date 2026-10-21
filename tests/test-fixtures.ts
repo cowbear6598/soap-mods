@@ -82,7 +82,40 @@ export const ok = (stdout: string) => ({
 export const fail = (stderr: string, exitCode = 128) => ({ value: { ...ok('').value, exitCode, stderr } })
 
 type RunResult = ReturnType<typeof ok>
-type RunEvent = { argv: readonly string[]; init?: { cwd?: string; env?: Record<string, string> } }
+type RunEvent = { argv: readonly string[]; init?: { cwd?: string; env?: Record<string, string>; stdin?: string } }
+
+// macOS 的 Keychain：一張表（account → 存進去的十六進位），counts.reads 是印出機密（-w）的次數。不是 security 的指令回 undefined，交給呼叫的人。
+export function fakeKeychain(items: Record<string, string> = {}) {
+  const counts = { reads: 0 }
+  const run = (e: RunEvent): RunResult | undefined => {
+    const [cmd, sub] = e.argv
+    if (cmd !== 'security') return undefined
+    const account = e.argv[e.argv.indexOf('-a') + 1] ?? ''
+    if (sub === '-i') {
+      const [, id = '', hex = ''] = /-a (\S+)(?: -T "")? -w (\S+)/.exec(e.init?.stdin ?? '') ?? []
+      items[id] = hex
+
+      return ok('')
+    }
+    if (sub === 'find-generic-password') {
+      const hex = items[account]
+      if (hex === undefined) return fail('The specified item could not be found in the keychain.', 44)
+      if (!e.argv.includes('-w')) return ok('keychain: "login.keychain-db"\n')
+      counts.reads += 1
+
+      return ok(`${hex}\n`)
+    }
+    if (sub === 'delete-generic-password') {
+      delete items[account]
+
+      return ok('')
+    }
+
+    return undefined
+  }
+
+  return { items, counts, run }
+}
 
 // session 資料夾 /repo 就是一個 git repo：status 是 git status 印出的（會變的話給函式）、branches 是 for-each-ref 的每一行（branchLine）。
 // run 先看每個 git 指令（cmd 從子指令開始），給了結果就用它的，沒給就照上面的回。

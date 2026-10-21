@@ -74,7 +74,7 @@ import { clearLogQuery, dropLog, loadLog, openCommits, pickRange, searchLog } fr
 import { abortOp, continueOp } from './git/op-actions'
 import { branchRef } from './git/parse'
 import type { GitIo } from './git/run'
-import { refresh, refreshTab, selectRepo } from './git/status'
+import { refresh, refreshRepoList, refreshTab, selectRepo } from './git/status'
 import type { Io } from './io'
 import { applyMerge, askClaude, editChunks, jumpConflict, mergeBusy, openMerge, resetMerge, takeSide } from './merge/actions'
 import { patch } from './patch'
@@ -143,7 +143,7 @@ const log = atom({ plugin: 'soap-mods', key: 'log' } as const, EMPTY_LOG)
 // DB 分頁：存著的連線（不含密碼）、打開的那個的資料表、查詢和結果。
 const db = atom({ plugin: 'soap-mods', key: 'db' } as const, EMPTY_DB)
 // CI 分頁（GitLab）：分支清單、點開的分支的 pipeline、點開的 pipeline 的 job、點開的 job 的 log。shape 同 wiki。
-const ci = atom({ plugin: 'soap-mods', key: 'ci' } as const, EMPTY_CI, { shape: 'ci-5' })
+const ci = atom({ plugin: 'soap-mods', key: 'ci' } as const, EMPTY_CI, { shape: 'ci-6' })
 // 蓋住分頁的畫面：差異、三欄合併或檔案內容，一次一個（cover.ts）。
 const cover = atom({ plugin: 'soap-mods', key: 'cover' } as const, NO_COVER, { shape: 'cover-2' })
 // 長的差異看到第幾頁，照地方（diffpage、wikidiff）記；換一份差異（id 不同）就從頭。
@@ -355,9 +355,9 @@ function ciIo($: EngineInterface): CiIo {
 
 const isCiShown = async ($: EngineInterface) => (await read($, tab)) === 'git' && (await read($, subTabs)).git === 'ci'
 
-// 看到 CI 子分頁：先讀 Git 分頁（找 repo，看的是選中的那個），再讀看得到的那層。
+// 看到 CI 子分頁：先找 repo（看的是選中的那個；Git 分頁的狀態、分支由它自己的重讀負責），再讀看得到的那層。
 async function loadCi($: EngineInterface) {
-  await refresh(gitIo($))
+  await refreshRepoList(gitIo($))
   await refreshCi(ciIo($))
 }
 

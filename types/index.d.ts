@@ -526,8 +526,6 @@ export type CiView = {
   tokenError: string
   /** The branch search box's text. */
   query: string
-  /** The checked out branch (This branch opens it); '' when unknown (detached HEAD, not read yet). */
-  branch: string
   /** The branches that ran pipelines lately, newest first; while searching, those that match. */
   branches: CiBranch[]
   /** Which page of CI_PAGE branches is listed (from 0). */

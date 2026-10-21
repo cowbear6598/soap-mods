@@ -127,6 +127,8 @@ function branchList(ctx: TabContext, ci: CiView) {
   const isSearching = hasQuery(ci.query)
   const from = ci.page * CI_PAGE
   const shown = ci.branches.slice(from, from + CI_PAGE)
+  // This branch：Git 分頁讀到的目前分支（detached HEAD、還沒讀到時沒有）。
+  const current = d.view.branches.find(b => b.isCurrent && !b.isRemote)?.name ?? ''
   const row = (b: CiBranch) =>
     w.pressRow({
       key: `ci:ref:${b.name}`,
@@ -143,7 +145,7 @@ function branchList(ctx: TabContext, ci: CiView) {
     <Box flexDirection="column" gap={1}>
       {w.searchField('ci:search', ci.query, text => a.searchCi(text))}
       <Box gap={1} alignItems="center" justifyContent="space-between">
-        <Box>{ci.branch !== '' && <Button key="ci:current" label="This branch" onPress={w.press(() => a.openCiRef(ci.branch))} />}</Box>
+        <Box>{current !== '' && <Button key="ci:current" label="This branch" onPress={w.press(() => a.openCiRef(current))} />}</Box>
         <Box gap={1} alignItems="center">
           {ci.hasToken && !ci.isTokenOpen && <Button key="ci:token:change" label="Change token" onPress={w.press(() => a.toggleCiToken(true))} />}
           {refreshButton(ctx)}

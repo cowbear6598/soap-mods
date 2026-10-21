@@ -1,5 +1,5 @@
 // DB 分頁：解析 SQL Server 的連線字串、只放行 SELECT、組 sqlcmd 的參數、解析它印出的表格。
-// 這裡只放純邏輯；跑 sqlcmd、存密碼在 db/actions.ts，密碼怎麼存在 db/secret.ts。
+// 這裡只放純邏輯；跑 sqlcmd、存密碼在 db/actions.ts，密碼怎麼存在 secret.ts。
 
 import type { DbColumn, DbConnection, DbResult, DbTable } from '../../types'
 import { DB_LOGIN_TIMEOUT_S, DB_PREVIEW_ROWS, DB_QUERY_TIMEOUT_S, DB_ROW_LIMIT } from '../config'
@@ -234,12 +234,10 @@ export const tableKey = (t: Pick<DbTable, 'schema' | 'name'>) => `${t.schema}.${
 
 /**
  * A connection as $.store keeps it: what the tab lists, plus where its
- * password is. `secret` is '' with no password, KEYCHAIN on macOS, else the
- * Windows DPAPI ciphertext.
+ * password is. `secret` is '' with no password, else what secret.ts's saveSecret returned
+ * (a Keychain mark on macOS, the Windows DPAPI ciphertext).
  */
 export type SavedConnection = DbConnection & { secret: string }
-
-export const KEYCHAIN = 'keychain'
 
 const isText = (v: unknown): v is string => typeof v === 'string'
 

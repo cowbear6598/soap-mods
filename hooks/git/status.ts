@@ -83,10 +83,13 @@ export function refresh(io: GitIo): Promise<void> {
 // 新分頁預設不讀 git。
 export function refreshTab(io: GitIo, t: TabId): Promise<void> | undefined {
   if (t === 'git') return refresh(io)
-  if (t === 'services') return gitReads.run(() => readRepoList(io))
+  if (t === 'services') return refreshRepoList(io)
 
   return undefined
 }
+
+// 只重找 repo：Services 分頁照 repo 分組，Git 的 CI 子分頁只要知道選中的 repo。
+export const refreshRepoList = (io: GitIo) => gitReads.run(() => readRepoList(io))
 
 // 重找 repo，那排 repo 已經讀過的摘要留著，新的當作沒有變更（換到 Git 分頁時整個重讀）。
 async function readRepoList(io: GitIo) {

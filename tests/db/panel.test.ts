@@ -2,8 +2,8 @@ import type { ProcessRunInit } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
 import { DB_STORE_KEY } from '../../hooks/config'
-import { toHex } from '../../hooks/db/secret'
-import { type Pane, type TestOn, fail, mountPane, ok, stubPanel, stubStore } from '../test-fixtures'
+import { KEYCHAIN, OLD_KEYCHAIN, toHex } from '../../hooks/secret'
+import { type Pane, type TestOn, fakeKeychain, mountPane, ok, stubPanel, stubStore } from '../test-fixtures'
 
 const PASSWORD = 'S3crét;"pw密'
 const CONN_STRING = `Server=db.local;Database=shop;User Id=reader;Password="${PASSWORD.replace(/"/g, '""')}";TrustServerCertificate=True`
@@ -14,16 +14,24 @@ const ROWS_OUT = 'id\tcustomer\n--\t--------\n1\tAda | Co\n2\tNULL\n'
 
 const DPAPI_BLOB = '01000000d08c9ddf0115d1118c7a00c04fc297eb'
 
+const OLD_CONNECTION = { id: 'cold1', server: 'db.local', database: 'shop', user: 'reader', isIntegrated: false, trustCert: true, secret: OLD_KEYCHAIN }
+
 type Run = { argv: readonly string[]; init?: ProcessRunInit }
 
 // DB 分頁要的引擎回應：$.store 放在記憶體、Keychain（macOS）或 DPAPI（Windows），sqlcmd 照查詢回固定的表格。
 // sqlcmd 給 false 是沒裝（跑不起來）。記下每個跑過的程序。
 function dbWorld(
   on: TestOn,
-  { isWindows = false, hasSqlcmd = true, tablesOut = TABLES_OUT }: { isWindows?: boolean; hasSqlcmd?: boolean; tablesOut?: string } = {},
+  {
+    isWindows = false,
+    hasSqlcmd = true,
+    tablesOut = TABLES_OUT,
+    hasOldConnection = false,
+  }: { isWindows?: boolean; hasSqlcmd?: boolean; tablesOut?: string; hasOldConnection?: boolean } = {},
 ) {
-  const store: Record<string, unknown> = {}
-  const keychain: Record<string, string> = {}
+  // hasOldConnection：舊版存的一條連線，Keychain 項目沒加 -T ""。
+  const store: Record<string, unknown> = hasOldConnection ? { [DB_STORE_KEY]: [OLD_CONNECTION] } : {}
+  const keychain = fakeKeychain(hasOldConnection ? { [OLD_CONNECTION.id]: toHex(PASSWORD) } : {})
   const runs: Run[] = []
   const toasts: string[] = []
   stubPanel(on, { root: '/proj', now: null })
@@ -39,25 +47,9 @@ function dbWorld(
   on('env.get', (_$, e) => ({ value: isWindows && e.name === 'OS' ? 'Windows_NT' : undefined }))
   on('process.run', (_$, e) => {
     runs.push(e)
-    const [cmd, sub] = e.argv
-    const account = e.argv[e.argv.indexOf('-a') + 1] ?? ''
-    if (cmd === 'security' && sub === '-i') {
-      const [, id = '', hex = ''] = /-a (\S+) -w (\S+)/.exec(e.init?.stdin ?? '') ?? []
-      keychain[id] = hex
-
-      return ok('')
-    }
-    if (cmd === 'security' && sub === 'find-generic-password') {
-      const hex = keychain[account]
-      if (hex === undefined) return fail('The specified item could not be found in the keychain.', 44)
-
-      return ok(e.argv.includes('-w') ? `${hex}\n` : 'keychain: "login.keychain-db"\n')
-    }
-    if (cmd === 'security' && sub === 'delete-generic-password') {
-      delete keychain[account]
-
-      return ok('')
-    }
+    const secret = keychain.run(e)
+    if (secret !== undefined) return secret
+    const [cmd] = e.argv
     if (cmd === 'powershell' && e.init?.env?.SOAP_SECRET !== undefined) return ok(`${DPAPI_BLOB}\r\n`)
     if (cmd === 'powershell' && e.init?.env?.SOAP_BLOB === DPAPI_BLOB) return ok(toHex(PASSWORD))
     if (cmd === 'sqlcmd') {
@@ -76,7 +68,7 @@ function dbWorld(
   const saved = () => (store[DB_STORE_KEY] ?? []) as { id: string; secret: string }[]
   const sqlcmds = () => runs.filter(r => r.argv[0] === 'sqlcmd')
 
-  return { store, keychain, runs, toasts, saved, sqlcmds }
+  return { store, keychain: keychain.items, keychainReads: () => keychain.counts.reads, runs, toasts, saved, sqlcmds }
 }
 
 // 打開 DB 分頁、貼上連線字串存好，回傳存好的那筆的 id。
@@ -98,14 +90,38 @@ test('on macOS a pasted connection string is saved with its password in the Keyc
 
   const id = await addConnection(ui, world)
   expect(await ui.find({ type: 'Text', text: 'shop @ db.local' })).toBeDefined()
-  expect(world.saved()[0]?.secret).toBe('keychain')
+  expect(world.saved()[0]?.secret).toBe(KEYCHAIN)
   // 密碼（和它的十六進位）不在 $.store 裡，也不在任何程序的命令列上；只從 security -i 的 stdin 進 Keychain。
   const hex = toHex(PASSWORD)
   expect(JSON.stringify(world.store)).not.toContain(PASSWORD)
   expect(JSON.stringify(world.store)).not.toContain(hex)
   expect(world.runs.some(r => r.argv.some(a => a.includes(PASSWORD) || a.includes(hex)))).toBe(false)
   expect(world.keychain[id]).toBe(hex)
+  // 加了 -T ""：誰來讀（連 Claude 的 Bash）macOS 都要人輸入密碼。
+  expect(world.runs.find(r => r.argv[0] === 'security' && r.argv[1] === '-i')?.init?.stdin).toContain(' -T "" ')
   expect(world.toasts).toContain('Saved shop @ db.local')
+  await ui.unmount()
+})
+
+test('a connection saved before its Keychain item asked for a password is saved again so it does, and the Keychain is asked once a session', async ($, on) => {
+  const world = dbWorld(on, { hasOldConnection: true })
+  const ui = await mountPane($, 'desktop')
+  await ui.press({ key: 'tab:db' })
+  await ui.press({ key: `db:item:${OLD_CONNECTION.id}` })
+  expect(await ui.find({ type: 'Text', text: 'Tables (2)' })).toBeDefined()
+  expect(world.sqlcmds().at(-1)?.init?.env?.SQLCMDPASSWORD).toBe(PASSWORD)
+
+  // 舊的項目刪掉、加 -T "" 重存，$.store 裡記成新的。
+  expect(world.runs.some(r => r.argv[0] === 'security' && r.argv[1] === 'delete-generic-password')).toBe(true)
+  expect(world.runs.find(r => r.argv[0] === 'security' && r.argv[1] === '-i')?.init?.stdin).toContain(' -T "" ')
+  expect(world.keychain[OLD_CONNECTION.id]).toBe(toHex(PASSWORD))
+  expect(world.saved()[0]?.secret).toBe(KEYCHAIN)
+
+  // 回清單再打開：不再問 Keychain。
+  await ui.press({ key: 'db:back' })
+  await ui.press({ key: `db:item:${OLD_CONNECTION.id}` })
+  expect(await ui.find({ type: 'Text', text: 'Tables (2)' })).toBeDefined()
+  expect(world.keychainReads()).toBe(1)
   await ui.unmount()
 })
 

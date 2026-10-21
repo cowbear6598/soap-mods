@@ -2,16 +2,15 @@
 // 不碰 $ 和 atom，用 register.tsx 給的 DbIo（見 io.ts）。
 
 import type { DbTable, DbView } from '../../types'
-import { DB_PROCESS_TIMEOUT_MS, DB_STORE_KEY } from '../config'
+import { DB_KEYCHAIN_SERVICE, DB_PROCESS_TIMEOUT_MS, DB_STORE_KEY } from '../config'
 import { NO_DB_CONNECTION } from '../defaults'
 import { errorText, failure, isMissingCommand } from '../errors'
 import type { Io } from '../io'
 import { latestOnly } from '../latest'
-import { type ArmSlot, busyFlag, isConfirmed, isWindows, runOk } from '../shell'
+import { OLD_KEYCHAIN, deleteSecret, readSecret, saveSecret } from '../secret'
+import { type ArmSlot, busyFlag, isConfirmed } from '../shell'
 import type { DbBusy } from '../ui/actions'
-import { MAC_SAVE_ARGV, WIN_PROTECT_ARGV, WIN_UNPROTECT_ARGV, fromHex, macCheckArgv, macDeleteArgv, macReadArgv, macSaveInput, toHex } from './secret'
 import {
-  KEYCHAIN,
   type SavedConnection,
   TABLES_QUERY,
   columnsQuery,
@@ -61,35 +60,27 @@ export async function loadDbConnections(io: DbIo) {
   }
 }
 
-// 把密碼存起來，回傳跟連線一起存進 $.store 的 secret（見 db/sql.ts 的 SavedConnection）。
-// macOS：security -i 從 stdin 存進 Keychain，它的指令失敗也回 0，所以存完再查一次在不在。
-// Windows：DPAPI 加密，密文存進 $.store。
-async function saveSecret(io: DbIo, id: string, password: string) {
-  if (password === '') return ''
-  if (await isWindows(io)) return (await runOk(io, WIN_PROTECT_ARGV, 'DPAPI', { env: { SOAP_SECRET: toHex(password) } })).stdout.trim()
-  await runOk(io, MAC_SAVE_ARGV, 'security', { stdin: macSaveInput(id, password) })
-  await runOk(io, macCheckArgv(id), 'Keychain')
+// 連線的密碼存在 Keychain／DPAPI（見 secret.ts），$.store 裡的 secret 記著在哪（見 db/sql.ts 的 SavedConnection）。
+const secretRef = (id: string) => ({ service: DB_KEYCHAIN_SERVICE, account: id })
 
-  return KEYCHAIN
-}
-
-async function readSecret(io: DbIo, c: SavedConnection) {
+// 一個 session 每條連線只問一次 Keychain。
+async function readPassword(io: DbIo, c: SavedConnection) {
   if (c.secret === '') return ''
-  try {
-    const r = c.secret === KEYCHAIN ? await runOk(io, macReadArgv(c.id), 'security') : await runOk(io, WIN_UNPROTECT_ARGV, 'DPAPI', { env: { SOAP_BLOB: c.secret } })
-
-    return fromHex(r.stdout)
-  } catch (err) {
+  const r = secretRef(c.id)
+  const password = await readSecret(io, r, c.secret).catch((err: unknown) => {
     throw new Error(`Couldn't read the saved password (delete the connection and add it again): ${errorText(err)}`)
+  })
+  // 舊版存的沒加 -T ""：刪掉重存（-U 蓋過去不會換掉誰能讀），$.store 裡那筆的 secret 跟著換。
+  if (c.secret === OLD_KEYCHAIN) {
+    await deleteSecret(io, r, c.secret)
+    const secret = await saveSecret(io, r, password)
+    await io.storeSet(DB_STORE_KEY, (await readSaved(io)).map(x => (x.id === c.id ? { ...x, secret } : x)))
   }
+
+  return password
 }
 
-// Windows 的密文跟著那筆一起刪掉了；Keychain 裡的要另外刪。
-async function deleteSecret(io: DbIo, c: SavedConnection) {
-  if (c.secret === KEYCHAIN) await io.run(macDeleteArgv(c.id)).catch(() => undefined)
-}
-
-// 打開著的連線，和它的密碼（讀一次就留著：每次查詢都開 security／PowerShell 太慢）。換連線、回清單、刪掉就丟掉。
+// 打開著的連線，和它的密碼。換連線、回清單、刪掉就丟掉（密碼本身 secret.ts 記著，再打開不用再問）。
 let opened: { c: SavedConnection; password: Promise<string> } | undefined
 
 // 在打開著的連線上跑一段 SQL，回傳它印的表格。密碼只放在 sqlcmd 的環境變數 SQLCMDPASSWORD，不在命令列上。
@@ -120,7 +111,7 @@ export async function addDbConnection(io: DbIo, text: string) {
   dbBusy.set(io, 'adding')
   try {
     const id = connectionId(await io.now(), Math.random())
-    const saved: SavedConnection = { id, ...parts, secret: await saveSecret(io, id, password) }
+    const saved: SavedConnection = { id, ...parts, secret: password === '' ? '' : await saveSecret(io, secretRef(id), password) }
     await writeSaved(io, [...(await readSaved(io)), saved], { error: '' })
     io.toast(`Saved ${connectionName(saved)}`)
   } catch (err) {
@@ -143,7 +134,7 @@ export async function deleteDbConnection(io: DbIo, id: string) {
     await writeSaved(io, saved.filter(c => c.id !== id), { deleteArmed: '' })
     if (gone === undefined) return
     if (opened?.c.id === id) opened = undefined
-    await deleteSecret(io, gone)
+    await deleteSecret(io, secretRef(gone.id), gone.secret)
   } catch (err) {
     await io.setDb({ deleteArmed: '', error: `Couldn't delete the connection: ${errorText(err)}` })
   }
@@ -168,7 +159,7 @@ export async function openDbConnection(io: DbIo, id: string) {
   const [saved] = await Promise.all([readSaved(io), io.setDb({ ...NO_DB_CONNECTION, open: id, deleteArmed: '' }), io.scrollTop()])
   const c = saved.find(x => x.id === id)
   if (c === undefined) return io.setDb({ ...NO_DB_CONNECTION, error: 'That connection was deleted.' })
-  opened = { c, password: readSecret(io, c) }
+  opened = { c, password: readPassword(io, c) }
   // 沒人等的時候讀不到也不要變成未處理的錯誤；要用時 runSql 會再丟出來。
   opened.password.catch(() => undefined)
   try {

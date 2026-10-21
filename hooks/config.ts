@@ -222,19 +222,21 @@ export const USAGE_BAR_PX = 4
 export const USAGE_BAR_FULL = '█'.repeat(OVERFLOW_CHARS)
 export const USAGE_BAR_EMPTY = '░'.repeat(OVERFLOW_CHARS)
 
-// Git 的 CI 子分頁（GitLab API）：一頁列幾個分支、幾條 pipeline；開著時多久重讀一次（跑著的 pipeline、job、log 跟著動）；
-// job log 最多畫最後這麼多字（切在行首）。
+// Git 的 CI 子分頁（GitLab API）：一頁列幾個分支、幾條 pipeline；開著時多久重讀一次（跑著的 pipeline、job、log 跟著動），
+// 分支清單、分支的 pipeline 沒有跑著的就隔久一點；搜尋框停手多久才問 GitLab；job log 最多畫最後這麼多字（切在行首）。
 export const CI_PAGE = 20
 // 分支清單從最新的這麼多條 pipeline 整理出來（GitLab 一頁的上限，一次讀完）。
 export const CI_RECENT = 100
 export const CI_REFRESH_MS = 10_000
+export const CI_IDLE_REFRESH_MS = 60_000
+export const CI_SEARCH_DEBOUNCE_MS = 300
 export const CI_TRACE_MAX_CHARS = 60_000
-// GitLab token（每台 GitLab 主機一組）：macOS 存在 Keychain 的這個 service（account 是主機），每次讀都要人按允許；
+// GitLab token（每台 GitLab 主機一組）：macOS 存在 Keychain 的這個 service（account 是主機）；
 // Windows 是 DPAPI 密文。哪些主機存了 token（macOS 是記號、Windows 是密文）和登入的帳號放在 $.store 的 CI_STORE_KEY。
-// Keychain 跳視窗等人回應，最多等這麼久。
 export const CI_KEYCHAIN_SERVICE = 'soap-mods-gitlab'
 export const CI_STORE_KEY = 'ci.tokens'
-export const CI_KEYCHAIN_TIMEOUT_MS = 120_000
+// Keychain 讀機密（GitLab token、DB 密碼）會跳視窗等人輸入密碼，最多等這麼久。
+export const KEYCHAIN_TIMEOUT_MS = 120_000
 // pipeline、job 狀態的顏色和符號；沒列到的（created、preparing…）照 pending 畫（ci/parse 的 statusStyle）。
 export const CI_STATUS_STYLE: Record<string, { mark: string; theme: string }> = {
   success: { mark: '✓', theme: 'success' },

@@ -2,10 +2,10 @@
 // 不碰 $ 和 atom，用 register.tsx 給的 CiIo（見 io.ts）。直接打 GitLab API（$.http.fetch），不用 glab：
 // token 只有這個 mod 拿得到（ci/token.ts），Claude 在終端機沒有現成登入好的工具能操作 GitLab。
 
-import type { HttpInit, HttpResponse } from 'claude-code'
+import type { HttpInit, HttpResponse, Timer } from 'claude-code'
 
 import type { CiBranch, CiJob, CiJobAction, CiPipeline, CiView } from '../../types'
-import { CI_PAGE } from '../config'
+import { CI_IDLE_REFRESH_MS, CI_PAGE, CI_SEARCH_DEBOUNCE_MS } from '../config'
 import { errorText } from '../errors'
 import { git, repos } from '../git/run'
 import type { Io } from '../io'
@@ -116,14 +116,6 @@ async function failed(io: CiIo, err: unknown, field: 'error' | 'pipelinesError' 
   else await io.setCi({ ...extra, isLoaded: true, [field]: errorText(err) })
 }
 
-// 目前的分支（This branch 打開的）；detached HEAD 是 ''。
-async function currentBranch(io: Io) {
-  if (repos.current === undefined) return ''
-  const r = await git(io, ['branch', '--show-current'])
-
-  return r.exitCode === 0 ? r.stdout.trim() : ''
-}
-
 // 換頁、搜尋、定時重讀同時來的話，只寫最新那次讀到的。換 repo 時 drop 掉讀到一半的。
 const branchLoads = latestOnly()
 const pipelineLoads = latestOnly()
@@ -136,7 +128,14 @@ let recent: { base: string; load: Promise<CiPipeline[]> } | undefined
 // commit 的 sha → 標題（讀不到的是 ''）：commit 不會變，定時重讀分支的 pipeline 時只有新的 sha 才再問 GitLab。
 const titles = new Map<string, string>()
 
+// 定時重讀分支清單、分支的 pipeline：上次讀的時間（見 isListDue）。
+let listReadAt = 0
+
+// 搜尋框打字：停手 CI_SEARCH_DEBOUNCE_MS 才問 GitLab（見 searchCi）。
+let searchTimer: Timer | undefined
+
 function dropCi() {
+  searchTimer?.cancel()
   branchLoads.drop()
   pipelineLoads.drop()
   jobLoads.drop()
@@ -173,6 +172,7 @@ async function searchBranches(io: CiIo, p: GitLabProject, ran: CiBranch[], query
 // 讀分支清單（第一層）：最近跑過 pipeline 的分支，最近的先，每個帶最新那條的狀態。isFresh 是 false 時（打字）沿用讀過的 pipeline。
 export async function loadBranches(io: CiIo, { isFresh = true }: { isFresh?: boolean } = {}) {
   const isStale = branchLoads.start()
+  listReadAt = await io.now()
   const ci = await io.getCi()
   // 讀到哪台 GitLab、存的是誰：token 被拒時一樣要寫上，換 token 的框才知道是哪台。
   let account: Partial<CiView> = {}
@@ -187,12 +187,11 @@ export async function loadBranches(io: CiIo, { isFresh = true }: { isFresh?: boo
       return
     }
     account = { host: p.host, hasToken: true, user: saved.user }
-    const [branch, pipelines] = await Promise.all([currentBranch(io), readRecent(io, p, isFresh)])
-    const ran = toBranches(pipelines)
+    const ran = toBranches(await readRecent(io, p, isFresh))
     const branches = hasQuery(ci.query) ? await searchBranches(io, p, ran, ci.query) : ran
     if (isStale()) return
     // 自己切頁，變少了就夾回最後一頁。
-    await io.setCi({ isLoaded: true, ...account, branch, branches, page: clampPage(ci.page, branches.length, CI_PAGE), error: '' })
+    await io.setCi({ isLoaded: true, ...account, branches, page: clampPage(ci.page, branches.length, CI_PAGE), error: '' })
   } catch (err) {
     if (!isStale()) await failed(io, err, 'error', { ...account, branches: [] })
   }
@@ -214,6 +213,7 @@ async function withTitles(io: CiIo, p: GitLabProject, ref: string, pipelines: Ci
 // 點開的分支的第 page 頁 pipeline（沒給是目前那頁）。
 async function loadPipelines(io: CiIo, page?: number) {
   const isStale = pipelineLoads.start()
+  listReadAt = await io.now()
   const ci = await io.getCi()
   const ref = ci.ref
   if (ref === null) return
@@ -236,10 +236,13 @@ async function loadPipelines(io: CiIo, page?: number) {
   }
 }
 
-// 搜尋框打字：從第一頁看，沿用讀過的 pipeline。
+// 搜尋框打字：從第一頁看，沿用讀過的 pipeline。每打一個字都要問 GitLab 的分支搜尋，所以停手了才讀；清空就馬上回清單。
 export async function searchCi(io: CiIo, text: string) {
+  searchTimer?.cancel()
   await io.setCi({ query: text, page: 0 })
-  await loadBranches(io, { isFresh: false })
+  const load = () => loadBranches(io, { isFresh: false })
+  if (hasQuery(text)) searchTimer = io.after(CI_SEARCH_DEBOUNCE_MS, load)
+  else await load()
 }
 
 // 換頁：分支清單是整份讀好的，直接換；分支的 pipeline 一頁一頁問 GitLab。
@@ -276,8 +279,6 @@ async function loadJobs(io: CiIo, p: CiPipeline) {
     const shown = ci.job
     const job = shown === null ? null : (jobs.find(j => j.id === shown.id) ?? shown)
     await io.setCi({ open: { ...fresh, title: p.title }, jobs, jobsError: '', job })
-    // 打開著的 job 剛跑完：再讀一次 log，拿到最後幾行（之後定時重讀就不再讀它了）。
-    if (shown !== null && job !== null && isActive(shown.status) && !isActive(job.status)) await loadTrace(io, job)
   } catch (err) {
     if (!isStale()) await failed(io, err, 'jobsError', { jobs: [] })
   }
@@ -334,17 +335,26 @@ async function resetCi(io: CiIo) {
   await loadBranches(io)
 }
 
+// 定時重讀分支清單、分支的 pipeline：列著的有跑著的就每次讀；沒有就隔 CI_IDLE_REFRESH_MS 才讀（新開的 pipeline 晚一點才出現）。
+async function isListDue(io: CiIo, isRunning: boolean) {
+  return isRunning || (await io.now()) - listReadAt >= CI_IDLE_REFRESH_MS
+}
+
 // 重讀看得到的那層：分支清單、點開的分支的 pipeline、點開的 pipeline 的 job，點開的 job 還在跑就連 log。
 // 定時重讀時（isTimer）跑完了的 pipeline、job 不再問：結果不會變了。
 export async function refreshCi(io: CiIo, { isTimer = false }: { isTimer?: boolean } = {}) {
   const ci = await io.getCi()
   if (ci.job !== null) {
-    if (!isTimer || isActive(ci.job.status) || ci.trace === null) await Promise.all([ci.open === null ? undefined : loadJobs(io, ci.open), loadTrace(io, ci.job)])
+    if (!isTimer || isActive(ci.job.status) || ci.trace === null) {
+      // 先讀 job 的狀態再讀 log：剛跑完的那輪讀到的 log 就有最後幾行，之後定時重讀不再讀它。
+      if (ci.open !== null) await loadJobs(io, ci.open)
+      await loadTrace(io, ci.job)
+    }
   } else if (ci.open !== null) {
     if (!isTimer || isActive(ci.open.status) || ci.jobs === null) await loadJobs(io, ci.open)
   } else if (ci.ref !== null) {
-    await loadPipelines(io)
-  } else {
+    if (!isTimer || (await isListDue(io, ci.pipelines === null || ci.pipelines.some(p => isActive(p.status))))) await loadPipelines(io)
+  } else if (!isTimer || (await isListDue(io, !ci.isLoaded || ci.branches.some(b => b.pipeline !== null && isActive(b.pipeline.status))))) {
     await loadBranches(io)
   }
 }
