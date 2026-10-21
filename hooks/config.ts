@@ -265,7 +265,8 @@ export const RESTART_CHECK_MS = [2_000, 5_000, 15_000, 30_000]
 // 要按兩次的按鈕（刪除、切換分支、rollback、abort）按了一次後，多久沒再按就收回去。
 export const DELETE_ARM_MS = 3_000
 // 分支按了一次、等著再按一次切換時，那列後面寫的提示。
-export const SWITCH_ARMED_HINT = 'press again to switch'
+// 不換行空白：終端機上它畫在名稱那顆按鈕裡，一般空白會讓按鈕在這裡折行。
+export const SWITCH_ARMED_HINT = 'press\u00a0again\u00a0to\u00a0switch'
 // 複製分支名稱後，綠底打勾留多久。
 export const COPIED_MS = 2_000
 // branch 分頁的 Fetch／Pull 最多等多久（git 預設只等 30 秒，大 repo 抓不完）。

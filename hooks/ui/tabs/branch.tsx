@@ -51,7 +51,9 @@ export const branchTab: TabBody = ({ w, d, a }) => {
       color: b.isCurrent ? 'success' : isSwitchArmed ? 'warning' : undefined,
       indent: b.isCurrent ? 0 : indentAt(depth),
       lead: b.isCurrent ? <Text color="success">●</Text> : undefined,
+      // 終端機上提示畫進名稱那顆按鈕（isWholePressable），整行都能點、右邊的圖示才貼最右邊。
       rest: isSwitchArmed ? <Text color="warning">{SWITCH_ARMED_HINT}</Text> : undefined,
+      isWholePressable: isSwitchArmed,
       onPress: b.isCurrent ? () => undefined : () => a.switchBranch(b.name, b.isRemote),
       trailing: (
         <Box key={`trailing:${id}`} gap={1} alignItems="center">

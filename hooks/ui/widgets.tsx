@@ -162,7 +162,10 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
       // 有 detail 時名稱和它一起當按鈕、吃掉剩下的寬度，labelWidth 改成把名稱補滿那麼寬。
       const hasDetail = row.detail !== undefined
       const labelWidth = hasDetail ? undefined : row.labelWidth
-      const grows = labelWidth === undefined && (row.isTruncated === true || !row.rest)
+      const isWhole = row.isWholePressable === true
+      // 整行能點、rest 又要緊跟在名稱後面（branch 的切換提示）：rest 畫進名稱那顆按鈕，按鈕照樣撐滿整行，trailing 才貼最右邊。
+      const innerRest = isWhole && row.isTruncated !== true && labelWidth === undefined && row.rest ? row.rest : undefined
+      const grows = labelWidth === undefined && (row.isTruncated === true || !row.rest || innerRest !== undefined)
       const fills = labelWidth !== undefined || grows
       const shown = hasDetail && row.labelWidth !== undefined ? fit(row.label, row.labelWidth) : row.label
       const onPress = press(row.onPress, row.ringKey)
@@ -178,10 +181,9 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
           {children}
         </Button>
       )
-      const isWhole = row.isWholePressable === true
       const outerLead = isWhole ? undefined : row.lead
       const innerLead = isWhole && row.lead !== undefined ? [row.lead].flat().flatMap(item => [item, NBSP]) : undefined
-      const rest = isWhole && row.rest ? rowButton(`${row.key}:rest`, row.rest) : row.rest
+      const rest = innerRest !== undefined ? undefined : isWhole && row.rest ? rowButton(`${row.key}:rest`, row.rest) : row.rest
 
       return (
         <Box key={`${row.key}:row`} gap={1} paddingLeft={row.indent ?? 2} hover={{ backgroundColor: ACTIVE_BG }}>
@@ -194,6 +196,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
                 rowButton(row.key, [
                   innerLead,
                   name(nbsp(shown)),
+                  innerRest !== undefined && [NBSP, innerRest],
                   row.detail && <Text dimColor>{nbsp(` ${row.detail}`)}</Text>,
                   ROW_BUTTON_LABEL,
                 ]),
