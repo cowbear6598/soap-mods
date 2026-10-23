@@ -398,7 +398,6 @@ test('deleting a local branch asks with a check first, and forces the delete whe
 
   const ui = await mountPane($)
   await ui.press({ key: 'sub:branch' })
-  // 目前分支沒有刪除鈕。
   expect(await ui.find({ key: 'delete:l:main' })).toBeUndefined()
 
   // 按一下只換成打勾，再按才刪；-d 被拒（沒合併）就換成強制刪除的打勾，再按才 -D。
@@ -443,7 +442,6 @@ for (const [remotes, branch, push] of [
 
     await ui.press({ key: `delete:r:${branch}` })
     expect(pushes).toEqual([])
-    expect(await ui.find({ type: 'Text', text: `Press again to delete ${branch} on the remote.` })).toBeDefined()
     await ui.press({ key: `delete:r:${branch}` })
     expect(pushes).toEqual([push])
     expect(await ui.find({ key: `switch:r:${branch}` })).toBeUndefined()

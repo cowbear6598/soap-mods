@@ -382,6 +382,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
   // branch、log、Files 分頁最上面的搜尋框。手機版沒有 Input，就不畫。邊打邊過濾；桌面版拔不掉框旁邊的 submit 按鈕，
   // 就讓它（和 Enter）清空搜尋（onInput('')）。框不能設寬度、撐不滿，所以整組水平置中。
   // trailing：同一行最右邊的按鈕（branch 的 Fetch／Pull），搜尋框靠左、中間一條直線隔開 Clear；沒有搜尋框時只剩它，靠右。
+  // 終端機有搜尋框時例外，見下面 isStacked。
   // 終端機的框旁邊沒有 submit 按鈕（只在有焦點時畫一個「↵ Clear」提示），自己補一顆 [ Clear ]，跟桌面版一樣。
   const searchField = (
     key: string,
@@ -405,12 +406,15 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
         input
       )
 
+    // 終端機的 [ Clear ] 和 trailing 擠一行太長：trailing 疊到下一行（空一行、置中），不畫直線。
+    const isStacked = isTerminal && input !== null && trailing !== undefined
+
     return (
-      <Box key={`${key}:row`} width="100%" gap={1} alignItems="center" justifyContent={justify}>
+      <Box key={`${key}:row`} width="100%" flexDirection={isStacked ? 'column' : 'row'} gap={1} alignItems="center" justifyContent={justify}>
         {box}
         {trailing !== undefined && (
           <Box key={`${key}:trailing`} gap={1} alignItems="center" flexShrink={0}>
-            {input !== null && <Text dimColor>│</Text>}
+            {input !== null && !isStacked && <Text dimColor>│</Text>}
             {trailing}
           </Box>
         )}
@@ -423,6 +427,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
 
   // 一排置中的圖示分頁，中間用直線隔開。tints：某幾個分頁的圖示固定用這個顏色（有衝突時 conflict 變紅）。
   // 終端機不畫直線：[ label ] 的括號本身就隔開了，直線夾在中間左右空白不一樣寬，看起來很散；改成等寬的空白。
+  // 視窗太窄排不下就換到下一行，不然左右被切掉。
   const iconBar = <T extends string>(
     prefix: string,
     items: { id: T; label: string; icon: IconName }[],
@@ -433,7 +438,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
     const buttons = items.map(t => iconButton(`${prefix}:${t.id}`, t.icon, t.label, t.id === active, () => onSelect(t.id), tints[t.id]))
 
     return (
-      <Box gap={isTerminal ? 2 : 1} alignItems="center" justifyContent="center" width="100%">
+      <Box columnGap={isTerminal ? 2 : 1} rowGap={isTerminal ? 0 : 1} flexWrap="wrap" alignItems="center" justifyContent="center" width="100%">
         {isTerminal ? buttons : withDividers(buttons, prefix)}
       </Box>
     )

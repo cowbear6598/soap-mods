@@ -104,7 +104,7 @@ export const branchTab: TabBody = ({ w, d, a }) => {
       )
     })
 
-  // Fetch／Pull 跟搜尋框同一行、放右邊，按了才跑；跑的時候那顆寫「Fetching…」／「Pulling…」，兩顆都按不動（register 擋掉）。
+  // Fetch／Pull 放在搜尋框旁（searchField 的 trailing），按了才跑；跑的時候那顆寫「Fetching…」／「Pulling…」，兩顆都按不動（register 擋掉）。
   const syncButtons = [
     <Button key="branch:fetch" label={d.syncing === 'fetch' ? 'Fetching…' : 'Fetch'} onPress={w.press(() => a.syncBranches('fetch'))} />,
     <Button key="branch:pull" label={d.syncing === 'pull' ? 'Pulling…' : 'Pull'} onPress={w.press(() => a.syncBranches('pull'))} />,
@@ -118,7 +118,6 @@ export const branchTab: TabBody = ({ w, d, a }) => {
       {v.deleteArmed?.isForce === true && (
         <Text color="error">{`${v.deleteArmed.name} has unmerged commits; press again to force delete and lose them.`}</Text>
       )}
-      {v.deleteArmed?.isRemote === true && <Text color="warning">{`Press again to delete ${v.deleteArmed.name} on the remote.`}</Text>}
       {isSearching && shown.length === 0 && <Text dimColor>No matching branches.</Text>}
       {(!isSearching || locals.length > 0) && (
         <Box flexDirection="column">
