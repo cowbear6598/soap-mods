@@ -79,11 +79,11 @@ export function refresh(io: GitIo): Promise<void> {
   return gitReads.run(() => readGit(io))
 }
 
-// 畫得到 git 的分頁要讀的：Git 讀完整的狀態；Services 只照 repo 分組，只重找 repo，不讀狀態、分支、其他 repo 的摘要。
-// 新分頁預設不讀 git。
-export function refreshTab(io: GitIo, t: TabId): Promise<void> | undefined {
+// 畫得到 git 的分頁要讀的：Git 讀完整的狀態；Tools 的 Services 子分頁只照 repo 分組，只重找 repo，不讀狀態、分支、其他 repo 的摘要。
+// sub 是 Tab 看著的子分頁。新分頁預設不讀 git。
+export function refreshTab(io: GitIo, t: TabId, sub?: string): Promise<void> | undefined {
   if (t === 'git') return refresh(io)
-  if (t === 'services') return refreshRepoList(io)
+  if (t === 'tools' && sub === 'services') return refreshRepoList(io)
 
   return undefined
 }

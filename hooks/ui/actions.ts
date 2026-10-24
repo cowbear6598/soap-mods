@@ -20,6 +20,8 @@ import type {
   GitFile,
   GitSync,
   GitView,
+  HttpPage,
+  HttpView,
   LogView,
   MergeChunk,
   Service,
@@ -42,6 +44,9 @@ export type Press = (fn: () => unknown, ringKey?: string) => (e: UiPressArgument
 
 // DB 分頁正在做的事：存連線、跑查詢；'' 是沒有。
 export type DbBusy = '' | 'adding' | 'query'
+
+// HTTP 子分頁正在做的事：送出請求、存貼上的機密、把草稿寫進檔案；'' 是沒有。
+export type HttpBusy = '' | 'send' | 'secret' | 'draft'
 
 export type UsageReading = SessionUsage['rateLimits'][number]
 
@@ -143,6 +148,40 @@ export type Actions = {
   setDbQuery: (text: string) => unknown
   // text：按 Enter 時框裡的字。
   runDbQuery: (text: string) => unknown
+  // http：id 是請求（<檔名>#<第幾個>），name 是請求用到的變數。
+  openHttpRequest: (id: string) => unknown
+  closeHttpRequest: () => unknown
+  // 送出點開的請求：任何環境都按一次就送。
+  sendHttp: () => unknown
+  // 貼上的機密存進 Keychain／DPAPI（依 session 資料夾和環境）；刪除要按兩次；editHttpSecret 打開（'' 收起）換值的框。
+  saveHttpSecret: (name: string, text: string) => unknown
+  deleteHttpSecret: (name: string) => unknown
+  editHttpSecret: (name: string) => unknown
+  toggleHttpHeaders: (isOpen: boolean) => unknown
+  // HTTP 底下那排：API（請求）或 Environment（環境、變數、機密）。
+  selectHttpPage: (page: HttpPage) => unknown
+  // 在面板上寫 .soap/http：新請求、編輯點開的請求（那段原文）；打字跟著存草稿，Save 寫檔，刪請求要按兩次。
+  newHttpRequest: () => unknown
+  editHttpRequest: () => unknown
+  typeHttpDraft: (change: { text?: string; file?: string }) => unknown
+  saveHttpDraft: (text?: string) => unknown
+  cancelHttpDraft: () => unknown
+  deleteHttpRequest: () => unknown
+  // Environment：+ New 打開（false 收起）新環境名稱的框、新增、刪那一列的環境（兩次）；
+  // 變數：+ New 或點一列打開名稱、值兩行的框，打字跟著存，Enter 或 Save 寫檔；刪除兩次。
+  openAddHttpEnv: (isOpen: boolean) => unknown
+  addHttpEnv: (name?: string) => unknown
+  typeHttpEnvName: (name: string) => unknown
+  deleteHttpEnv: (env: string) => unknown
+  // 點環境：選它（Send 用它）並打開它的變數；closeHttpEnv 回環境清單。
+  openHttpEnv: (env: string) => unknown
+  closeHttpEnv: () => unknown
+  newHttpVar: () => unknown
+  editHttpVar: (name: string) => unknown
+  typeHttpVar: (change: { name?: string; value?: string }) => unknown
+  saveHttpVar: (change?: { name?: string; value?: string }) => unknown
+  cancelHttpVar: () => unknown
+  deleteHttpVar: (name: string) => unknown
   // ci（GitLab）：搜尋分支、換頁，點分支看它的 pipeline、點 pipeline 看 job、點 job 看 log，Back 回上一層；Refresh 重讀看得到的那層。
   showCiPage: (page: number) => unknown
   searchCi: (text: string) => unknown
@@ -213,6 +252,11 @@ export type PanelData = {
   isDistilling: boolean
   db: DbView
   dbBusy: DbBusy
+  http: HttpView
+  // HTTP 正在送出請求、存貼上的機密，或把草稿寫進檔案。
+  httpBusy: HttpBusy
+  // @capture 取到的、選中環境的變數（只放記憶體）。
+  httpCaptured: Readonly<Record<string, string>>
   ci: CiView
   // 正在檢查、存貼上的 GitLab token。
   ciSaving: boolean

@@ -1,4 +1,4 @@
-// Soap Panel 本體：最上面的 Tab、repo 列（Git）、子分頁（SUB_TABS 有列的 Tab），中間是分頁內容，最底下是用量。
+// Soap Panel 本體：最上面的 Tab、repo 列（Git）、子分頁（SUB_TABS 有列的 Tab：Git、Tools、Docs），中間是分頁內容，最底下是用量。
 // 打開了衝突檔案、檔案的差異或 Files 分頁的檔案時，上面整塊換成合併（mergeView）、差異（diffView）或內容（fileView），Back 回來。
 
 import type { GitSubTab, SubTabs, TabId } from '../../types'
@@ -13,13 +13,13 @@ import { branchTab } from './tabs/branch'
 import { conflictTab } from './tabs/conflict'
 import { ciTab } from './tabs/ci'
 import type { TabBody, TabContext } from './tabs/context'
-import { dbTab } from './tabs/db'
 import { diffTab } from './tabs/diff'
 import { filesTab } from './tabs/files'
+import { httpPageBar } from './tabs/http'
 import { logTab } from './tabs/log'
 import { mrTab } from './tabs/mr'
-import { servicesTab } from './tabs/services'
 import { specTab } from './tabs/spec'
+import { toolsTab } from './tabs/tools'
 import { usageBar } from './usage'
 import { type Widgets, makeWidgets } from './widgets'
 
@@ -44,9 +44,8 @@ const gitTab: TabBody = ctx => {
 const TAB_BODIES: Record<TabId, TabBody> = {
   git: gitTab,
   files: filesTab,
-  services: servicesTab,
+  tools: toolsTab,
   spec: specTab,
-  db: dbTab,
 }
 
 // Git Tab 的那排 repo：「a*」是有未提交的變更，「!」是有衝突。session 資料夾本身是 repo 時只有它一個；
@@ -125,6 +124,8 @@ export function renderPanel(drawUi: Ui, d: PanelData, a: Actions, press: Press) 
           {divider(w)}
           {isGit && repoBar(ctx)}
           {isGit ? subTabBar(ctx, 'git', d.view.files.some(isConflict) ? { conflict: DANGER } : {}) : hasSubTabs(d.tab) && subTabBar(ctx, d.tab)}
+          {d.tab === 'tools' && d.subTabs.tools === 'http' && httpPageBar(ctx)}
+          {d.tab === 'tools' && d.subTabs.tools === 'http' && divider(w)}
         </Box>
         {/* 分頁內容左右各空一格，不貼著面板邊。 */}
         <Box flexDirection="column" gap={1} paddingX={1}>

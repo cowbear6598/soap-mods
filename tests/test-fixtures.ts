@@ -30,6 +30,12 @@ export async function mountPane($: TestEngine, surface: 'terminal' | 'desktop' =
 
 export type Pane = Awaited<ReturnType<typeof mountPane>>
 
+// 打開 Tools 分頁的一個子分頁（Services、DB、HTTP）。
+export async function openTool(ui: Pane, sub: 'services' | 'db' | 'http') {
+  await ui.press({ key: 'tab:tools' })
+  await ui.press({ key: `sub:${sub}` })
+}
+
 // 使用者打 /soap-mods:open 打開面板。
 export const openPanel = ($: TestEngine) =>
   $.command.run({ command: 'soap-mods:open', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 120 } })

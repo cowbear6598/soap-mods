@@ -1,6 +1,6 @@
 // ───── 想改面板標題、分頁、顏色、時間，改這個檔案 ─────
 
-import type { FileKind, MergeOp, SubTabs, TabId, WikiModel } from '../types'
+import type { FileKind, HttpPage, MergeOp, SubTabs, TabId, WikiModel } from '../types'
 import type { FileGroupId } from './git/parse'
 
 // 面板的 id 在 register.tsx：引擎要在那裡直接看到它們的值。
@@ -64,6 +64,11 @@ export const ICONS = {
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   ci: '<rect width="8" height="8" x="3" y="3" rx="2"/><path d="M7 11v4a2 2 0 0 0 2 2h4"/><rect width="8" height="8" x="13" y="13" rx="2"/>',
   mr: '<circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" x2="6" y1="9" y2="21"/>',
+  tools:
+    '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
+  http: '<path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/>',
+  api: '<path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/>',
+  env: '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
   copy: '<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
 }
 export type IconName = keyof typeof ICONS
@@ -123,16 +128,16 @@ export const ARMED_TINT: Tint = { theme: DANGER.theme, hex: ACTIVE_ICON, backgro
 // 分支名稱複製好了：綠底白勾，COPIED_MS 後換回複製圖示。
 export const COPIED_TINT: Tint = { theme: GOOD.theme, hex: ACTIVE_ICON, background: GOOD.hex }
 
-// 上層 Tab。之後要加新的 Tab，在這裡加一筆，再到 ui/panel.tsx 的 TAB_BODIES 補上它的內容。
+// 上層 Tab。之後要加新的 Tab，在這裡加一筆，再到 ui/panel.tsx 的 TAB_BODIES 補上它的內容；開發小工具加在 Tools 的子分頁。
 export const TABS: { id: TabId; label: string; icon: IconName }[] = [
   { id: 'files', label: 'Files', icon: 'files' },
   { id: 'git', label: 'Git', icon: 'git' },
-  { id: 'services', label: 'Services', icon: 'services' },
+  { id: 'tools', label: 'Tools', icon: 'tools' },
   { id: 'spec', label: 'Docs', icon: 'book' },
-  { id: 'db', label: 'DB', icon: 'db' },
 ]
 
-// 有子分頁的 Tab 和它的子分頁。內容：Git 在 ui/panel.tsx 的 GIT_SUB_TAB_BODIES，Spec（計劃和 wiki）在 ui/tabs/spec.tsx 的 SPEC_SUB_TAB_BODIES。
+// 有子分頁的 Tab 和它的子分頁。內容：Git 在 ui/panel.tsx 的 GIT_SUB_TAB_BODIES，Spec（計劃和 wiki）在 ui/tabs/spec.tsx 的 SPEC_SUB_TAB_BODIES，
+// Tools 在 ui/tabs/tools.tsx 的 TOOLS_SUB_TAB_BODIES。
 export const SUB_TABS: { [T in keyof SubTabs]: { id: SubTabs[T]; label: string; icon: IconName }[] } = {
   git: [
     { id: 'diff', label: 'Diff', icon: 'diff' },
@@ -146,9 +151,23 @@ export const SUB_TABS: { [T in keyof SubTabs]: { id: SubTabs[T]; label: string; 
     { id: 'spec', label: 'Spec', icon: 'spec' },
     { id: 'wiki', label: 'Wiki', icon: 'library' },
   ],
+  tools: [
+    { id: 'services', label: 'Services', icon: 'services' },
+    { id: 'db', label: 'DB', icon: 'db' },
+    { id: 'http', label: 'HTTP', icon: 'http' },
+  ],
 }
 
+// 每個有子分頁的 Tab 一開始看的子分頁。
+export const DEFAULT_SUB_TABS: SubTabs = { git: 'diff', spec: 'spec', tools: 'services' }
+
 export const hasSubTabs = (tab: TabId): tab is keyof SubTabs => tab in SUB_TABS
+
+// Tools › HTTP 底下再一排：API 是請求清單和送出，Environment 是選環境、環境的變數、機密。
+export const HTTP_PAGES: { id: HttpPage; label: string; icon: IconName }[] = [
+  { id: 'api', label: 'API', icon: 'api' },
+  { id: 'env', label: 'Environment', icon: 'env' },
+]
 
 // log 分頁一頁列幾筆 commit（換頁見 widgets 的 pager）。
 export const LOG_PAGE = 30
@@ -240,7 +259,17 @@ export const CI_STORE_KEY = 'ci.tokens'
 // Git 的 MR 子分頁（GitLab API，token 同 CI）：最多列幾個 MR。
 // 開著時跟 CI 一起每 CI_REFRESH_MS 看一次：點開的 MR 的 pipeline 在跑就重讀，不然隔 CI_IDLE_REFRESH_MS。
 export const MR_LIST_LIMIT = 50
-// Keychain 讀機密（GitLab token、DB 密碼）會跳視窗等人輸入密碼，最多等這麼久。
+// Tools 的 HTTP 子分頁：請求是這個資料夾（相對 session 資料夾）底下的 .http 檔，環境在 HTTP_ENV_FILE（REST Client／JetBrains 的格式）。
+// 選的環境存在 $.store 的 HTTP_ENV_KEY（依 session 資料夾）；機密（請求用到、環境檔沒有的變數）macOS 存在 Keychain 的 HTTP_KEYCHAIN_SERVICE，
+// Windows 是 DPAPI 密文，哪些存了放在 $.store 的 HTTP_STORE_KEY（依 session 資料夾、環境）。
+export const HTTP_DIR = '.soap/http'
+export const HTTP_ENV_FILE = 'http-client.env.json'
+export const HTTP_ENV_KEY = 'http.env'
+export const HTTP_STORE_KEY = 'http.secrets'
+export const HTTP_KEYCHAIN_SERVICE = 'soap-mods-http'
+// 送出後最多等多久。
+export const HTTP_TIMEOUT_MS = 30_000
+// Keychain 讀機密（GitLab token、DB 密碼、HTTP 的機密）會跳視窗等人輸入密碼，最多等這麼久。
 export const KEYCHAIN_TIMEOUT_MS = 120_000
 // pipeline、job 狀態的顏色和符號；沒列到的（created、preparing…）照 pending 畫（ci/parse 的 statusStyle）。
 export const CI_STATUS_STYLE: Record<string, { mark: string; theme: string }> = {
@@ -254,9 +283,9 @@ export const CI_STATUS_STYLE: Record<string, { mark: string; theme: string }> = 
   scheduled: { mark: '◷', theme: 'inactive' },
 }
 
-// Services 分頁開著時多久重新掃一次程序（掃一次大約 1 秒）。
+// Tools 的 Services 子分頁開著時多久重新掃一次程序（掃一次大約 1 秒）。
 export const SERVICES_SCAN_MS = 5_000
-// Git、Services 分頁開著時多久重讀一次 git 狀態（外面改的檔案、回合進行中改的也看得到）。
+// Git 分頁、Services 子分頁開著時多久重讀一次 git 狀態（外面改的檔案、回合進行中改的也看得到）。
 export const GIT_REFRESH_MS = 5_000
 // 重跑：停掉之後等多久再開（讓 port 放出來）；開完之後在這些時間點檢查新程序還在不在（同時重掃，
 // 服務要一點時間才會 LISTEN）。這段時間內掛掉就算重跑失敗，在面板上提示。

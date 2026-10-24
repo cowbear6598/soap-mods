@@ -1,6 +1,6 @@
 // 各個狀態的初始值，和換分頁時要清掉的訊息。狀態本身（atom）在 register.tsx：引擎只認得那裡宣告的。
 
-import type { CiView, MrView, DbView, DiffPaneView, FileView, FilesView, GitView, LogView, MergeView, Plan, ServicesView, SpecView, WikiSent, WikiView } from '../types'
+import type { CiView, MrView, DbView, HttpView, DiffPaneView, FileView, FilesView, GitView, LogView, MergeView, Plan, ServicesView, SpecView, WikiSent, WikiView } from '../types'
 
 export const EMPTY: GitView = {
   isLoaded: false,
@@ -98,6 +98,33 @@ export const NO_WIKI_SENT: WikiSent = { conversation: '', pages: [] }
 export const NO_DB_CONNECTION = { open: '', tables: null, table: '', columns: [], query: '', result: null, error: '', queryError: '' } satisfies Partial<DbView>
 
 export const EMPTY_DB: DbView = { isLoaded: false, connections: [], deleteArmed: '', ...NO_DB_CONNECTION }
+
+export const EMPTY_HTTP: HttpView = {
+  isLoaded: false,
+  page: 'api',
+  requests: [],
+  error: '',
+  envs: [],
+  env: '',
+  vars: {},
+  ownVars: {},
+  envError: '',
+  secrets: [],
+  open: '',
+  result: null,
+  sendError: '',
+  editing: '',
+  armed: '',
+  secretError: '',
+  showHeaders: false,
+  draft: null,
+  draftError: '',
+  varDraft: null,
+  isAddingEnv: false,
+  newEnvName: '',
+  isEnvOpen: false,
+  envFormError: '',
+}
 
 export const EMPTY_MERGE: MergeView = {
   path: '',

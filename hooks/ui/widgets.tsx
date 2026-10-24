@@ -298,6 +298,8 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
       value: string
       submitLabel: string
       isFixed?: boolean
+      // 2 以上是多行的框（Enter 還是送出，換行照提示框的按法）。
+      rows?: number
       onInput?: (text: string) => unknown
       onSubmit: (text: string) => unknown
     },
@@ -311,6 +313,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
         placeholder={props.placeholder}
         value={props.value}
         submitLabel={props.submitLabel}
+        {...(props.rows === undefined ? {} : { rows: props.rows })}
         onInput={onInput && (text => void onInput(text))}
         onSubmit={text => void props.onSubmit(text)}
       />

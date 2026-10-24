@@ -1,9 +1,9 @@
-// Claude 的 Bash 不准碰這個 mod 存的機密：Keychain 裡 GitLab token、DB 密碼的項目，記著它們的 $.store key，
+// Claude 的 Bash 不准碰這個 mod 存的機密：Keychain 裡 GitLab token、DB 密碼、HTTP 子分頁機密的項目，記著它們的 $.store key，
 // 和拿 token 打 GitLab API 的 header。比對指令的字：擋的是順手去讀，不是刻意繞過（那要靠 Keychain 的允許視窗）。
 
-import { CI_KEYCHAIN_SERVICE, CI_STORE_KEY, DB_KEYCHAIN_SERVICE, DB_STORE_KEY } from './config'
+import { CI_KEYCHAIN_SERVICE, CI_STORE_KEY, DB_KEYCHAIN_SERVICE, DB_STORE_KEY, HTTP_KEYCHAIN_SERVICE, HTTP_STORE_KEY } from './config'
 
-const GUARDED = [CI_KEYCHAIN_SERVICE, DB_KEYCHAIN_SERVICE, CI_STORE_KEY, DB_STORE_KEY, 'PRIVATE-TOKEN']
+const GUARDED = [CI_KEYCHAIN_SERVICE, DB_KEYCHAIN_SERVICE, HTTP_KEYCHAIN_SERVICE, CI_STORE_KEY, DB_STORE_KEY, HTTP_STORE_KEY, 'PRIVATE-TOKEN']
 
 // 讀 Keychain（security）、解 DPAPI（PowerShell）、拿 token 打 API（curl 這類）、讀 $.store 的 JSON（jq）。
 // 指令裡沒有這些程式就不擋：grep 原始碼、改檔時提到機密的名稱不算。前後不是字母、數字、-：security-review 這種名稱不算。
@@ -17,5 +17,5 @@ export function secretCommandReason(command: string): string {
 
   return hit === undefined
     ? ''
-    : `Blocked by soap-mods: this command touches "${hit}", a secret only Soap Panel may use (the GitLab token or a DB password). Use the panel instead; do not try another way.`
+    : `Blocked by soap-mods: this command touches "${hit}", a secret only Soap Panel may use (the GitLab token, a DB password or an HTTP request's secret). Use the panel instead; do not try another way.`
 }

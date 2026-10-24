@@ -3,7 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import { DB_STORE_KEY } from '../../hooks/config'
 import { KEYCHAIN, OLD_KEYCHAIN, toHex } from '../../hooks/secret'
-import { type Pane, type TestOn, fakeKeychain, mountPane, ok, stubPanel, stubStore } from '../test-fixtures'
+import { type Pane, type TestOn, fakeKeychain, mountPane, ok, openTool, stubPanel, stubStore } from '../test-fixtures'
 
 const PASSWORD = 'S3crét;"pw密'
 const CONN_STRING = `Server=db.local;Database=shop;User Id=reader;Password="${PASSWORD.replace(/"/g, '""')}";TrustServerCertificate=True`
@@ -73,7 +73,7 @@ function dbWorld(
 
 // 打開 DB 分頁、貼上連線字串存好，回傳存好的那筆的 id。
 async function addConnection(ui: Pane, world: ReturnType<typeof dbWorld>, text = CONN_STRING) {
-  await ui.press({ key: 'tab:db' })
+  await openTool(ui, 'db')
   await ui.input({ key: 'db:add', text })
 
   return world.saved()[0]?.id ?? ''
@@ -85,7 +85,7 @@ const markdown = async (ui: Pane) =>
 test('on macOS a pasted connection string is saved with its password in the Keychain, never in the store or on a command line', async ($, on) => {
   const world = dbWorld(on)
   const ui = await mountPane($, 'desktop')
-  await ui.press({ key: 'tab:db' })
+  await openTool(ui, 'db')
   expect(await ui.find({ type: 'Text', text: 'No connections yet.' })).toBeDefined()
 
   const id = await addConnection(ui, world)
@@ -106,7 +106,7 @@ test('on macOS a pasted connection string is saved with its password in the Keyc
 test('a connection saved before its Keychain item asked for a password is saved again so it does, and the Keychain is asked once a session', async ($, on) => {
   const world = dbWorld(on, { hasOldConnection: true })
   const ui = await mountPane($, 'desktop')
-  await ui.press({ key: 'tab:db' })
+  await openTool(ui, 'db')
   await ui.press({ key: `db:item:${OLD_CONNECTION.id}` })
   expect(await ui.find({ type: 'Text', text: 'Tables (2)' })).toBeDefined()
   expect(world.sqlcmds().at(-1)?.init?.env?.SQLCMDPASSWORD).toBe(PASSWORD)
@@ -137,7 +137,7 @@ test('ADO.NET and ODBC spellings, quoted and braced passwords all reach sqlcmd a
   ]
   const world = dbWorld(on)
   const ui = await mountPane($, 'desktop')
-  await ui.press({ key: 'tab:db' })
+  await openTool(ui, 'db')
   for (const [i, c] of cases.entries()) {
     await ui.input({ key: 'db:add', text: c.text })
     expect(await ui.find({ type: 'Text', text: c.name })).toBeDefined()
@@ -156,7 +156,7 @@ test('ADO.NET and ODBC spellings, quoted and braced passwords all reach sqlcmd a
 test('a bad connection string is refused with the reason, and nothing is saved', async ($, on) => {
   const world = dbWorld(on)
   const ui = await mountPane($, 'desktop')
-  await ui.press({ key: 'tab:db' })
+  await openTool(ui, 'db')
   for (const [text, reason] of [
     ['Database=shop;User Id=x;Password=topsecret', 'The connection string has no Server (or Data Source).'],
     ['Server=db;Password=topsecret', 'The connection string has no User Id, and no Integrated Security.'],

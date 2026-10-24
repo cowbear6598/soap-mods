@@ -1,9 +1,13 @@
-export type TabId = 'git' | 'files' | 'services' | 'spec' | 'db'
+export type TabId = 'git' | 'files' | 'tools' | 'spec'
+/** Top tabs from before the Tools tab, kept by an older load in `$.state`: read as the Tools sub tab of that name. */
+export type OldTabId = 'services' | 'db'
 export type GitSubTab = 'diff' | 'branch' | 'log' | 'ci' | 'mr' | 'conflict'
 /** The Spec tab's sub tabs: the plans under `.soap/tasks`, and the wiki pages under `.soap/wiki`. */
 export type SpecSubTab = 'spec' | 'wiki'
+/** The Tools tab's sub tabs: the local services, SQL Server, and the requests in `.soap/http`. */
+export type ToolsSubTab = 'services' | 'db' | 'http'
 /** The tabs that have sub tabs, and the sub tab each one shows. */
-export type SubTabs = { git: GitSubTab; spec: SpecSubTab }
+export type SubTabs = { git: GitSubTab; spec: SpecSubTab; tools: ToolsSubTab }
 /** The branch tab's Fetch / Pull buttons. */
 export type GitSync = 'fetch' | 'pull'
 
@@ -652,12 +656,116 @@ export type MrView = {
   actionError: string
 }
 
+/** A header of a request or a response. */
+export type HttpHeader = { name: string; value: string }
+
+/** `# @capture name = body.a.b`: after a 2xx, the value at that path of the JSON response becomes the variable `name`. */
+export type HttpCapture = { name: string; path: string }
+
+/** One request of a `.http` file under `.soap/http` (REST Client / JetBrains format), as written: `{{name}}` not yet replaced. */
+export type HttpRequest = {
+  /** `<file>#<index>`. */
+  id: string
+  /** The file's name under `.soap/http`. */
+  file: string
+  /** Its place in the file, from 0. */
+  index: number
+  /** Its block of the file (httpBlocks: block 0 is before the first `###`), and that block's text as written, its ending blank lines left out. */
+  block: number
+  raw: string
+  /** The text after `###`, else `# @name`, else '' (the list shows the method and URL). */
+  name: string
+  method: string
+  url: string
+  headers: HttpHeader[]
+  /** '' when none. */
+  body: string
+  captures: HttpCapture[]
+}
+
+/** What the last Send got back. */
+export type HttpResult = {
+  /** The request it answers. */
+  id: string
+  status: number
+  ms: number
+  /** Bytes of the body, as UTF-8. */
+  size: number
+  headers: HttpHeader[]
+  /** The body, laid out when it is JSON, cut at CODE_MAX_CHARS. */
+  body: string
+  isJson: boolean
+  isTruncated: boolean
+  /** The variables `@capture` set from it, and the ones whose path it did not have. */
+  captured: string[]
+  missed: string[]
+}
+
+/** The HTTP sub tab's own tabs: the requests and sending them, or the environments, their variables and the secrets. */
+export type HttpPage = 'api' | 'env'
+
+/** A request's text being edited on the panel, written to `.soap/http` on Save: a request's block, or a new request for `file`. */
+export type HttpDraft = { kind: 'request'; id: string; file: string; text: string } | { kind: 'new'; file: string; text: string }
+
+/** The Tools tab's HTTP sub tab: the requests in `.soap/http/*.http`, the environment picked, and the last response. */
+export type HttpView = {
+  /** False before the first listing finishes. */
+  isLoaded: boolean
+  /** The HTTP sub tab's tab shown. */
+  page: HttpPage
+  /** Every request of every file, by file name then place. */
+  requests: HttpRequest[]
+  /** Why listing or reading the files failed, '' when none (a missing folder is the hint, not an error). */
+  error: string
+  /** The environments of `http-client.env.json` (`$shared` is not one), as written; [] without the file. */
+  envs: string[]
+  /** The one picked (kept in the mod's store by session folder); '' when there are none. */
+  env: string
+  /** The picked environment's variables, `$shared` beneath them. */
+  vars: Record<string, string>
+  /** The picked environment's own variables (the ones Environment edits), as written. */
+  ownVars: Record<string, string>
+  /** What is wrong with `http-client.env.json`, '' when it is fine or missing. */
+  envError: string
+  /** Variables with a value saved in the Keychain or DPAPI for this session folder and environment (the values are never here). */
+  secrets: string[]
+  /** The request opened (its id), '' for the list. */
+  open: string
+  /** The last response of the opened request, null before one came. */
+  result: HttpResult | null
+  /** Why the last Send failed (can't connect, timed out, a variable with no value), '' when none. */
+  sendError: string
+  /** The secret whose paste field is open to change it, '' when none (a missing one always shows its field). */
+  editing: string
+  /** The trash button pressed once that waits for a second press, '' when none: `request` (the opened one), `secret:<name>`, `var:<name>` or `env:<name>`. */
+  armed: string
+  /** Why saving, reading or deleting a secret failed, '' when none. */
+  secretError: string
+  /** The response's headers are unfolded. */
+  showHeaders: boolean
+  /** The text being edited, null when none. */
+  draft: HttpDraft | null
+  /** Why saving the draft failed (no request in it, a bad file name, the file changed), '' when none. */
+  draftError: string
+  /** The variable being added (`from` '') or changed (`from` its name now) in Environment, as typed; null when none. */
+  varDraft: { from: string; name: string; value: string } | null
+  /** Environment's field for a new environment's name is open. */
+  isAddingEnv: boolean
+  /** The new environment's name as typed, for Add. */
+  newEnvName: string
+  /** Environment shows the picked environment's variables (its second level) instead of the list of environments. */
+  isEnvOpen: boolean
+  /** Why adding, changing or deleting an environment or a variable failed, '' when none. */
+  envFormError: string
+}
+
 declare module 'claude-code' {
   interface PluginState {
     'soap-mods': {
-      tab: TabId
-      /** The sub tab each tab with sub tabs shows. */
-      subTabs: SubTabs
+      /** An older load may have kept a tab that is now a Tools sub tab (OldTabId); read through normalizeTabs. */
+      tab: TabId | OldTabId
+      /** The sub tab each tab with sub tabs shows; an older load's lacks the ones added since (normalizeTabs fills them). */
+      subTabs: Partial<SubTabs>
       /** Shaped, like wiki. */
       view: Shaped<GitView>
       /** Whether the remote branches section is expanded. */
@@ -680,6 +788,8 @@ declare module 'claude-code' {
       /** Wiki tab folders opened or closed by hand, keyed by the folder's path (`db/`); the rest are open. */
       wikiFolders: Record<string, boolean>
       db: DbView
+      /** Shaped, like wiki. */
+      http: Shaped<HttpView>
       /** Shaped, like wiki. */
       ci: Shaped<CiView>
       /** Shaped, like wiki. */

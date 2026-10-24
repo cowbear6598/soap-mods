@@ -21,6 +21,7 @@ import {
   mountPane,
   ok,
   openPanel,
+  openTool,
   posix,
   proc,
   stubPanel,
@@ -1163,8 +1164,11 @@ test('the Services tab lists the running services and stops one by killing its t
   })
 
   const ui = await mountPane($)
-  await ui.press({ key: 'tab:services' })
-  // Services 沒有子分頁。
+  await openTool(ui, 'services')
+  // Services 是 Tools 的子分頁：上層只剩 Files、Git、Tools、Docs，子分頁列是 Tools 的，沒有 Git 的。
+  expect((await ui.findAll({ type: 'Button' })).map(b => b.key).filter(k => k?.startsWith('tab:'))).toEqual(['tab:files', 'tab:git', 'tab:tools', 'tab:spec'])
+  expect(await ui.find({ key: 'sub:db' })).toBeDefined()
+  expect(await ui.find({ key: 'sub:http' })).toBeDefined()
   expect(await ui.find({ key: 'sub:diff' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'Running' })).toBeDefined()
   // 一行：工具 · 專案名 · port。
@@ -1210,7 +1214,7 @@ test('restart kills the tree, then relaunches the same command in the same folde
   })
 
   const ui = await mountPane($, 'desktop')
-  await ui.press({ key: 'tab:services' })
+  await openTool(ui, 'services')
   await ui.press({ key: 'svc:restart:11' })
   expect(kills).toEqual(['11'])
   expect(launches).toHaveLength(1)
@@ -1236,13 +1240,13 @@ test('a restart that dies right away says so, and the next scan does not wipe th
   })
 
   const ui = await mountPane($, 'desktop')
-  await ui.press({ key: 'tab:services' })
+  await openTool(ui, 'services')
   await ui.press({ key: 'svc:restart:11' })
   // 重跑後的檢查在計時器裡跑，等它寫進畫面。
   expect(await waitFor(() => ui.find({ type: 'Text', text: /Restart failed: npm · web exited right after starting/ }))).toBeDefined()
   // 定時掃描成功也不能把重跑失敗的提示洗掉。
   await ui.press({ key: 'tab:git' })
-  await ui.press({ key: 'tab:services' })
+  await openTool(ui, 'services')
   expect(await ui.find({ type: 'Text', text: /Restart failed/ })).toBeDefined()
   // 按 × 才關掉。
   await ui.press({ key: 'svc:dismiss-error' })
@@ -1286,7 +1290,7 @@ test('the Services tab matches the session folder in any case, and restarts go -
   const { launches } = winServices(on, SCAN, 'C:\\Proj\\')
 
   const ui = await mountPane($)
-  await ui.press({ key: 'tab:services' })
+  await openTool(ui, 'services')
   expect(await serviceRows(ui)).toEqual(['go · go-server · :8081', 'node · proj · :4000', 'dotnet · Api · :5000 :5001', 'cargo · app · :7000', 'npm · web · :5173'])
   await ui.press({ key: 'svc:restart:70' })
   expect(launches[0]?.SOAP_DIR).toBe('C:\\proj')
@@ -1311,7 +1315,7 @@ test('a service wrapped in cmd /c shows the real tool, and restart reruns the wr
   const { kills, launches } = winServices(on, { self: [], pids: procs.map(p => p.pid), procs, ports: [{ port: 5001, pid: 10 }] })
 
   const ui = await mountPane($)
-  await ui.press({ key: 'tab:services' })
+  await openTool(ui, 'services')
   expect(await serviceRows(ui)).toEqual(['dotnet · InventoryApi · :5001'])
   // 砍最上層的 cmd（整棵）；重跑照原樣跑 cmd，set 環境變數那段才不會掉。
   await ui.press({ key: 'svc:restart:8' })
@@ -1363,7 +1367,7 @@ for (const [chain, name] of NAMED) {
     winServices(on, { self: [], pids: procs.map(p => p.pid), procs, ports: [{ port: 8080, pid: procs.length }] }, 'C:\\company')
 
     const ui = await mountPane($)
-    await ui.press({ key: 'tab:services' })
+    await openTool(ui, 'services')
     expect((await serviceRows(ui))[0]?.split(' · ')[1]).toBe(name)
     await ui.unmount()
   })
@@ -1400,7 +1404,7 @@ test('on macOS the Services tab scans with ps and lsof, stops with kill -9 on th
   const { kills, launches } = macServices(on)
 
   const ui = await mountPane($, 'desktop')
-  await ui.press({ key: 'tab:services' })
+  await openTool(ui, 'services')
   expect(await ui.find({ type: 'Text', text: 'npm' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'web' })).toBeDefined()
   // npm → sh -c → node 是同一個服務；引擎自己（100）和它的 MCP server（30）不算。
@@ -1419,7 +1423,7 @@ for (const cmd of ['npm run dev -- --host "$HOST"', 'node server.js --banner $(w
     const { kills, launches } = macServices(on, MAC_ARGS_OUT.replace('npm run dev', cmd))
 
     const ui = await mountPane($)
-    await ui.press({ key: 'tab:services' })
+    await openTool(ui, 'services')
     await ui.press({ key: 'svc:restart:11' })
     expect(kills).toEqual([])
     expect(launches).toEqual([])
@@ -1434,7 +1438,7 @@ test('on macOS a service whose command has only letters, paths and flags restart
   const { launches } = macServices(on, MAC_ARGS_OUT.replace('npm run dev', cmd))
 
   const ui = await mountPane($)
-  await ui.press({ key: 'tab:services' })
+  await openTool(ui, 'services')
   await ui.press({ key: 'svc:restart:11' })
   expect(launches).toEqual([{ SOAP_CMD: cmd, SOAP_DIR: `${MAC_ROOT}/web` }])
   await ui.unmount()
@@ -1458,7 +1462,7 @@ test('services group under the repo they run in, in repo order, with the ones ou
   await openPanel($)
 
   const ui = await mountPane($)
-  await ui.press({ key: 'tab:services' })
+  await openTool(ui, 'services')
   // 每一組：標題，和它底下的服務（PID）。
   const groups = (await ui.findAll({ type: 'Box' }))
     .filter(b => b.key?.startsWith('svc-group:'))

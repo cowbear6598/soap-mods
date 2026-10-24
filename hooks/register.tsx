@@ -1,12 +1,12 @@
 // 進入點：狀態（atom）、把 $ 和 atom 包成各分頁的 io（baseIo、gitIo…）、按鈕接到哪個動作，和引擎事件的接線。
 // 引擎只讓這個檔案碰 $ 和 atom（傳 $ 給 import 進來的函式、用別的檔案的 atom 都會被擋），
-// 所以各分頁的動作在自己的檔案裡（git/、files/、spec/、wiki/、db/、services/、merge/ 的 *actions.ts），只拿 io（io.ts）。
+// 所以各分頁的動作在自己的檔案裡（git/、files/、spec/、wiki/、db/、http/、services/、merge/ 的 *actions.ts），只拿 io（io.ts）。
 
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, PaneOpenArgs, Register, RenderSurface } from 'claude-code'
 
-import type { CiView, DbView, FilesView, GitBranch, GitView, LogView, MrView, ServicesView, SubTabs, SpecView, TabId, WikiView } from '../types'
-import { CI_REFRESH_MS, FOCUS_WATCH_MS, GIT_REFRESH_MS, PANEL_TITLE, SERVICES_SCAN_MS, USAGE_TICK_MS, hasSubTabs } from './config'
+import type { CiView, DbView, FilesView, GitBranch, GitView, HttpView, LogView, MrView, ServicesView, SubTabs, SpecView, TabId, ToolsSubTab, WikiView } from '../types'
+import { CI_REFRESH_MS, DEFAULT_SUB_TABS, FOCUS_WATCH_MS, GIT_REFRESH_MS, PANEL_TITLE, SERVICES_SCAN_MS, USAGE_TICK_MS, hasSubTabs } from './config'
 import {
   type CiIo,
   actOnJob,
@@ -45,6 +45,7 @@ import {
   EMPTY_DB,
   EMPTY_FILE_VIEW,
   EMPTY_FILES,
+  EMPTY_HTTP,
   EMPTY_LOG,
   EMPTY_MR,
   EMPTY_SERVICES,
@@ -76,6 +77,37 @@ import { abortOp, continueOp } from './git/op-actions'
 import { branchRef } from './git/parse'
 import type { GitIo } from './git/run'
 import { refresh, refreshRepoList, refreshTab, selectRepo } from './git/status'
+import {
+  type HttpIo,
+  addHttpEnv,
+  capturedFor,
+  cancelHttpDraft,
+  closeHttpEnv,
+  closeHttpRequest,
+  deleteHttpEnv,
+  deleteHttpRequest,
+  deleteHttpSecretValue,
+  deleteHttpVar,
+  editHttpVar,
+  cancelHttpVar,
+  newHttpVar,
+  openAddHttpEnv,
+  openHttpEnv,
+  saveHttpVar,
+  editHttpRequest,
+  editHttpSecret,
+  httpBusyNow,
+  newHttpRequest,
+  openHttpRequest,
+  reloadHttp,
+  saveHttpDraft,
+  saveHttpSecretValue,
+  selectHttpPage,
+  sendHttp,
+  typeHttpDraft,
+  typeHttpEnvName,
+  typeHttpVar,
+} from './http/actions'
 import type { Io } from './io'
 import { applyMerge, askClaude, editChunks, jumpConflict, mergeBusy, openMerge, resetMerge, takeSide } from './merge/actions'
 import {
@@ -96,6 +128,7 @@ import { patch } from './patch'
 import { type ServicesIo, pendingServices, refreshServices, runServiceAction } from './services/actions'
 import { isWindows } from './shell'
 import { type SpecIo, closeSpec, deleteSpec, doSpec, openSpec, reloadSpec } from './spec/actions'
+import { normalizeTabs } from './tabs'
 import type { Actions } from './ui/actions'
 import { type FocusIo, act, checkCover, checkPressed, focusWhenShown, isPaneShown, leaveRow } from './ui/focus'
 import { renderPanel } from './ui/panel'
@@ -127,9 +160,9 @@ const PANE_ARGS: PaneOpenArgs = { id: PANE, title: PANEL_TITLE }
 
 // ───── 狀態 ─────
 
+// 看著的 Tab、有子分頁的 Tab 各自看的子分頁。舊版存的值（上層的 services、db）讀的時候換成現在的樣子：一律經過 readTabs。
 const tab = atom({ plugin: 'soap-mods', key: 'tab' } as const, 'files')
-// 有子分頁的 Tab 各自看的子分頁。
-const subTabs = atom({ plugin: 'soap-mods', key: 'subTabs' } as const, { git: 'diff', spec: 'spec' })
+const subTabs = atom({ plugin: 'soap-mods', key: 'subTabs' } as const, DEFAULT_SUB_TABS)
 // shape：GitView、FilesView 改了樣子就換，熱重載後不沿用舊程式存的、缺欄位的值（同 wiki）。
 const view = atom({ plugin: 'soap-mods', key: 'view' } as const, EMPTY, { shape: 'git-2' })
 const showRemote = atom({ plugin: 'soap-mods', key: 'showRemote' } as const, false)
@@ -157,6 +190,8 @@ const wikiFolders = atom({ plugin: 'soap-mods', key: 'wikiFolders' } as const, {
 const log = atom({ plugin: 'soap-mods', key: 'log' } as const, EMPTY_LOG)
 // DB 分頁：存著的連線（不含密碼）、打開的那個的資料表、查詢和結果。
 const db = atom({ plugin: 'soap-mods', key: 'db' } as const, EMPTY_DB)
+// HTTP 子分頁：.soap/http 的請求、選的環境、點開的請求和它的回應。shape 同 wiki。
+const http = atom({ plugin: 'soap-mods', key: 'http' } as const, EMPTY_HTTP, { shape: 'http-7' })
 // CI 分頁（GitLab）：分支清單、點開的分支的 pipeline、點開的 pipeline 的 job、點開的 job 的 log。shape 同 wiki。
 const ci = atom({ plugin: 'soap-mods', key: 'ci' } as const, EMPTY_CI, { shape: 'ci-6' })
 // MR 分頁（GitLab）：開著的 MR、點開的那個的狀態和建議。shape 同 wiki。
@@ -165,6 +200,29 @@ const mr = atom({ plugin: 'soap-mods', key: 'mr' } as const, EMPTY_MR, { shape: 
 const cover = atom({ plugin: 'soap-mods', key: 'cover' } as const, NO_COVER, { shape: 'cover-2' })
 // 長的差異看到第幾頁，照地方（diffpage、wikidiff）記；換一份差異（id 不同）就從頭。
 const diffPages = atom({ plugin: 'soap-mods', key: 'diffPages' } as const, {})
+
+async function readTabs($: EngineInterface) {
+  const [t, subs] = await Promise.all([read($, tab), read($, subTabs)])
+
+  return normalizeTabs(t, subs)
+}
+
+// 把舊版存的 Tab、子分頁換成現在的樣子寫回去（session 開始、熱重載後，和換分頁前），之後存的都是新的。
+async function settleTabs($: EngineInterface) {
+  const now = await readTabs($)
+  await Promise.all([
+    update($, tab, t => (t === now.tab ? t : now.tab)),
+    update($, subTabs, s => patch(s, now.subTabs)),
+  ])
+
+  return now
+}
+
+const isSubShown = async <K extends keyof SubTabs>($: EngineInterface, id: K, sub: SubTabs[K]) => {
+  const t = await readTabs($)
+
+  return t.tab === id && t.subTabs[id] === sub
+}
 
 // 改一個物件 atom 的其中幾個欄位；改的欄位內容都沒變就不寫（patch），面板不會白白重畫。
 // 引擎要看得出改的是哪個 atom，所以每個 atom 一個，不能寫成通用的。
@@ -205,6 +263,10 @@ async function setDb($: EngineInterface, change: Partial<DbView>) {
   await update($, db, v => patch(v, change))
 }
 
+async function setHttp($: EngineInterface, change: Partial<HttpView>) {
+  await update($, http, h => patch(h, change))
+}
+
 async function setCi($: EngineInterface, change: Partial<CiView>) {
   await update($, ci, c => patch(c, change))
 }
@@ -237,7 +299,7 @@ function focusIo($: EngineInterface): FocusIo {
     now: () => $.clock.now(),
     after: (ms, fn) => $.clock.after(ms, () => void fn()),
     shownTab: async () => {
-      const [t, subs] = await Promise.all([read($, tab), read($, subTabs)])
+      const { tab: t, subTabs: subs } = await readTabs($)
 
       return { t, sub: shownSub(t, subs) }
     },
@@ -288,7 +350,7 @@ function gitIo($: EngineInterface): GitIo {
     setLogQuery: text => update($, logQuery, () => text),
     getCover: () => read($, cover),
     updateCover: fn => update($, cover, fn),
-    getSubTabs: () => read($, subTabs),
+    getSubTabs: async () => (await readTabs($)).subTabs,
     copy: args => $.ui.copy(args),
     closeCover: () => closeCover($),
     refresh: () => refresh(io),
@@ -299,19 +361,20 @@ function gitIo($: EngineInterface): GitIo {
 
 // 回合結束、每 GIT_REFRESH_MS、Soap Panel 被切到前面時呼叫；Soap Panel 不在前面就不讀。
 async function refreshWhenShown($: EngineInterface) {
-  const t = await read($, tab)
-  if ((t === 'git' || t === 'services') && (await isPaneShown(focusIo($)))) await refreshTab(gitIo($), t)
+  const { tab: t, subTabs: subs } = await readTabs($)
+  const sub = shownSub(t, subs)
+  if ((t === 'git' || sub === 'services') && (await isPaneShown(focusIo($)))) await refreshTab(gitIo($), t, sub)
 }
 
-// ───── Services 分頁 ─────
+// ───── Tools 的 Services 子分頁 ─────
 
 function servicesIo($: EngineInterface): ServicesIo {
   return { ...baseIo($), setServices: change => setServices($, change) }
 }
 
-// Services 分頁看得到時才定時掃，看不到就不花那一秒。
+// Services 子分頁看得到時才定時掃，看不到就不花那一秒。
 async function scanWhenShown($: EngineInterface) {
-  if ((await read($, tab)) !== 'services' || !(await isPaneShown(focusIo($)))) return
+  if (!(await isSubShown($, 'tools', 'services')) || !(await isPaneShown(focusIo($)))) return
   await refreshServices(servicesIo($))
 }
 
@@ -336,12 +399,12 @@ function specIo($: EngineInterface): SpecIo {
 
 // Spec 分頁看得到的子分頁：計劃或 wiki。
 async function reloadSpecTab($: EngineInterface) {
-  await ((await read($, subTabs)).spec === 'wiki' ? reloadWiki(wikiIo($)) : reloadSpec(specIo($)))
+  await ((await readTabs($)).subTabs.spec === 'wiki' ? reloadWiki(wikiIo($)) : reloadSpec(specIo($)))
 }
 
 // 回合結束：Claude 可能寫了新的計劃、wiki 頁面，改了打開的那份。Spec 分頁開著就重讀看得到的那個。
 async function reloadSpecsWhenShown($: EngineInterface) {
-  if ((await read($, tab)) === 'spec') await reloadSpecTab($)
+  if ((await readTabs($)).tab === 'spec') await reloadSpecTab($)
 }
 
 // ───── Wiki 子分頁 ─────
@@ -362,10 +425,21 @@ function wikiIo($: EngineInterface): WikiIo {
   }
 }
 
-// ───── DB 分頁（SQL Server） ─────
+// ───── Tools 的 DB 子分頁（SQL Server） ─────
 
 function dbIo($: EngineInterface): DbIo {
   return { ...baseIo($), getDb: () => read($, db), setDb: change => setDb($, change) }
+}
+
+// ───── Tools 的 HTTP 子分頁 ─────
+
+function httpIo($: EngineInterface): HttpIo {
+  return { ...baseIo($), getHttp: () => read($, http), setHttp: change => setHttp($, change), fetch: (url, init) => $.http.fetch(url, init) }
+}
+
+// 回合結束：Claude 可能寫了、改了 .http 檔或環境檔。HTTP 子分頁開著就重讀。
+async function reloadHttpWhenShown($: EngineInterface) {
+  if (await isSubShown($, 'tools', 'http')) await reloadHttp(httpIo($))
 }
 
 // ───── Git 的 CI 子分頁（GitLab） ─────
@@ -373,8 +447,6 @@ function dbIo($: EngineInterface): DbIo {
 function ciIo($: EngineInterface): CiIo {
   return { ...baseIo($), getCi: () => read($, ci), setCi: change => setCi($, change), fetch: (url, init) => $.http.fetch(url, init) }
 }
-
-const isCiShown = async ($: EngineInterface) => (await read($, tab)) === 'git' && (await read($, subTabs)).git === 'ci'
 
 // 看到 CI 子分頁：先找 repo（看的是選中的那個；Git 分頁的狀態、分支由它自己的重讀負責），再讀看得到的那層。
 async function loadCi($: EngineInterface) {
@@ -389,8 +461,6 @@ function mrIo($: EngineInterface): MrIo {
   return { ...baseIo($), getMr: () => read($, mr), setMr: change => setMr($, change), fetch: (url, init) => $.http.fetch(url, init) }
 }
 
-const isMrShown = async ($: EngineInterface) => (await read($, tab)) === 'git' && (await read($, subTabs)).git === 'mr'
-
 // 看到 MR 子分頁：同 CI，先找 repo 再讀看得到的那層。
 async function loadMr($: EngineInterface) {
   await refreshRepoList(gitIo($))
@@ -399,7 +469,7 @@ async function loadMr($: EngineInterface) {
 
 // CI、MR 子分頁看得到時才定時重讀；跑完了的 pipeline、job 不再問，沒在跑的隔久一點（refreshCi、refreshMr 的 isTimer）。
 async function refreshGitLabWhenShown($: EngineInterface) {
-  const [t, subs] = await Promise.all([read($, tab), read($, subTabs)])
+  const { tab: t, subTabs: subs } = await readTabs($)
   if (t !== 'git' || (subs.git !== 'ci' && subs.git !== 'mr') || !(await isPaneShown(focusIo($)))) return
   if (subs.git === 'ci') await refreshCi(ciIo($), { isTimer: true })
   else await refreshMr(mrIo($), { isTimer: true })
@@ -408,8 +478,8 @@ async function refreshGitLabWhenShown($: EngineInterface) {
 // 換 repo：Git 分頁重讀；CI、MR 不管開著沒都清掉上一個 repo 的，開著就從新 repo 的清單重讀。
 async function selectRepoTab($: EngineInterface, name: string) {
   await Promise.all([selectRepo(gitIo($), name), clearCi(ciIo($)), clearMr(mrIo($))])
-  if (await isCiShown($)) await loadBranches(ciIo($))
-  if (await isMrShown($)) await loadMrList(mrIo($))
+  if (await isSubShown($, 'git', 'ci')) await loadBranches(ciIo($))
+  if (await isSubShown($, 'git', 'mr')) await loadMrList(mrIo($))
 }
 
 // ───── 蓋住分頁的畫面 ─────
@@ -424,7 +494,7 @@ async function closeCover($: EngineInterface) {
 
 // 回合結束：Claude 可能改了檔案。Files 分頁開著就重列（有搜尋就重新走一遍再找），開著檔案內容就重讀。
 async function reloadFilesWhenShown($: EngineInterface) {
-  if ((await read($, tab)) === 'files') await reloadShownFiles(filesIo($))
+  if ((await readTabs($)).tab === 'files') await reloadShownFiles(filesIo($))
 }
 
 // ───── 換分頁 ─────
@@ -436,36 +506,50 @@ async function leaveTab($: EngineInterface) {
 }
 
 async function selectTab($: EngineInterface, id: TabId) {
+  const { subTabs: subs } = await settleTabs($)
   await Promise.all([update($, tab, () => id), leaveTab($)])
-  loadTab($, id)
+  loadTab($, id, subs)
 }
 
-// 讀這個 Tab 要的資料。掃描要一秒左右，不等它：先畫「掃描中」或舊清單。
-function loadTab($: EngineInterface, id: TabId) {
+// 讀 Tools 的一個子分頁要的資料。Services 的掃描要一秒左右，不等它：先畫「掃描中」或舊清單；DB、HTTP 等讀完。
+function loadTool($: EngineInterface, id: ToolsSubTab): Promise<void> {
   if (id === 'services') void refreshServices(servicesIo($)).catch(() => undefined)
+  if (id === 'db') return loadDbConnections(dbIo($))
+  if (id === 'http') return reloadHttp(httpIo($))
+
+  return Promise.resolve()
+}
+
+// 讀這個 Tab（和它看著的子分頁）要的資料，不等它讀完。
+function loadTab($: EngineInterface, id: TabId, subs: SubTabs) {
   if (id === 'files') void reloadFiles(filesIo($)).catch(() => undefined)
   if (id === 'spec') void reloadSpecTab($).catch(() => undefined)
-  if (id === 'db') void loadDbConnections(dbIo($)).catch(() => undefined)
-  if (id === 'git') void isCiShown($).then(isCi => (isCi ? loadCi($) : undefined)).catch(() => undefined)
-  if (id === 'git') void isMrShown($).then(isMr => (isMr ? loadMr($) : undefined)).catch(() => undefined)
-  void refreshTab(gitIo($), id)?.catch(() => undefined)
+  if (id === 'tools') void loadTool($, subs.tools).catch(() => undefined)
+  if (id === 'git') void isSubShown($, 'git', 'ci').then(isCi => (isCi ? loadCi($) : undefined)).catch(() => undefined)
+  if (id === 'git') void isSubShown($, 'git', 'mr').then(isMr => (isMr ? loadMr($) : undefined)).catch(() => undefined)
+  void refreshTab(gitIo($), id, shownSub(id, subs))?.catch(() => undefined)
 }
 
 // 已經為哪個 session 讀過看著的 Tab。畫的時候看到 id 換了就讀一次：剛開始的第一次畫，
 // 和 /clear 之後（換了 session id、狀態回到初始值，卻不發 session.start，不讀的話 Files 會一直停在讀取中）。
 let loadedSession: string | undefined
 
-function loadTabOnce($: EngineInterface, id: TabId, session: string) {
+function loadTabOnce($: EngineInterface, id: TabId, subs: SubTabs, session: string) {
   if (session === loadedSession) return
   loadedSession = session
-  loadTab($, id)
+  loadTab($, id, subs)
 }
 
-// 換子分頁。Git 的 log、CI、MR 不在看的時候不讀，換過來才讀；Spec 的（計劃、wiki）換過去就重讀它。
+// 換子分頁。Git 的 log、CI、MR 不在看的時候不讀，換過來才讀；Spec 的（計劃、wiki）換過去就重讀它；Tools 的換過去讀那個工具的。
 async function selectSubTab<T extends keyof SubTabs>($: EngineInterface, t: T, id: SubTabs[T]) {
-  await Promise.all([update($, subTabs, s => ({ ...s, [t]: id })), leaveTab($)])
+  const now = await settleTabs($)
+  await Promise.all([update($, subTabs, () => ({ ...now.subTabs, [t]: id })), leaveTab($)])
   if (t === 'spec') await reloadSpecTab($)
-  else if (id === 'log') await loadLog(gitIo($))
+  else if (t === 'tools') {
+    const tool = id as ToolsSubTab
+    void refreshTab(gitIo($), 'tools', tool)?.catch(() => undefined)
+    await loadTool($, tool)
+  } else if (id === 'log') await loadLog(gitIo($))
   else if (id === 'ci') await loadCi($)
   else if (id === 'mr') await loadMr($)
 }
@@ -548,6 +632,32 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     toggleDbTable: t => toggleDbTable(dbIo($), t),
     setDbQuery: text => setDb($, { query: text, queryError: '' }),
     runDbQuery: text => runDbQuery(dbIo($), text),
+    openHttpRequest: id => openHttpRequest(httpIo($), id),
+    closeHttpRequest: () => closeHttpRequest(httpIo($)),
+    sendHttp: () => sendHttp(httpIo($)),
+    saveHttpSecret: (name, text) => saveHttpSecretValue(httpIo($), name, text),
+    deleteHttpSecret: name => deleteHttpSecretValue(httpIo($), name),
+    editHttpSecret: name => editHttpSecret(httpIo($), name),
+    toggleHttpHeaders: isOpen => setHttp($, { showHeaders: isOpen }),
+    selectHttpPage: page => selectHttpPage(httpIo($), page),
+    newHttpRequest: () => newHttpRequest(httpIo($)),
+    editHttpRequest: () => editHttpRequest(httpIo($)),
+    typeHttpDraft: change => typeHttpDraft(httpIo($), change),
+    saveHttpDraft: text => saveHttpDraft(httpIo($), text),
+    cancelHttpDraft: () => cancelHttpDraft(httpIo($)),
+    deleteHttpRequest: () => deleteHttpRequest(httpIo($)),
+    addHttpEnv: name => addHttpEnv(httpIo($), name),
+    typeHttpEnvName: name => typeHttpEnvName(httpIo($), name),
+    deleteHttpEnv: env => deleteHttpEnv(httpIo($), env),
+    openHttpEnv: env => openHttpEnv(httpIo($), env),
+    closeHttpEnv: () => closeHttpEnv(httpIo($)),
+    openAddHttpEnv: isOpen => openAddHttpEnv(httpIo($), isOpen),
+    newHttpVar: () => newHttpVar(httpIo($)),
+    editHttpVar: name => editHttpVar(httpIo($), name),
+    typeHttpVar: change => typeHttpVar(httpIo($), change),
+    saveHttpVar: change => saveHttpVar(httpIo($), change),
+    cancelHttpVar: () => cancelHttpVar(httpIo($)),
+    deleteHttpVar: name => deleteHttpVar(httpIo($), name),
     searchCi: text => searchCi(ciIo($), text),
     showCiPage: async page => {
       await showCiPage(ciIo($), page)
@@ -596,6 +706,8 @@ export const register: Register = on => {
     $.clock.every(SERVICES_SCAN_MS, () => void scanWhenShown($).catch(() => undefined))
     $.clock.every(GIT_REFRESH_MS, () => void refreshWhenShown($).catch(() => undefined))
     $.clock.every(CI_REFRESH_MS, () => void refreshGitLabWhenShown($).catch(() => undefined))
+    // 熱重載前存的上層 services、db：換成 Tools 和它的子分頁。
+    void settleTabs($).catch(() => undefined)
 
     return next(e)
   })
@@ -622,7 +734,8 @@ export const register: Register = on => {
   // 這裡接下來直接開面板，不交給 Claude。引擎可能不帶外掛名稱前綴，兩個名字都接。
   for (const command of ['soap-mods:open', 'open']) {
     on('command.run', { command }, async $ => {
-      loadTab($, await read($, tab))
+      const t = await readTabs($)
+      loadTab($, t.tab, t.subTabs)
       await $.ui.open(PANE_ARGS)
 
       return { text: 'Soap Panel opened.' }
@@ -634,11 +747,12 @@ export const register: Register = on => {
     void refreshWhenShown($).catch(() => undefined)
     void reloadFilesWhenShown($).catch(() => undefined)
     void reloadSpecsWhenShown($).catch(() => undefined)
+    void reloadHttpWhenShown($).catch(() => undefined)
 
     return next(e)
   })
 
-  // Bash 碰到面板存的機密（GitLab token、DB 密碼）就擋下（secret-guard.ts）。
+  // Bash 碰到面板存的機密（GitLab token、DB 密碼、HTTP 的機密）就擋下（secret-guard.ts）。
   // 工具的輸入照字串讀：引擎沒在 .claude-plugin/types 放 claude-code-tools 時它的型別是 unknown。
   on('tool.call', { tool: 'Bash' }, ($, e, next) => {
     const reason = secretCommandReason(asText(e.command))
@@ -649,9 +763,8 @@ export const register: Register = on => {
   on('tool.call', { tool: 'Edit' }, async ($, e, next) => checkWrite(baseIo($), asText(e.file_path), await next(e))).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
-    const [activeTab, subs, v, isRemoteOpen, bf, bq, fp, sv, fileList, specs, wikiView, wf, dbView, ciView, mrView, lg, lq, shown, sentWiki, pages, usage, now, session] = await Promise.all([
-      read($, tab),
-      read($, subTabs),
+    const [tabs, v, isRemoteOpen, bf, bq, fp, sv, fileList, specs, wikiView, wf, dbView, httpView, ciView, mrView, lg, lq, shown, sentWiki, pages, usage, now, session] = await Promise.all([
+      readTabs($),
       read($, view),
       read($, showRemote),
       read($, branchFolders),
@@ -663,6 +776,7 @@ export const register: Register = on => {
       read($, wiki),
       read($, wikiFolders),
       read($, db),
+      read($, http),
       read($, ci),
       read($, mr),
       read($, log),
@@ -676,7 +790,8 @@ export const register: Register = on => {
       $.session.id().catch(() => ''),
     ])
 
-    loadTabOnce($, activeTab, session)
+    const { tab: activeTab, subTabs: subs } = tabs
+    loadTabOnce($, activeTab, subs, session)
     const isWikiShown = activeTab === 'spec' && subs.spec === 'wiki'
     // 只有開著時才問：Files 的 ⋯ 選單（Show in Explorer 還是 Finder，問一次就記著）、Wiki 子分頁的模型選單。
     const [onWindows, current] = await Promise.all([fileList.menu !== '' && isWindows(baseIo($)), isWikiShown ? currentModel(wikiIo($)) : ('' as const)])
@@ -709,6 +824,9 @@ export const register: Register = on => {
         isDistilling: distilling(),
         db: dbView,
         dbBusy: dbBusyNow(),
+        http: httpView,
+        httpBusy: httpBusyNow(),
+        httpCaptured: capturedFor(httpView.env),
         ci: ciView,
         ciSaving: ciSavingNow(),
         ciActing: ciActingNow(),
