@@ -6,6 +6,7 @@ import { EMPTY, EMPTY_LOG, NO_MESSAGES } from '../defaults'
 import { coalesce } from '../latest'
 import { detectOp } from '../merge/algo'
 import { mergeBusy, syncMerge } from '../merge/actions'
+import { disarm } from '../shell'
 import { readDiff } from './diff-actions'
 import { dropLog, loadLog } from './log-actions'
 import { BRANCH_FORMAT, parseBranches, parseStatus } from './parse'
@@ -188,6 +189,7 @@ export async function selectRepo(io: GitIo, name: string) {
   if (next === undefined || next === repos.current || mergeBusy()) return
   repos.current = next
   dropLog()
+  disarm(io)
   await Promise.all([
     io.setView({ repo: name, ...NO_MESSAGES }),
     io.closeCover(),

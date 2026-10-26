@@ -6,7 +6,7 @@ import { RESTART_CHECK_MS, RESTART_GAP_MS } from '../config'
 import { errorText, failure, isMissingCommand } from '../errors'
 import type { Io } from '../io'
 import { coalesce } from '../latest'
-import { busyFlag, isWindows, runOk } from '../shell'
+import { busyFlag, isConfirmed, isWindows, runOk } from '../shell'
 import {
   MAC_ENV,
   MAC_LAUNCH_ARGV,
@@ -105,6 +105,7 @@ function setPending(io: ServicesIo, pid: number, action: ServiceAction | undefin
 // 停掉／重跑一個服務。動手前重新掃一次，確認還是同一個程序（PID 沒有被別人拿去用），才砍整棵程序樹。
 export async function runServiceAction(io: ServicesIo, target: Service, action: ServiceAction) {
   if (servicePending.get().some(p => p.pid === target.pid)) return
+  if (action === 'stop' && !isConfirmed(io, `svc:stop:${target.pid}`)) return
   setPending(io, target.pid, action)
   await io.setServices({ actionError: '' })
   try {

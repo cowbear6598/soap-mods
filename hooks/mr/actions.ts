@@ -8,7 +8,7 @@ import { errorText } from '../errors'
 import { type GitLabIo, TokenRefused, api, isDue, repoProject } from '../gitlab'
 import { latestOnly } from '../latest'
 import { powershellArgv } from '../services/scan'
-import { type ArmSlot, busyFlag, isConfirmed, isWindows, runOk } from '../shell'
+import { busyFlag, isConfirmed, isWindows, runOk } from '../shell'
 import {
   applyLines,
   approvalsUrl,
@@ -38,7 +38,7 @@ export type MrIo = GitLabIo & {
 
 const TOKEN_REFUSED = 'GitLab refused the saved token (401). Change it in the CI tab.'
 
-const NO_MR = { open: null, opening: 0, detailError: '', suggestions: null, showResolved: false, armed: '', actionError: '' } satisfies Partial<MrView>
+const NO_MR = { open: null, opening: 0, detailError: '', suggestions: null, showResolved: false, actionError: '' } satisfies Partial<MrView>
 
 const listLoads = latestOnly()
 const detailLoads = latestOnly()
@@ -170,7 +170,6 @@ export async function toggleMrResolved(io: MrIo) {
   await io.setMr({ showResolved: !mr.showResolved })
 }
 
-const arm: ArmSlot = {}
 const acting = busyFlag(false)
 export const mrActingNow = acting.get
 
@@ -179,15 +178,10 @@ async function act(io: MrIo, armed: string, run: (p: GitLabProject, open: MrDeta
   const mr = await io.getMr()
   const open = mr.open
   if (acting.get() || open === null) return
-  if (armed !== '') {
-    const disarm = async () => {
-      if ((await io.getMr()).armed === armed) await io.setMr({ armed: '' })
-    }
-    if (!(await isConfirmed(io, arm, mr.armed === armed, () => io.setMr({ armed, actionError: '' }), disarm))) return
-  }
+  if (armed !== '' && !isConfirmed(io, `mr:${open.iid}:${armed}`)) return io.setMr({ actionError: '' })
   acting.set(io, true)
   try {
-    await io.setMr({ armed: '', actionError: '' })
+    await io.setMr({ actionError: '' })
     await run(await repoProject(io), open)
     await loadDetail(io, open.iid)
   } catch (err) {

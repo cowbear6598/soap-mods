@@ -36,12 +36,12 @@ export const branchTab: TabBody = ({ w, d, a }) => {
       isCopied ? COPIED_TINT : undefined,
     )
     const logButton = w.iconButton(`log:${id}`, 'log', 'Log', false, () => a.viewLog(b))
-    const armed = v.deleteArmed !== null && branchId(v.deleteArmed) === id ? v.deleteArmed : null
+    const isForceArmed = d.armed === `force:${id}`
     const deleteButton =
       !b.isCurrent &&
-      w.deleteButton(`delete:${id}`, armed !== null, () => a.deleteBranch(b.name, b.isRemote), armed?.isForce === true ? 'Force delete' : 'Confirm')
+      w.deleteButton(`delete:${id}`, isForceArmed || d.armed === `delete:${id}`, () => a.deleteBranch(b.name, b.isRemote), isForceArmed ? 'Force delete' : 'Confirm')
 
-    const isSwitchArmed = !b.isCurrent && v.switchArmed === id
+    const isSwitchArmed = !b.isCurrent && d.armed === `switch:${id}`
 
     return w.pressRow({
       key: `switch:${id}`,
@@ -115,8 +115,8 @@ export const branchTab: TabBody = ({ w, d, a }) => {
     <Box flexDirection="column" gap={1}>
       {w.searchField('branch:search', query, text => a.searchBranches(text), syncButtons)}
       {v.branchError !== '' && <Text color="error">{v.branchError}</Text>}
-      {v.deleteArmed?.isForce === true && (
-        <Text color="error">{`${v.deleteArmed.name} has unmerged commits; press again to force delete and lose them.`}</Text>
+      {d.armed.startsWith('force:') && (
+        <Text color="error">{`${d.armed.slice('force:l:'.length)} has unmerged commits; press again to force delete and lose them.`}</Text>
       )}
       {isSearching && shown.length === 0 && <Text dimColor>No matching branches.</Text>}
       {(!isSearching || locals.length > 0) && (

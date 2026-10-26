@@ -10,7 +10,7 @@ import { errorText } from '../errors'
 import { type GitLabIo, TokenRefused, api, isDue, repoProject } from '../gitlab'
 import { latestOnly } from '../latest'
 import { filterWords, hasQuery, searchWords } from '../search'
-import { type ArmSlot, busyFlag, isConfirmed } from '../shell'
+import { busyFlag, isConfirmed } from '../shell'
 import { clampPage } from '../text'
 import {
   type GitLabProject,
@@ -44,7 +44,7 @@ export type CiIo = GitLabIo & {
 }
 
 // 關掉點開的 job，回 pipeline。
-const NO_CI_JOB = { job: null, trace: null, isTraceTruncated: false, traceError: '', armed: '', actionError: '' } satisfies Partial<CiView>
+const NO_CI_JOB = { job: null, trace: null, isTraceTruncated: false, traceError: '', actionError: '' } satisfies Partial<CiView>
 // 關掉點開的 pipeline（和 job），回分支的 pipeline。
 const NO_CI_PIPELINE = { open: null, jobs: null, jobsError: '', ...NO_CI_JOB } satisfies Partial<CiView>
 // 關掉點開的分支（和底下的），回分支清單。
@@ -300,7 +300,6 @@ export async function refreshCi(io: CiIo, { isTimer = false }: { isTimer?: boole
 }
 
 // 跑、重跑：按第一次變成 Confirm，ARM 的時間內再按一次才問 GitLab；沒按就收回。同時只跑一個。
-const ciArm: ArmSlot = {}
 const acting = busyFlag(false)
 export const ciActingNow = acting.get
 
@@ -309,13 +308,10 @@ async function act(io: CiIo, armed: string, run: (p: GitLabProject, open: CiPipe
   const ci = await io.getCi()
   const open = ci.open
   if (acting.get() || open === null) return
-  const disarm = async () => {
-    if ((await io.getCi()).armed === armed) await io.setCi({ armed: '' })
-  }
-  if (!(await isConfirmed(io, ciArm, ci.armed === armed, () => io.setCi({ armed, actionError: '' }), disarm))) return
+  if (!isConfirmed(io, `ci:${armed}`)) return io.setCi({ actionError: '' })
   acting.set(io, true)
   try {
-    await io.setCi({ armed: '', actionError: '' })
+    await io.setCi({ actionError: '' })
     await run(await repoProject(io), open)
   } catch (err) {
     await failed(io, err, 'actionError')

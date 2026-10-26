@@ -43,7 +43,6 @@ export async function removePath(io: Io, abs: string) {
   else await runOk(io, ['rm', '-rf', '--', abs], 'rm')
 }
 
-// 待確認的按鈕（打勾、紅字）DELETE_ARM_MS 後收回（disarm）。一種一個 slot：再計時、或做了、按了別的就先停掉舊的。
 /**
  * A flag for work in flight (a sync, a query) that the panel draws: a module
  * variable, not an atom, so a hot reload in the middle resets it instead of
@@ -62,19 +61,34 @@ export function busyFlag<T>(init: T) {
   }
 }
 
-export type ArmSlot = { timer?: Timer }
+// 要按兩次的按鈕（打勾、Confirm）：整個面板一次只有一個待確認的 key（'' 是沒有），key 要指到那一個東西
+// （svc:stop:<pid>、db:delete:<id>），換了東西才不會一按就做。DELETE_ARM_MS 後收回；按了別的要按兩次的按鈕就換過去。
+// 放模組變數不放 atom：atom 熱重載後還在、收回的計時器卻沒了，會一直停在 Confirm；模組變數跟著重載歸零。
+const armed = busyFlag('')
+let armTimer: Timer | undefined
 
-export function disarmLater(io: Io, slot: ArmSlot, disarm: () => unknown) {
-  slot.timer?.cancel()
-  slot.timer = io.after(DELETE_ARM_MS, () => void disarm())
+export const armedNow = armed.get
+
+export function arm(io: Io, key: string) {
+  armTimer?.cancel()
+  armTimer = io.after(DELETE_ARM_MS, () => disarm(io))
+  armed.set(io, key)
 }
 
-// 要按兩次的按鈕：還沒待確認就 arm、回 false（DELETE_ARM_MS 後 disarm）；已經待確認就停掉計時、回 true（該做了）。
-export async function isConfirmed(io: Io, slot: ArmSlot, isArmed: boolean, arm: () => Promise<unknown>, disarm: () => unknown) {
-  slot.timer?.cancel()
-  if (isArmed) return true
-  disarmLater(io, slot, disarm)
-  await arm()
+export function disarm(io: Io) {
+  armTimer?.cancel()
+  armTimer = undefined
+  armed.set(io, '')
+}
+
+// 已經待確認就收回、回 true（該做了）；還沒就 arm、回 false。
+export function isConfirmed(io: Io, key: string) {
+  if (armed.get() === key) {
+    disarm(io)
+
+    return true
+  }
+  arm(io, key)
 
   return false
 }

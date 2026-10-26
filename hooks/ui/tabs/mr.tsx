@@ -69,7 +69,7 @@ function reviewList(ctx: TabContext, mr: MrView) {
 }
 
 const armedButton = ({ w, d }: TabContext, mr: MrView, key: string, armed: string, label: string, action: () => unknown, prod = false) =>
-  w.confirmButton(key, label, { isArmed: mr.armed === armed, isBusy: d.mrActing, isProd: prod }, action)
+  w.confirmButton(key, label, { isArmed: d.armed === `mr:${mr.open?.iid}:${armed}`, isBusy: d.mrActing, isProd: prod }, action)
 
 function toolbar(ctx: TabContext, open: MrDetail | null) {
   const { w, a } = ctx

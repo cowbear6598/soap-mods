@@ -24,7 +24,7 @@ function connectionList({ w, d, a }: TabContext) {
       isTruncated: true,
       rest: <Text dimColor>{c.isIntegrated ? 'Windows login' : c.user}</Text>,
       onPress: () => a.openDbConnection(c.id),
-      trailing: w.deleteButton(`db:delete:${c.id}`, db.deleteArmed === c.id, () => a.deleteDbConnection(c.id)),
+      trailing: w.deleteButton(`db:delete:${c.id}`, d.armed === `db:delete:${c.id}`, () => a.deleteDbConnection(c.id)),
     })
 
   return (

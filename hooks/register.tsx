@@ -126,7 +126,7 @@ import {
 } from './mr/actions'
 import { patch } from './patch'
 import { type ServicesIo, pendingServices, refreshServices, runServiceAction } from './services/actions'
-import { isWindows } from './shell'
+import { armedNow, disarm, isWindows } from './shell'
 import { type SpecIo, closeSpec, deleteSpec, doSpec, openSpec, reloadSpec } from './spec/actions'
 import { normalizeTabs } from './tabs'
 import type { Actions } from './ui/actions'
@@ -499,9 +499,10 @@ async function reloadFilesWhenShown($: EngineInterface) {
 
 // ───── 換分頁 ─────
 
-// 換分頁（上層 Tab 或子分頁）時清掉的東西：錯誤訊息、待確認的刪除／切換／rollback／abort、branch、log 和 Files 的搜尋
+// 換分頁（上層 Tab 或子分頁）時清掉的東西：錯誤訊息、待確認的按鈕、branch、log 和 Files 的搜尋
 // （連 Files 的 ⋯ 選單）、log 點開的 commit（回來時是整個 commit 列表）。
 async function leaveTab($: EngineInterface) {
+  disarm(baseIo($))
   await Promise.all([setView($, NO_MESSAGES), update($, branchQuery, () => ''), clearLogQuery(gitIo($)), clearFilesQuery(filesIo($)), setLog($, NO_COMMIT)])
 }
 
@@ -594,7 +595,7 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     stepDiffFile: step => stepDiffFile(gitIo($), step),
     closeCover: () => closeCover($),
     abortOp: () => abortOp(gitIo($)),
-    cancelAbort: () => setView($, { isAbortArmed: false }),
+    cancelAbort: () => disarm(baseIo($)),
     continueOp: () => continueOp(gitIo($)),
     // 不等它做完：停掉、重跑要好幾秒，按鈕先換成「Stopping…」。
     runServiceAction: (s, action) => void runServiceAction(servicesIo($), s, action),
@@ -833,6 +834,7 @@ export const register: Register = on => {
         mr: mrView,
         mrActing: mrActingNow(),
         servicePending: pendingServices(),
+        armed: armedNow(),
         log: lg,
         logQuery: lq,
         cover: shown,

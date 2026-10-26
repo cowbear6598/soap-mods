@@ -267,6 +267,8 @@ export type PanelData = {
   mrActing: boolean
   // 正在停掉／重跑的服務。
   servicePending: readonly ServicePending[]
+  // 等著再按一次的按鈕的 key（見 shell.ts 的 isConfirmed），'' 是沒有。
+  armed: string
   log: LogView
   logQuery: string
   // 蓋住分頁的差異、三欄合併或檔案內容；kind 是 none 時畫分頁。isMergeBusy：合併正在套用。

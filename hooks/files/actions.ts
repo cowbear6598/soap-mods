@@ -11,7 +11,7 @@ import { neighbour } from '../neighbour'
 import { patch } from '../patch'
 import { hasQuery } from '../search'
 import { powershellArgv } from '../services/scan'
-import { type ArmSlot, isConfirmed, isWindows, removePath, runOk } from '../shell'
+import { disarm, isConfirmed, isWindows, removePath, runOk } from '../shell'
 import { type WalkRule, absPath, fileSteps, formatSize, matchPaths, sortEntries, statStamp, viewText, walkTree } from './list'
 
 export type FilesIo = Io & {
@@ -77,12 +77,9 @@ export async function clearFilesQuery(io: FilesIo) {
   await io.setFiles({ ...NO_FILE_MENU, query: '', found: null })
 }
 
-// Files 選單裡 Delete 的待確認計時；開關選單就停掉。
-const fileArm: ArmSlot = {}
-
-// ⋯ 選單一次只開一列的，換列、離開分頁、開檔案都收起來（換資料夾、搜尋見 setFiles）。
+// ⋯ 選單一次只開一列的，換列、離開分頁、開檔案都收起來（換資料夾、搜尋見 setFiles）。開關選單時待確認的 Delete 收回。
 export async function toggleFileMenu(io: FilesIo, path: string) {
-  fileArm.timer?.cancel()
+  disarm(io)
   await io.updateFiles(f => patch(f, { ...NO_FILE_MENU, menu: f.menu === path ? '' : path }))
 }
 
@@ -109,13 +106,12 @@ export async function revealFile(io: FilesIo, path: string) {
 // 刪檔案或整個資料夾要按兩次：Delete 按了換成紅字，DELETE_ARM_MS 內再按才刪，不經過資源回收筒。
 export async function deleteFile(io: FilesIo, path: string) {
   const f = await io.getFiles()
-  const arm = () => io.setFiles({ isDeleteArmed: true, menuError: '' })
-  if (!(await isConfirmed(io, fileArm, f.isDeleteArmed, arm, () => io.setFiles({ isDeleteArmed: false })))) return
+  if (!isConfirmed(io, `files:delete:${path}`)) return io.setFiles({ menuError: '' })
   const { name } = splitPath(path)
   try {
     await removePath(io, absPath(await io.root(), path))
   } catch (err) {
-    await io.setFiles({ isDeleteArmed: false, menuError: `Couldn't delete ${name}: ${errorText(err)}` })
+    await io.setFiles({ menuError: `Couldn't delete ${name}: ${errorText(err)}` })
 
     return
   }

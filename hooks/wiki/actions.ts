@@ -19,7 +19,7 @@ import { type Found, type WalkRule, byName, walkTree } from '../files/list'
 import type { Io } from '../io'
 import { latestOnly } from '../latest'
 import { unifiedDiff } from '../merge/algo'
-import { type ArmSlot, busyFlag, isConfirmed, removePath } from '../shell'
+import { busyFlag, isConfirmed, removePath } from '../shell'
 import { cutAtLineEnd } from '../text'
 import {
   type PageText,
@@ -268,14 +268,10 @@ export async function settleWikiDraft(io: WikiIo, isAccept: boolean) {
   await closeWiki(io)
 }
 
-const wikiArm: ArmSlot = {}
-
 // 刪 .soap/wiki 底下的檔案要按兩次：垃圾桶按了換成打勾，DELETE_ARM_MS 內再按才刪；按別的垃圾桶，原本的就收回。
 // 頁面刪了也從勾選拿掉；草稿（.drafts/<id>）只刪草稿，同 Discard。
 export async function deleteWikiFile(io: WikiIo, path: string) {
-  const arm = () => io.setWiki({ deleteArmed: path, deleteError: '' })
-  if (!(await isConfirmed(io, wikiArm, (await io.getWiki()).deleteArmed === path, arm, () => io.setWiki({ deleteArmed: '' })))) return
-  await io.setWiki({ deleteArmed: '' })
+  if (!isConfirmed(io, `wiki:delete:${path}`)) return io.setWiki({ deleteError: '' })
   const root = await io.root()
   const draftId = draftIdOf(path)
   try {

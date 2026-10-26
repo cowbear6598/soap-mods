@@ -9,7 +9,7 @@ import { absPath, statStamp } from '../files/list'
 import { isPromptSafePath } from '../git/parse'
 import type { Io } from '../io'
 import { latestOnly } from '../latest'
-import { type ArmSlot, isConfirmed, removePath } from '../shell'
+import { isConfirmed, removePath } from '../shell'
 import { planFixNote, planPath, readPlan, sortSpecs } from './parse'
 
 export type SpecIo = Io & {
@@ -92,14 +92,10 @@ export async function doSpec(io: SpecIo) {
   io.toast('Sent to Claude')
 }
 
-const specArm: ArmSlot = {}
-
 // 刪 Spec 要按兩次：垃圾桶按了換成打勾，DELETE_ARM_MS 內再按才刪掉整個 .soap/tasks/<feature>/；按別的垃圾桶，原本的就收回。
 // 名稱是 fs.list 列出來的資料夾名稱，含斜線的不刪（不是一個 feature 資料夾）；空的、. 和 .. 由 removePath 擋。
 export async function deleteSpec(io: SpecIo, name: string) {
-  const arm = () => io.setSpec({ deleteArmed: name, deleteError: '' })
-  if (!(await isConfirmed(io, specArm, (await io.getSpec()).deleteArmed === name, arm, () => io.setSpec({ deleteArmed: '' })))) return
-  await io.setSpec({ deleteArmed: '' })
+  if (!isConfirmed(io, `spec:delete:${name}`)) return io.setSpec({ deleteError: '' })
   try {
     if (/[\\/]/.test(name)) throw new Error('not a feature folder name')
     await removePath(io, `${await io.root()}/${SPEC_DIR}/${name}`)

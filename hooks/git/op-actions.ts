@@ -4,7 +4,7 @@ import type { MergeOp } from '../../types'
 import { OP_LABEL, SYNC_TIMEOUT_MS } from '../config'
 import { errorText } from '../errors'
 import { isConfirmed } from '../shell'
-import { type GitIo, gitArm, gitOk } from './run'
+import { type GitIo, gitOk } from './run'
 
 // abort／continue：成功跳 toast，失敗把錯誤留在 conflict 分頁，最後重讀狀態。
 // 逾時跟 Fetch 一樣長：commit 會跑 pre-commit hook（lint、測試），預設的逾時砍掉它會留下 index.lock。
@@ -16,7 +16,7 @@ async function runOp(io: GitIo, op: Exclude<MergeOp, ''>, args: string[], done: 
   } catch (err) {
     opError = errorText(err)
   }
-  await io.setView({ isAbortArmed: false, opError })
+  await io.setView({ opError })
   await io.refresh()
 }
 
@@ -24,8 +24,7 @@ async function runOp(io: GitIo, op: Exclude<MergeOp, ''>, args: string[], done: 
 export async function abortOp(io: GitIo) {
   const v = await io.getView()
   if (v.op === '') return
-  const arm = () => io.setView({ isAbortArmed: true, opError: '' })
-  if (!(await isConfirmed(io, gitArm, v.isAbortArmed, arm, () => io.setView({ isAbortArmed: false })))) return
+  if (!isConfirmed(io, 'op:abort')) return io.setView({ opError: '' })
   await runOp(io, v.op, [v.op, '--abort'], 'aborted')
 }
 

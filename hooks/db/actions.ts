@@ -8,7 +8,7 @@ import { errorText, failure, isMissingCommand } from '../errors'
 import type { Io } from '../io'
 import { latestOnly } from '../latest'
 import { OLD_KEYCHAIN, deleteSecret, readSecret, saveSecret } from '../secret'
-import { type ArmSlot, busyFlag, isConfirmed } from '../shell'
+import { busyFlag, isConfirmed } from '../shell'
 import type { DbBusy } from '../ui/actions'
 import {
   type SavedConnection,
@@ -121,22 +121,19 @@ export async function addDbConnection(io: DbIo, text: string) {
   }
 }
 
-const dbArm: ArmSlot = {}
-
 // 刪連線要按兩次，跟 Spec 一樣；刪的時候密碼一起刪。
 export async function deleteDbConnection(io: DbIo, id: string) {
-  const arm = () => io.setDb({ deleteArmed: id, error: '' })
-  if (!(await isConfirmed(io, dbArm, (await io.getDb()).deleteArmed === id, arm, () => io.setDb({ deleteArmed: '' })))) return
+  if (!isConfirmed(io, `db:delete:${id}`)) return io.setDb({ error: '' })
   try {
     const saved = await readSaved(io)
     const gone = saved.find(c => c.id === id)
     await io.leaveRow()
-    await writeSaved(io, saved.filter(c => c.id !== id), { deleteArmed: '' })
+    await writeSaved(io, saved.filter(c => c.id !== id))
     if (gone === undefined) return
     if (opened?.c.id === id) opened = undefined
     await deleteSecret(io, secretRef(gone.id), gone.secret)
   } catch (err) {
-    await io.setDb({ deleteArmed: '', error: `Couldn't delete the connection: ${errorText(err)}` })
+    await io.setDb({ error: `Couldn't delete the connection: ${errorText(err)}` })
   }
 }
 
@@ -156,7 +153,7 @@ function dropConnection(io: DbIo) {
 export async function openDbConnection(io: DbIo, id: string) {
   dropConnection(io)
   const isStale = tableLoads.start()
-  const [saved] = await Promise.all([readSaved(io), io.setDb({ ...NO_DB_CONNECTION, open: id, deleteArmed: '' }), io.scrollTop()])
+  const [saved] = await Promise.all([readSaved(io), io.setDb({ ...NO_DB_CONNECTION, open: id }), io.scrollTop()])
   const c = saved.find(x => x.id === id)
   if (c === undefined) return io.setDb({ ...NO_DB_CONNECTION, error: 'That connection was deleted.' })
   opened = { c, password: readPassword(io, c) }

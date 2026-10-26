@@ -36,7 +36,7 @@ function specList({ w, d, a }: TabContext) {
             isTruncated: true,
             rest: !spec.hasPlan && <Text dimColor>{`no ${PLAN_FILE}`}</Text>,
             onPress: () => a.openSpec(spec.name),
-            trailing: w.deleteButton(`spec:delete:${spec.name}`, s.deleteArmed === spec.name, () => a.deleteSpec(spec.name)),
+            trailing: w.deleteButton(`spec:delete:${spec.name}`, d.armed === `spec:delete:${spec.name}`, () => a.deleteSpec(spec.name)),
           }),
         )}
       </Box>

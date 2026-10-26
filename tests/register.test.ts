@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import type { ScanResult } from '../types'
-import { DANGER, GOOD, SWITCH_ARMED_HINT, WARN, DIFF_PAGE_ROWS, CODE_MAX_CHARS } from '../hooks/config'
+import { DANGER, GOOD, SWITCH_ARMED_HINT, WARN, DIFF_PAGE_ROWS, CODE_MAX_CHARS, RESTART_CHECK_MS } from '../hooks/config'
 import {
   CONFLICTED,
   MAC_ARGS_OUT,
@@ -1179,6 +1179,9 @@ test('the Services tab lists the running services and stops one by killing its t
   expect(await ui.find({ key: 'svc:restart:21' })).toBeDefined()
 
   await ui.press({ key: 'svc:stop:21' })
+  expect(kills).toEqual([])
+  expect((await ui.find({ key: 'svc:stop:21' }))?.props.label).toBe('Confirm')
+  await ui.press({ key: 'svc:stop:21' })
   // 不用 taskkill /T（PID 被重用時會砍到無關的程序），交給 PowerShell 照啟動時間找子孫。
   expect(kills).toEqual(['21'])
   expect(calls.some(c => c[0] === 'taskkill')).toBe(false)
@@ -1192,7 +1195,7 @@ test('restart kills the tree, then relaunches the same command in the same folde
   const kills: string[] = []
   on('clock.now', () => ({ value: 0 }))
   on('clock.sleep', () => ({ value: undefined }))
-  on('clock.after', () => ({ value: undefined }))
+  runRestartChecks(on)
   on('session.root', () => ({ value: ROOT }))
   on('ui.toast', () => ({ value: undefined }))
   on('env.get', (_$, e) => ({ value: e.name === 'OS' ? 'Windows_NT' : undefined }))
@@ -1227,7 +1230,7 @@ test('restart kills the tree, then relaunches the same command in the same folde
 test('a restart that dies right away says so, and the next scan does not wipe the message', async ($, on) => {
   on('clock.now', () => ({ value: 0 }))
   on('clock.sleep', () => ({ value: undefined }))
-  on('clock.after', () => ({ value: undefined }))
+  runRestartChecks(on)
   on('session.root', () => ({ value: ROOT }))
   on('ui.toast', () => ({ value: undefined }))
   on('env.get', (_$, e) => ({ value: e.name === 'OS' ? 'Windows_NT' : undefined }))
@@ -1254,13 +1257,19 @@ test('a restart that dies right away says so, and the next scan does not wipe th
   await ui.unmount()
 })
 
+// 重跑後的檢查（RESTART_CHECK_MS）立刻跑；其他計時器（要按兩次的按鈕 DELETE_ARM_MS 後收回）交給測試時鐘，
+// 不然 Stop 一變成 Confirm 就被收回去。
+function runRestartChecks(on: TestOn) {
+  on('clock.after', (_$, e, next) => (RESTART_CHECK_MS.includes(e.ms) ? { value: undefined } : next(e)) as never)
+}
+
 // Windows 上的 Services：PowerShell 掃描回 scan（重跑的 4321 一直活著）；記下砍的 PID 和重跑時給的環境變數。
 function winServices(on: TestOn, scan: ScanResult, root = ROOT) {
   const kills: string[] = []
   const launches: Record<string, string>[] = []
   on('clock.now', () => ({ value: 0 }))
   on('clock.sleep', () => ({ value: undefined }))
-  on('clock.after', () => ({ value: undefined }))
+  runRestartChecks(on)
   on('session.root', () => ({ value: root }))
   on('ui.toast', () => ({ value: undefined }))
   on('env.get', (_$, e) => ({ value: e.name === 'OS' ? 'Windows_NT' : undefined }))
@@ -1379,7 +1388,7 @@ function macServices(on: TestOn, argsOut = MAC_ARGS_OUT) {
   const launches: Record<string, string>[] = []
   on('clock.now', () => ({ value: 0 }))
   on('clock.sleep', () => ({ value: undefined }))
-  on('clock.after', () => ({ value: undefined }))
+  runRestartChecks(on)
   on('session.root', () => ({ value: MAC_ROOT }))
   on('ui.toast', () => ({ value: undefined }))
   on('env.get', () => ({ value: undefined }))
@@ -1410,6 +1419,7 @@ test('on macOS the Services tab scans with ps and lsof, stops with kill -9 on th
   // npm → sh -c → node 是同一個服務；引擎自己（100）和它的 MCP server（30）不算。
   expect(await ui.find({ key: 'svc:stop:30' })).toBeUndefined()
   expect(await ui.find({ key: 'svc:stop:100' })).toBeUndefined()
+  await ui.press({ key: 'svc:stop:11' })
   await ui.press({ key: 'svc:stop:11' })
   expect(kills).toEqual([['kill', '-9', '11', '12', '13', '99']])
   await ui.press({ key: 'svc:restart:11' })

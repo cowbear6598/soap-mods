@@ -128,6 +128,7 @@ function menuCard({ w, d, a }: TabContext, paths: readonly string[], notes: numb
   const f = d.files
   const at = paths.indexOf(f.menu)
   if (f.menu === '' || at < 0) return null
+  const isDeleteArmed = d.armed === `files:delete:${f.menu}`
   // 終端機裡兩個選項加上下框線，有錯誤再多一行：只用來決定往上還是往下。
   const height = 4 + (f.menuError === '' ? 0 : 1)
   const isAbove = at + 1 + height > paths.length && at >= height
@@ -154,8 +155,8 @@ function menuCard({ w, d, a }: TabContext, paths: readonly string[], notes: numb
       })}
       {w.pressRow({
         key: `files:delete:${f.menu}`,
-        label: f.isDeleteArmed ? 'Press again to delete' : 'Delete',
-        color: f.isDeleteArmed ? DANGER.theme : undefined,
+        label: isDeleteArmed ? 'Press again to delete' : 'Delete',
+        color: isDeleteArmed ? DANGER.theme : undefined,
         indent: 1,
         onPress: () => a.deleteFile(f.menu),
       })}

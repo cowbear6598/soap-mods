@@ -136,7 +136,7 @@ function secretRows({ w, d, a }: TabContext, names: string[]) {
           {isSaved && !isEditing && (
             <Box flexShrink={0} gap={1} alignItems="center">
               <Button key={`http:var:change:${name}`} label="Change" onPress={w.press(() => a.editHttpSecret(name))} />
-              {w.deleteButton(`http:var:delete:${name}`, hv.armed === `secret:${name}`, () => a.deleteHttpSecret(name))}
+              {w.deleteButton(`http:var:delete:${name}`, d.armed === `http:secret:${hv.env}:${name}`, () => a.deleteHttpSecret(name))}
             </Box>
           )}
         </Box>
@@ -230,7 +230,7 @@ function requestView(ctx: TabContext) {
       {draft === null && (
         <Box flexShrink={0} gap={1} alignItems="center">
           <Button key="http:edit" label="Edit" onPress={w.press(() => a.editHttpRequest())} />
-          {w.deleteButton('http:delete', hv.armed === 'request', () => a.deleteHttpRequest())}
+          {w.deleteButton('http:delete', d.armed === `http:request:${r.id}`, () => a.deleteHttpRequest())}
         </Box>
       )}
     </Box>
@@ -327,7 +327,7 @@ function envList(ctx: TabContext) {
               indent: 0,
               isTruncated: true,
               lead: env === hv.env ? <Text color="success">■</Text> : <Text dimColor>■</Text>,
-              trailing: w.deleteButton(`http:env-delete:${env}`, hv.armed === `env:${env}`, () => a.deleteHttpEnv(env)),
+              trailing: w.deleteButton(`http:env-delete:${env}`, d.armed === `http:env:${env}`, () => a.deleteHttpEnv(env)),
               onPress: () => a.openHttpEnv(env),
             }),
           )}
@@ -355,7 +355,7 @@ function varRows(
       indent: 0,
       isTruncated: true,
       isDim: actions === undefined,
-      trailing: actions && w.deleteButton(`http:var-delete:${name}`, d.http.armed === `var:${name}`, () => actions.onDelete(name)),
+      trailing: actions && w.deleteButton(`http:var-delete:${name}`, d.armed === `http:var:${d.http.env}:${name}`, () => actions.onDelete(name)),
       onPress: () => actions?.onPress(name),
     }),
   )
@@ -424,7 +424,7 @@ function varEditor({ w, a, d }: TabContext, draft: { from: string; name: string;
       <Box gap={1} alignItems="center">
         {backButton(w, w.press, 'http:var', () => a.cancelHttpVar())}
         <Box flexGrow={1} />
-        {draft.from !== '' && w.deleteButton(`http:var-delete:${draft.from}`, hv.armed === `var:${draft.from}`, () => a.deleteHttpVar(draft.from))}
+        {draft.from !== '' && w.deleteButton(`http:var-delete:${draft.from}`, d.armed === `http:var:${hv.env}:${draft.from}`, () => a.deleteHttpVar(draft.from))}
       </Box>
       {line(
         'Name',

@@ -8,7 +8,7 @@ import { errorText } from '../errors'
 import { isObject } from '../json'
 import type { Io } from '../io'
 import { latestOnly } from '../latest'
-import { type ArmSlot, busyFlag, isConfirmed } from '../shell'
+import { busyFlag, disarm, isConfirmed } from '../shell'
 import type { HttpBusy } from '../ui/actions'
 import {
   blockText,
@@ -39,7 +39,6 @@ const NO_REQUEST = {
   result: null,
   sendError: '',
   editing: '',
-  armed: '',
   secretError: '',
   showHeaders: false,
   draft: null,
@@ -50,8 +49,8 @@ const NO_REQUEST = {
 const NEW_REQUEST = '### New request\nGET https://'
 const DEFAULT_FILE = 'requests.http'
 
-// 換了環境、回環境清單：變數的框、新環境的框、待確認的刪除、錯誤都不算數了。
-const NO_ENV_FORM = { varDraft: null, isAddingEnv: false, newEnvName: '', armed: '', envFormError: '' } satisfies Partial<HttpView>
+// 換了環境、回環境清單：變數的框、新環境的框、錯誤都不算數了。
+const NO_ENV_FORM = { varDraft: null, isAddingEnv: false, newEnvName: '', envFormError: '' } satisfies Partial<HttpView>
 
 // 模組變數不放 atom（同 DB 的 dbBusy），熱重載後不會一直停在「Sending…」。
 const busy = busyFlag<HttpBusy>('')
@@ -63,11 +62,6 @@ const captured = new Map<string, Record<string, string>>()
 export const capturedFor = (env: string): Readonly<Record<string, string>> => captured.get(env) ?? {}
 
 const loads = latestOnly()
-
-// 待確認的刪除一次只有一個（armed：request、secret:<名稱>、var:<名稱>、env:<名稱>），共用一個計時。
-const armSlot: ArmSlot = {}
-const confirmed = (io: HttpIo, v: HttpView, key: string) =>
-  isConfirmed(io, armSlot, v.armed === key, () => io.setHttp({ armed: key }), () => io.setHttp({ armed: '' }))
 
 const readOrEmpty = async (io: HttpIo, path: string) => ((await io.exists(path).catch(() => false)) ? io.readFile(path) : '')
 const eolOf = (text: string) => (text.includes('\r\n') ? '\r\n' : '\n')
@@ -134,7 +128,8 @@ export async function openHttpRequest(io: HttpIo, id: string) {
 
 // 點開的請求留著（回 API 還在），待確認的刪除和換值的框收起。
 export async function selectHttpPage(io: HttpIo, page: HttpPage) {
-  await io.setHttp({ page, editing: '', armed: '', secretError: '' })
+  disarm(io)
+  await io.setHttp({ page, editing: '', secretError: '' })
   await io.scrollTop()
 }
 
@@ -154,7 +149,7 @@ export async function editHttpRequest(io: HttpIo) {
   const v = await io.getHttp()
   const r = v.requests.find(x => x.id === v.open)
   if (r === undefined) return
-  await io.setHttp({ draft: { kind: 'request', id: r.id, file: r.file, text: r.raw }, draftError: '', armed: '' })
+  await io.setHttp({ draft: { kind: 'request', id: r.id, file: r.file, text: r.raw }, draftError: '' })
 }
 
 // 草稿跟著存（熱重載後還在），Save 按鈕拿這份。
@@ -249,7 +244,7 @@ export async function saveHttpDraft(io: HttpIo, typed?: string) {
 export async function deleteHttpRequest(io: HttpIo) {
   const v = await io.getHttp()
   const r = v.requests.find(x => x.id === v.open)
-  if (r === undefined || !(await confirmed(io, v, 'request'))) return
+  if (r === undefined || !isConfirmed(io, `http:request:${r.id}`)) return
   try {
     const { path, eol, blocks } = await readBlocks(io, r)
     if (r.block === 0) blocks[0] = []
@@ -258,7 +253,7 @@ export async function deleteHttpRequest(io: HttpIo) {
     await closeHttpRequest(io)
     await reloadHttp(io)
   } catch (err) {
-    await io.setHttp({ armed: '', sendError: `Couldn't delete it: ${errorText(err)}` })
+    await io.setHttp({ sendError: `Couldn't delete it: ${errorText(err)}` })
   }
 }
 
@@ -391,13 +386,13 @@ export async function saveHttpSecretValue(io: HttpIo, name: string, text: string
 // 按第一次只是待確認，再按才刪（連 Keychain 的項目）。
 export async function deleteHttpSecretValue(io: HttpIo, name: string) {
   const v = await io.getHttp()
-  if (!(await confirmed(io, v, `secret:${name}`))) return
+  if (!isConfirmed(io, `http:secret:${v.env}:${name}`)) return
   try {
     await deleteHttpSecret(io, await io.root(), v.env, name)
-    await io.setHttp({ armed: '', editing: '', secretError: '' })
+    await io.setHttp({ editing: '', secretError: '' })
     await reloadHttp(io)
   } catch (err) {
-    await io.setHttp({ armed: '', secretError: `Couldn't delete {{${name}}}: ${errorText(err)}` })
+    await io.setHttp({ secretError: `Couldn't delete {{${name}}}: ${errorText(err)}` })
   }
 }
 
@@ -424,12 +419,12 @@ async function changeEnvFile(io: HttpIo, change: (data: Record<string, unknown>)
 async function envChange(io: HttpIo, change: (data: Record<string, unknown>) => void, after: Partial<HttpView> = {}) {
   try {
     await changeEnvFile(io, change)
-    await io.setHttp({ envFormError: '', armed: '', ...after })
+    await io.setHttp({ envFormError: '', ...after })
     await reloadHttp(io)
 
     return true
   } catch (err) {
-    await io.setHttp({ envFormError: errorText(err), armed: '' })
+    await io.setHttp({ envFormError: errorText(err) })
 
     return false
   }
@@ -466,7 +461,7 @@ export async function addHttpEnv(io: HttpIo, text?: string) {
 /** Deletes an environment from the file, on a second press; its saved secrets stay in the Keychain. */
 export async function deleteHttpEnv(io: HttpIo, env: string) {
   const v = await io.getHttp()
-  if (!(await confirmed(io, v, `env:${env}`))) return
+  if (!isConfirmed(io, `http:env:${env}`)) return
   await envChange(io, data => {
     delete data[env]
   })
@@ -486,12 +481,12 @@ export async function closeHttpEnv(io: HttpIo) {
 }
 
 export async function newHttpVar(io: HttpIo) {
-  await io.setHttp({ varDraft: { from: '', name: '', value: '' }, envFormError: '', armed: '' })
+  await io.setHttp({ varDraft: { from: '', name: '', value: '' }, envFormError: '' })
 }
 
 export async function editHttpVar(io: HttpIo, name: string) {
   const v = await io.getHttp()
-  await io.setHttp({ varDraft: { from: name, name, value: v.ownVars[name] ?? '' }, envFormError: '', armed: '' })
+  await io.setHttp({ varDraft: { from: name, name, value: v.ownVars[name] ?? '' }, envFormError: '' })
 }
 
 // 草稿跟著存，Save 拿這份；Enter 送出的那格以送出的字為準。
@@ -530,7 +525,7 @@ export async function saveHttpVar(io: HttpIo, change: { name?: string; value?: s
 /** Deletes a variable of the picked environment, on a second press. */
 export async function deleteHttpVar(io: HttpIo, name: string) {
   const v = await io.getHttp()
-  if (!(await confirmed(io, v, `var:${name}`))) return
+  if (!isConfirmed(io, `http:var:${v.env}:${name}`)) return
   await envChange(
     io,
     data => {

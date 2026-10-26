@@ -1,5 +1,4 @@
 import type { Service } from '../../../types'
-import { DANGER } from '../../config'
 import { isInFolder } from '../../services/scan'
 import type { TabBody } from './context'
 
@@ -7,7 +6,7 @@ export const servicesTab: TabBody = ({ w, d, a }) => {
   const { Box, Text } = w
   const { view: v, services: sv } = d
 
-  // 一個服務一行：● 工具 · 專案名 · port，右邊重跑、停止（紅色）。
+  // 一個服務一行：● 工具 · 專案名 · port，右邊重跑、停止。
   const serviceRow = (s: Service) => {
     const pending = d.servicePending.find(p => p.pid === s.pid)
     const dot = <Text dimColor>{' · '}</Text>
@@ -27,7 +26,7 @@ export const servicesTab: TabBody = ({ w, d, a }) => {
         {pending === undefined ? (
           <Box flexShrink={0}>
             {w.iconButton(`svc:restart:${s.pid}`, 'restart', 'Restart', false, () => a.runServiceAction(s, 'restart'))}
-            {w.iconButton(`svc:stop:${s.pid}`, 'stop', 'Stop', false, () => a.runServiceAction(s, 'stop'), DANGER)}
+            {w.armedButton(`svc:stop:${s.pid}`, 'stop', 'Stop', d.armed === `svc:stop:${s.pid}`, () => a.runServiceAction(s, 'stop'))}
           </Box>
         ) : (
           <Text dimColor>{pending.action === 'stop' ? 'Stopping…' : 'Restarting…'}</Text>

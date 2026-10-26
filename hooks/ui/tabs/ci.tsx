@@ -81,7 +81,7 @@ const statusMark = ({ w }: TabContext, key: string, status: string | null) => {
 const refreshButton = ({ w, a }: TabContext) => w.iconButton('ci:refresh', 'restart', 'Refresh', false, () => a.refreshCi())
 
 const actButton = ({ w, d }: TabContext, ci: CiView, key: string, armed: string, label: string, action: () => unknown, prod = false) =>
-  w.confirmButton(key, label, { isArmed: ci.armed === armed, isBusy: d.ciActing, isProd: prod }, action)
+  w.confirmButton(key, label, { isArmed: d.armed === `ci:${armed}`, isBusy: d.ciActing, isProd: prod }, action)
 
 // job 列的 hover 群組：指到右邊的 Run、Retry 時，同一列的名稱跟著亮，看得出按的是哪個 job。
 const jobScope = (j: CiJob) => `ci-job-${j.id}`

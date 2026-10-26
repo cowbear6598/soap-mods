@@ -97,7 +97,7 @@ function fileButtons({ w, d, a }: TabContext, path: string) {
   return (
     <w.Box key={`wiki:trailing:${path}`} gap={1} alignItems="center">
       {w.iconButton(`wiki:mention:${path}`, 'at', '@', false, () => a.mentionPath(wikiPath(path)))}
-      {w.deleteButton(`wiki:delete:${path}`, d.wiki.deleteArmed === path, () => a.deleteWikiFile(path))}
+      {w.deleteButton(`wiki:delete:${path}`, d.armed === `wiki:delete:${path}`, () => a.deleteWikiFile(path))}
     </w.Box>
   )
 }

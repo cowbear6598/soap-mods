@@ -9,13 +9,9 @@ export const EMPTY: GitView = {
   branches: [],
   error: '',
   branchError: '',
-  deleteArmed: null,
-  switchArmed: '',
   copied: '',
   op: '',
   opError: '',
-  isAbortArmed: false,
-  fileArmed: '',
   fileError: '',
   repos: [],
   repo: '',
@@ -37,7 +33,6 @@ export const EMPTY_CI: CiView = {
   pipelinePage: 0,
   hasNext: false,
   pipelinesError: '',
-  armed: '',
   actionError: '',
   open: null,
   jobs: null,
@@ -59,13 +54,12 @@ export const EMPTY_MR: MrView = {
   detailError: '',
   suggestions: null,
   showResolved: false,
-  armed: '',
   actionError: '',
 }
 
 export const EMPTY_SERVICES: ServicesView = { isLoaded: false, items: [], error: '', actionError: '' }
 
-export const NO_FILE_MENU = { menu: '', isDeleteArmed: false, menuError: '' } satisfies Partial<FilesView>
+export const NO_FILE_MENU = { menu: '', menuError: '' } satisfies Partial<FilesView>
 
 export const EMPTY_FILES: FilesView = { dir: '', isLoaded: false, entries: [], total: 0, error: '', query: '', found: null, ...NO_FILE_MENU }
 
@@ -73,7 +67,7 @@ export const EMPTY_FILE_VIEW: FileView = { path: '', text: '', isTruncated: fals
 
 export const EMPTY_PLAN: Plan = { branch: '', issueNumber: '', description: '', goals: [], constraints: [], related: [], verify: [] }
 
-export const EMPTY_SPEC: SpecView = { isLoaded: false, specs: [], error: '', open: '', deleteArmed: '', deleteError: '', plan: EMPTY_PLAN, problems: [], stamp: '' }
+export const EMPTY_SPEC: SpecView = { isLoaded: false, specs: [], error: '', open: '', deleteError: '', plan: EMPTY_PLAN, problems: [], stamp: '' }
 
 // 關掉 Wiki 子分頁打開的頁面或草稿，回到清單。
 export const NO_WIKI_OPEN = { open: '', draft: '', text: '', diff: '', isTruncated: false, readError: '' } satisfies Partial<WikiView>
@@ -84,7 +78,6 @@ export const EMPTY_WIKI: WikiView = {
   checked: [],
   drafts: [],
   error: '',
-  deleteArmed: '',
   deleteError: '',
   model: '',
   isModelOpen: false,
@@ -97,7 +90,7 @@ export const NO_WIKI_SENT: WikiSent = { conversation: '', pages: [] }
 // 離開打開的連線（回清單、換連線）時清掉的東西。
 export const NO_DB_CONNECTION = { open: '', tables: null, table: '', columns: [], query: '', result: null, error: '', queryError: '' } satisfies Partial<DbView>
 
-export const EMPTY_DB: DbView = { isLoaded: false, connections: [], deleteArmed: '', ...NO_DB_CONNECTION }
+export const EMPTY_DB: DbView = { isLoaded: false, connections: [], ...NO_DB_CONNECTION }
 
 export const EMPTY_HTTP: HttpView = {
   isLoaded: false,
@@ -114,7 +107,6 @@ export const EMPTY_HTTP: HttpView = {
   result: null,
   sendError: '',
   editing: '',
-  armed: '',
   secretError: '',
   showHeaders: false,
   draft: null,
@@ -166,8 +158,5 @@ export const EMPTY_DIFF: DiffPaneView = {
 // 關掉 log 分頁打開的 commit；選範圍也一起結束。
 export const NO_COMMIT: Partial<LogView> = { opened: [], files: null, commitError: '', isPicking: false, rangeStart: '' }
 
-// 待確認的刪除、切換、捨棄：DELETE_ARM_MS 後收回。
-export const NO_ARMED = { deleteArmed: null, switchArmed: '', fileArmed: '' } as const
-
-// Git 分頁的錯誤訊息和待確認的按鈕（連 abort）：換分頁、換 repo 時清掉。
-export const NO_MESSAGES = { ...NO_ARMED, branchError: '', opError: '', isAbortArmed: false, fileError: '' } as const
+// Git 分頁的錯誤訊息：換分頁、換 repo 時清掉。
+export const NO_MESSAGES = { branchError: '', opError: '', fileError: '' } as const

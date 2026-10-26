@@ -59,8 +59,8 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
   // 1. 墊底的 Button 撐出外框大小，選中的底色畫在外框上；它被蓋住，點不到；
   // 2. Svg 那層鋪滿外框、置中；
   // 3. 最上層是一模一樣的 Button，剛好蓋滿外框，接點擊，hover 的亮底也就是外框大小。
-  // tint：圖示固定用這個顏色（停止鈕的紅色）；終端機沒有 Svg，就在按鈕前面放一個同色的方塊、字也用這個顏色（Confirm、停止是紅字，Copied 是綠字）。
-  // tint.background：外框固定用這個底色（等著確認刪除的紅底），蓋過選中的底色。
+  // tint：圖示固定用這個顏色；終端機沒有 Svg，就在按鈕前面放一個同色的方塊、字也用這個顏色（Confirm 是紅字，Copied 是綠字）。
+  // tint.background：外框固定用這個底色（等著確認的紅底），蓋過選中的底色。
   const iconButton = (key: string, icon: IconName, label: string, isActive: boolean, action: () => unknown, tint?: Tint) => {
     const onPress = press(action)
 
@@ -85,7 +85,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
     )
   }
 
-  // 要按兩次的按鈕：圖示按了換成紅底打勾，再按才做。垃圾桶、rollback 都是。
+  // 要按兩次的按鈕：圖示按了換成紅底打勾，再按才做。
   const armedButton = (key: string, icon: IconName, label: string, isArmed: boolean, action: () => unknown, armedLabel = 'Confirm') =>
     iconButton(key, isArmed ? 'check' : icon, isArmed ? armedLabel : label, false, action, isArmed ? ARMED_TINT : undefined)
 
@@ -497,7 +497,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
       stretched(DIVIDER_SVG, 'Divider', 1)
     )
 
-  return { Box, Button, Code, Markdown, Text, cell, diff, hasSvg: Svg !== undefined, press, iconButton, deleteButton, rollbackButton, confirmButton, pressRow, pathRow, pager, searchField, field, select, iconBar, stretched, divider }
+  return { Box, Button, Code, Markdown, Text, cell, diff, hasSvg: Svg !== undefined, press, iconButton, armedButton, deleteButton, rollbackButton, confirmButton, pressRow, pathRow, pager, searchField, field, select, iconBar, stretched, divider }
 }
 
 export type Widgets = ReturnType<typeof makeWidgets>

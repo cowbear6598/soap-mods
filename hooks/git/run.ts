@@ -3,11 +3,11 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { Cover, GitView, LogView, SubTabs } from '../../types'
-import { NO_ARMED, NO_MESSAGES } from '../defaults'
+import { NO_MESSAGES } from '../defaults'
 import { failure } from '../errors'
 import { absPath } from '../files/list'
 import type { Io } from '../io'
-import { type ArmSlot, isConfirmed } from '../shell'
+import { isConfirmed } from '../shell'
 import type { Repo } from './repo'
 import { GIT_ENV } from './repo'
 
@@ -56,11 +56,10 @@ export async function gitOk(io: Io, args: string[], init?: GitInit) {
 
 export const inRepo = (path: string) => (repos.current === undefined ? path : absPath(repos.current.root, path))
 
-// 待確認的刪除、捨棄（打勾）、切換（再按一次）一次只有一個。
-export const gitArm: ArmSlot = {}
+// 要按兩次的按鈕：第一次按時順便清掉 Git 分頁的錯誤訊息。
+export async function isGitConfirmed(io: GitIo, key: string) {
+  if (isConfirmed(io, key)) return true
+  await io.setView(NO_MESSAGES)
 
-export const armGit = (io: GitIo, armed: Partial<GitView>) =>
-  io.setView({ ...NO_MESSAGES, ...armed })
-
-export const isGitConfirmed = (io: GitIo, isArmed: boolean, armed: Partial<GitView>) =>
-  isConfirmed(io, gitArm, isArmed, () => armGit(io, armed), () => io.setView(NO_ARMED))
+  return false
+}

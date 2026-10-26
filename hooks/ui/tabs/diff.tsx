@@ -24,9 +24,9 @@ export const diffTab: TabBody = ({ w, d, a }) => {
       trailing:
         isDeletable || isRollbackable ? (
           <Box key={`trailing:${group}:${file.path}`} gap={1} alignItems="center">
-            {isRollbackable && w.rollbackButton(`rollback:${group}:${file.path}`, v.fileArmed === `rollback:${file.path}`, () => a.rollbackChange(file))}
+            {isRollbackable && w.rollbackButton(`rollback:${group}:${file.path}`, d.armed === `file:rollback:${file.path}`, () => a.rollbackChange(file))}
             {/* key 用 remove: 不用 delete:：branch 列的刪除鈕佔了 delete:。 */}
-            {isDeletable && w.deleteButton(`remove:${group}:${file.path}`, v.fileArmed === `delete:${file.path}`, () => a.deleteChange(file))}
+            {isDeletable && w.deleteButton(`remove:${group}:${file.path}`, d.armed === `file:delete:${file.path}`, () => a.deleteChange(file))}
           </Box>
         ) : undefined,
     })

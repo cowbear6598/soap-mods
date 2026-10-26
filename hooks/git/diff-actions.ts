@@ -64,8 +64,7 @@ async function showDiff(io: GitIo, pane: DiffPaneView) {
 // delete 只刪工作區的檔案，index 不動：有追蹤的之後列成刪除。未追蹤的巢狀 repo 列成「sub/」，canDelete 不給刪。
 // rollback 只把 index 和工作區都還原成 HEAD 的樣子，不刪 HEAD 沒有的檔案。不經過資源回收筒，也沒有 undo。
 export async function changeFile(io: GitIo, file: GitFile, action: 'delete' | 'rollback') {
-  const armed = `${action}:${file.path}`
-  if (!(await isGitConfirmed(io, (await io.getView()).fileArmed === armed, { fileArmed: armed }))) return
+  if (!(await isGitConfirmed(io, `file:${action}:${file.path}`))) return
   try {
     if (action === 'delete') await removePath(io, inRepo(file.path))
     else await gitOk(io, ['restore', '--source=HEAD', '--staged', '--worktree', '--', file.path])

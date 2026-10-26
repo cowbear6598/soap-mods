@@ -23,14 +23,14 @@ export const conflictTab: TabBody = ({ w, d, a }) => {
             {conflicts.length === 0 && (
               <Button key="op:continue" label={`Continue ${v.op}`} variant="primary" onPress={w.press(() => a.continueOp())} />
             )}
-            {v.isAbortArmed
+            {d.armed === 'op:abort'
               ? [
                   <Button key="op:abort" label={`Yes, abort ${v.op}`} onPress={w.press(() => a.abortOp())} />,
                   <Button key="op:abort-cancel" label="Cancel" onPress={w.press(() => a.cancelAbort())} />,
                 ]
               : [<Button key="op:abort" label={`Abort ${v.op}`} onPress={w.press(() => a.abortOp())} />]}
           </Box>
-          {v.isAbortArmed && <Text color="warning">Aborting throws away every resolution made so far.</Text>}
+          {d.armed === 'op:abort' && <Text color="warning">Aborting throws away every resolution made so far.</Text>}
         </Box>
       )}
       {conflicts.length === 0 ? (

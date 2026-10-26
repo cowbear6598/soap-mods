@@ -39,23 +39,12 @@ export type GitView = {
   error: string
   /** Why the last branch switch or delete failed, '' when none; cleared on any tab change. */
   branchError: string
-  /**
-   * Branch whose delete button was pressed once and now asks to confirm, null when none;
-   * isForce: the plain delete of a local branch failed for unmerged commits and the next press forces it.
-   */
-  deleteArmed: { name: string; isRemote: boolean; isForce: boolean } | null
-  /** Branch row pressed once and now asks to press again to switch, as `l:<name>` / `r:<name>`; '' when none. */
-  switchArmed: string
   /** Branch whose copy button was just pressed and shows a check for COPIED_MS, '' when none. */
   copied: string
   /** The operation stopped for conflicts, '' when none. */
   op: MergeOp
   /** Why the last abort, continue or resolve failed, '' when none; cleared on any tab change. */
   opError: string
-  /** The abort button was pressed once and now asks to confirm. */
-  isAbortArmed: boolean
-  /** `delete:<path>` or `rollback:<path>`: the diff tab button pressed once that now asks to confirm, '' when none. */
-  fileArmed: string
   /** Why the last delete or rollback of a diff tab file failed, '' when none; cleared on any tab change. */
   fileError: string
   /**
@@ -287,8 +276,6 @@ export type FilesView = {
   found: FoundFiles | null
   /** The entry whose ⋯ menu is open, relative to the session folder; '' when none. */
   menu: string
-  /** Delete in the open menu was pressed once and waits for the second press. */
-  isDeleteArmed: boolean
   /** Why the open menu's action failed, '' when none. */
   menuError: string
 }
@@ -345,8 +332,6 @@ export type SpecView = {
   error: string
   /** The feature opened, '' for the list. */
   open: string
-  /** Feature whose trash button was pressed once and now asks to confirm, '' when none. */
-  deleteArmed: string
   /** Why the last delete failed, '' when none. */
   deleteError: string
   plan: Plan
@@ -388,8 +373,6 @@ export type WikiView = {
   drafts: WikiDraft[]
   /** Why listing `.soap/wiki` or saving the checked pages failed, '' when none (a missing folder is no pages, not an error). */
   error: string
-  /** Path under `.soap/wiki` (a page, or a draft as `.drafts/<id>`) whose trash button was pressed once and now asks to confirm, '' when none. */
-  deleteArmed: string
   /** Why the last delete, accept or discard failed, '' when none. */
   deleteError: string
   /** The page opened, '' when none. */
@@ -467,8 +450,6 @@ export type DbView = {
   error: string
   /** Why the last query was refused or failed, '' when none. */
   queryError: string
-  /** Connection whose trash button was pressed once and now asks to confirm, '' when none. */
-  deleteArmed: string
 }
 
 /** A GitLab pipeline or job status, as the API gives it: `running`, `success`, `failed`, `manual`, `skipped`… */
@@ -545,8 +526,6 @@ export type CiView = {
   hasNext: boolean
   /** Why reading the opened branch's pipelines failed, '' when none. */
   pipelinesError: string
-  /** The Run or Retry button pressed once and waiting for a second press (`retry:pipeline:<id>`, `play:job:<id>`, `retry:job:<id>`), '' when none. */
-  armed: string
   /** Why the last Run or Retry failed, '' when none. */
   actionError: string
   /** The pipeline opened to its jobs, null for the list. */
@@ -650,8 +629,6 @@ export type MrView = {
   /** Its suggestions, oldest first; null while read. */
   suggestions: MrSuggestion[] | null
   showResolved: boolean
-  /** A button pressed once and waiting for a second (`merge`, `apply:<note>`), '' when none. */
-  armed: string
   /** Why the last action failed, '' when none. */
   actionError: string
 }
@@ -737,8 +714,6 @@ export type HttpView = {
   sendError: string
   /** The secret whose paste field is open to change it, '' when none (a missing one always shows its field). */
   editing: string
-  /** The trash button pressed once that waits for a second press, '' when none: `request` (the opened one), `secret:<name>`, `var:<name>` or `env:<name>`. */
-  armed: string
   /** Why saving, reading or deleting a secret failed, '' when none. */
   secretError: string
   /** The response's headers are unfolded. */

@@ -4,17 +4,15 @@ import type { RenderSurface, Timer } from 'claude-code'
 
 import type { GitSync } from '../../types'
 import { COPIED_MS, SYNC_TIMEOUT_MS } from '../config'
-import { NO_ARMED, NO_MESSAGES } from '../defaults'
-import { busyFlag, disarmLater } from '../shell'
+import { NO_MESSAGES } from '../defaults'
+import { arm, armedNow, busyFlag, disarm } from '../shell'
 import { branchId } from './parse'
 import { SYNC_ARGS, gitErrorText } from './repo'
-import { type GitInit, type GitIo, armGit, gitArm, gitOk, isGitConfirmed } from './run'
+import { type GitInit, type GitIo, gitOk, isGitConfirmed } from './run'
 
 // 切換分支要按兩次：第一次只把那列標成「再按一次」，DELETE_ARM_MS 內再按同一列才切；按別列就改標那列。
 export async function switchBranch(io: GitIo, name: string, isRemote: boolean) {
-  const id = branchId({ name, isRemote })
-  if (!(await isGitConfirmed(io, (await io.getView()).switchArmed === id, { switchArmed: id }))) return
-  await io.setView({ switchArmed: '' })
+  if (!(await isGitConfirmed(io, `switch:${branchId({ name, isRemote })}`))) return
   try {
     await gitOk(io, isRemote ? ['switch', '--track', name] : ['switch', name])
   } catch (err) {
@@ -41,10 +39,10 @@ async function remoteOf(io: GitIo, name: string) {
 // 本地用 -d，有沒合併的 commit 時 git 不肯刪，換成強制刪除的打勾（-D），讓人決定要不要連那些 commit 一起丟掉。
 // 遠端的推一個「:refs/heads/x」上去刪（分支名稱是遠端給的，不能讓它變成 git 的選項）；跟 Fetch 一樣不讓 git 停下來問帳密。
 export async function deleteBranch(io: GitIo, name: string, isRemote: boolean) {
-  const armed = (await io.getView()).deleteArmed
-  const isArmed = armed !== null && branchId(armed) === branchId({ name, isRemote })
-  if (!(await isGitConfirmed(io, isArmed, { deleteArmed: { name, isRemote, isForce: false } }))) return
-  const isForce = armed?.isForce === true
+  const id = branchId({ name, isRemote })
+  // 強制刪除的打勾還在就照它（-D），不然是一般的刪除。
+  const isForce = armedNow() === `force:${id}`
+  if (!(await isGitConfirmed(io, `${isForce ? 'force' : 'delete'}:${id}`))) return
   try {
     if (isRemote) {
       const { remote, branch } = await remoteOf(io, name)
@@ -55,8 +53,8 @@ export async function deleteBranch(io: GitIo, name: string, isRemote: boolean) {
   } catch (err) {
     const message = gitErrorText(err)
     if (!isRemote && !isForce && message.includes('not fully merged')) {
-      disarmLater(io, gitArm, () => io.setView(NO_ARMED))
-      await armGit(io, { deleteArmed: { name, isRemote, isForce: true } })
+      arm(io, `force:${id}`)
+      await io.setView(NO_MESSAGES)
     } else await io.setView({ ...NO_MESSAGES, branchError: message })
 
     return
@@ -82,7 +80,7 @@ const NO_PROMPT: GitInit = { env: { GIT_TERMINAL_PROMPT: '0' }, timeoutMs: SYNC_
 export async function syncBranches(io: GitIo, kind: GitSync) {
   if (syncing.get() !== '') return
   syncing.set(io, kind)
-  gitArm.timer?.cancel()
+  disarm(io)
   await io.setView(NO_MESSAGES)
   try {
     const r = await gitOk(io, SYNC_ARGS[kind], NO_PROMPT)

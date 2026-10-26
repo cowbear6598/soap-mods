@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """List the files that the given files import and the files that import them.
 
-Covers TS/JS, Python, Go, Rust and C# by parsing source text: no packages
+Covers TS/JS, Python, Go, Rust, C# and Luau by parsing source text: no packages
 needed. Imports into third-party code are dropped; only repository files are
 listed.
 
@@ -52,10 +52,11 @@ STRINGS = {
     'json': r'"(?:\\.|[^"\\])*"',
 }
 COMMENTS = {lang: re.compile(rf'({s})|//[^\n]*|/\*.*?\*/', re.S) for lang, s in STRINGS.items()}
+COMMENTS['luau'] = re.compile(rf'({STRINGS["ts"]}|\[(=*)\[.*?\]\2\])|--\[(=*)\[.*?\]\3\]|--[^\n]*', re.S)
 
 
 def strip_comments(text, lang):
-    """Blank // and /* */ comments; strings are matched first so a // inside one stays."""
+    """Blank comments; strings are matched first so a comment marker inside one stays."""
     return COMMENTS[lang].sub(lambda m: m.group(1) or '', text)
 
 
@@ -80,6 +81,14 @@ class Repo:
     def text(self, rel, lang=None):
         text = read(self.root, rel)
         return strip_comments(text, lang) if lang else text
+
+    def jsonc(self, rel):
+        """JSON that may carry comments and trailing commas (tsconfig, .luaurc, Rojo projects); {} when broken."""
+        try:
+            data = json.loads(re.sub(r',(\s*[}\]])', r'\1', self.text(rel, 'json')))
+        except ValueError:
+            return {}
+        return data if isinstance(data, dict) else {}
 
     def first(self, candidates):
         return next((c for c in map(pp.normpath, candidates) if c in self.files), None)
@@ -107,11 +116,10 @@ class TsResolver:
                     self.configs[pp.dirname(f)] = config
 
     def load(self, rel):
-        text = re.sub(r',(\s*[}\]])', r'\1', self.repo.text(rel, 'json'))
-        try:
-            opts = json.loads(text).get('compilerOptions', {})
-        except (ValueError, AttributeError):
+        data = self.repo.jsonc(rel)
+        if not data:
             return None
+        opts = data.get('compilerOptions', {})
         d = pp.dirname(rel)
         base_url = pp.join(d, opts['baseUrl']) if 'baseUrl' in opts else None
         return base_url, base_url or d, opts.get('paths', {})
@@ -333,9 +341,112 @@ class CsResolver:
         }
 
 
+# ---------- Luau (Roblox / Rojo, Lune) ----------
+
+LUAU_EXTS = ('.luau', '.lua')
+LUAU_SCRIPT_EXTS = tuple(k + e for k in ('', '.server', '.client') for e in LUAU_EXTS)
+LUAU_STRING_REQUIRE = re.compile(r'\brequire\s*\(?\s*["\'`]([^"\'`\n]+)["\'`]')
+LUAU_REQUIRE = re.compile(r'\brequire\s*\(\s*([A-Za-z_][\w.:"\'\[\]()\s,]*?)\s*\)\s*(?:$|[\n;:]|--)', re.M)
+LUAU_LOCAL = re.compile(r'^\s*local\s+(\w+)(?:\s*:\s*[\w.]+)?\s*=\s*([\w.:"\'\[\]()\s,]+?)\s*$', re.M)
+LUAU_SEGMENT = r'\s*(?:\.\s*(\w+)|:\s*(?:WaitForChild|FindFirstChild|GetService)\s*\(\s*["\'](\w+)["\']\s*(?:,[^)]*)?\)|\[\s*["\'](\w+)["\']\s*\])'
+LUAU_PATH = re.compile(rf'\s*(\w+)((?:{LUAU_SEGMENT})*)\s*')
+
+
+def luau_stem(rel):
+    """Rojo names an instance after its file, without .server/.client; init files name their folder."""
+    stem = pp.join(pp.dirname(rel), re.sub(r'(\.server|\.client)?\.luau?$', '', pp.basename(rel)))
+    return pp.dirname(stem) if pp.basename(stem) == 'init' else stem
+
+
+class LuauResolver:
+    """require("./x") and .luaurc aliases by path; require(script.Parent.X) and
+    require(ReplicatedStorage.Shared.X) through the Rojo *.project.json trees."""
+
+    def __init__(self, repo):
+        self.repo = repo
+        self.trees = defaultdict(dict)
+        self.aliases = {}
+        for f in repo.files:
+            name, d = pp.basename(f), pp.dirname(f)
+            if name.endswith('.project.json'):
+                self.walk(self.trees[d], d, repo.jsonc(f).get('tree'), ())
+            elif name == '.luaurc':
+                self.aliases[d] = {k.lower(): pp.normpath(pp.join(d, v)) for k, v in repo.jsonc(f).get('aliases', {}).items()}
+
+    def walk(self, out, d, node, names):
+        if not isinstance(node, dict):
+            return
+        if isinstance(node.get('$path'), str):
+            out[names] = pp.normpath(pp.join(d, node['$path']))
+        for k, v in node.items():
+            if not k.startswith('$'):
+                self.walk(out, d, v, names + (k,))
+
+    def module(self, base):
+        return self.repo.first([base]) or self.repo.module_file(base, LUAU_SCRIPT_EXTS, 'init')
+
+    def by_string(self, rel, stem, aliases, spec):
+        here = pp.dirname(rel)
+        head, _, rest = spec.partition('/')
+        if head == '@self':
+            return self.module(pp.join(here, rest))
+        if head.startswith('@'):
+            target = aliases.get(head[1:].lower())
+            return self.module(pp.join(target, rest)) if target else None
+        # ./ from an init file means the folder's siblings; older runtimes read it from the file's folder.
+        bases = [pp.dirname(here), here] if stem == here else [here]
+        return next((hit for b in bases if (hit := self.module(pp.join(b, spec)))), None)
+
+    def instance(self, stem, expr, locals_, depth=0):
+        """('fs', path parts) for paths off script, ('game', names) for paths off a service."""
+        m = LUAU_PATH.fullmatch(expr)
+        if not m or depth > 8:
+            return None
+        head = m.group(1)
+        if head == 'script':
+            kind, at = 'fs', tuple(p for p in stem.split('/') if p)
+        elif head == 'game':
+            kind, at = 'game', ()
+        elif head == 'workspace':
+            kind, at = 'game', ('Workspace',)
+        elif head in locals_:
+            base = self.instance(stem, locals_[head], locals_, depth + 1)
+            if base is None:
+                return None
+            kind, at = base
+        else:
+            kind, at = 'game', (head,)
+        for groups in re.findall(LUAU_SEGMENT, m.group(2)):
+            n = ''.join(groups)
+            at = at[:-1] if n == 'Parent' else at + (n,)
+        return kind, at
+
+    def by_instance(self, stem, tree, expr, locals_):
+        found = self.instance(stem, expr, locals_)
+        if found is None:
+            return None
+        kind, at = found
+        if kind == 'fs':
+            return self.module('/'.join(at))
+        for i in range(len(at), 0, -1):
+            if at[:i] in tree:
+                return self.module(pp.join(tree[at[:i]], *at[i:]))
+        return None
+
+    def deps(self, rel):
+        text = self.repo.text(rel, 'luau')
+        stem = luau_stem(rel)
+        aliases = self.aliases.get(nearest(self.aliases, rel), {})
+        tree = self.trees.get(nearest(self.trees, rel), {})
+        locals_ = dict(LUAU_LOCAL.findall(text))
+        out = {self.by_string(rel, stem, aliases, spec) for spec in LUAU_STRING_REQUIRE.findall(text)}
+        out.update(self.by_instance(stem, tree, expr, locals_) for expr in LUAU_REQUIRE.findall(text))
+        return out
+
+
 # ---------- graph ----------
 
-RESOLVERS = {**{e: TsResolver for e in TS_EXTS}, '.py': PyResolver, '.go': GoResolver, '.rs': RsResolver, '.cs': CsResolver}
+RESOLVERS = {**{e: TsResolver for e in TS_EXTS}, '.py': PyResolver, '.go': GoResolver, '.rs': RsResolver, '.cs': CsResolver, **{e: LuauResolver for e in LUAU_EXTS}}
 
 
 def build_graph(repo):
