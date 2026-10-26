@@ -145,8 +145,8 @@ test('pressing a changed file shows its diff over the tabs, Next/Previous step t
 })
 
 test('a diff longer than DIFF_PAGE_ROWS keeps its rows and pages through them, uncut past CODE_MAX_CHARS', async ($, on) => {
-  // 兩段，各 DIFF_PAGE_ROWS 行加一行標頭：三頁；每行夠長，整份超過 CODE_MAX_CHARS。
-  const line = 'x'.repeat(Math.ceil(CODE_MAX_CHARS / DIFF_PAGE_ROWS))
+  // 兩段，各 DIFF_PAGE_ROWS 行加一行標頭：三頁；每行夠長，整份超過 CODE_MAX_CHARS，一頁還放得下 DIFF_PAGE_ROWS 行（含行號）。
+  const line = 'x'.repeat(Math.floor(CODE_MAX_CHARS / DIFF_PAGE_ROWS) - 10)
   const hunk = (at: number) => `@@ -${at},${DIFF_PAGE_ROWS} +${at},${DIFF_PAGE_ROWS} @@\n${`-${line}a\n+${line}b\n`.repeat(DIFF_PAGE_ROWS / 2)}`
   const total = 2 * (DIFF_PAGE_ROWS + 1)
   stubPanel(on)
@@ -171,7 +171,6 @@ test('a diff longer than DIFF_PAGE_ROWS keeps its rows and pages through them, u
   await ui.press({ key: 'diffpage:next' })
   expect(await ui.find({ key: `diff:${2 * DIFF_PAGE_ROWS + 1}` })).toBeDefined()
   expect(await ui.find({ key: 'diffpage:next' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: 'Diff is too long; showing only the beginning.' })).toBeUndefined()
 
   await ui.press({ key: 'diffpage:prev' })
   await ui.press({ key: 'diffpage:prev' })

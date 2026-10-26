@@ -805,6 +805,7 @@ export const register: Register = on => {
       {
         surface: e.surface,
         bodyRows: e.props.scroll.bodyRows,
+        bodyColumns: e.props.bodyColumns,
         tab: activeTab,
         subTabs: subs,
         view: v,

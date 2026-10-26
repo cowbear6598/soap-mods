@@ -1,7 +1,7 @@
 import type { DbConnection, DbResult, DbTable } from '../../../types'
 import { DB_CELL_WIDTH, DB_TABLE_LIMIT } from '../../config'
 import { connectionName, tableKey } from '../../db/sql'
-import { truncate } from '../../text'
+import { cutAtLineEnd, truncate } from '../../text'
 import { backButton } from '../stepBar'
 import type { TabBody, TabContext } from './context'
 
@@ -56,20 +56,20 @@ function cell(value: string) {
 }
 
 // 查詢結果畫成一張 Markdown 表格：上千個格子一格一個元素太重，一個 Markdown 就好。
+// 欄位多時一列就上千字：只畫到 CODE_MAX_CHARS 字為止，rows 是畫了幾列（格子裡沒有換行，一列一行）。
 function resultTable(r: DbResult) {
   const line = (cells: string[]) => `| ${cells.map(cell).join(' | ')} |`
   const width = r.columns.length
+  const { text } = cutAtLineEnd(
+    [line(r.columns), `|${' --- |'.repeat(width)}`, ...r.rows.map(row => line(Array.from({ length: width }, (_, i) => row[i] ?? '')))].join('\n'),
+  )
 
-  return [
-    line(r.columns),
-    `|${' --- |'.repeat(width)}`,
-    ...r.rows.map(row => line(Array.from({ length: width }, (_, i) => row[i] ?? ''))),
-  ].join('\n')
+  return { text, rows: Math.max(0, text.split('\n').length - 2) }
 }
 
-function resultNote(r: DbResult) {
+function resultNote(r: DbResult, shown: number) {
   const more = r.isTruncated ? '+' : ''
-  if (r.total > r.rows.length) return `First ${r.rows.length} of ${r.total}${more} rows`
+  if (r.total > shown) return `First ${shown} of ${r.total}${more} rows`
 
   return `${r.total}${more} row${r.total === 1 && more === '' ? '' : 's'}`
 }
@@ -78,6 +78,7 @@ function connectionView({ w, d, a }: TabContext) {
   const { Box, Markdown, Text } = w
   const db = d.db
   const c = db.connections.find(x => x.id === db.open)
+  const table = db.result !== null && db.result.columns.length > 0 ? resultTable(db.result) : undefined
 
   const tableRow = (t: DbTable) => {
     const key = tableKey(t)
@@ -124,8 +125,8 @@ function connectionView({ w, d, a }: TabContext) {
       ) : (
         db.result !== null && (
           <Box flexDirection="column">
-            <Text dimColor>{resultNote(db.result)}</Text>
-            {db.result.columns.length > 0 && <Markdown text={resultTable(db.result)} />}
+            <Text dimColor>{resultNote(db.result, table?.rows ?? db.result.rows.length)}</Text>
+            {table !== undefined && <Markdown text={table.text} />}
           </Box>
         )
       )}

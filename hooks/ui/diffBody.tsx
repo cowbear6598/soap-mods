@@ -1,12 +1,11 @@
-// 差異本身：一行一列自己畫，加的行綠字、減的行紅字，跟配對那行比起來改到的字詞才反白。
-// 一頁最多 DIFF_PAGE_ROWS 行，底下用換頁列換頁（一次畫幾千個 Text 會把桌面版卡住）。由 widgets 的 w.diff 依畫面呼叫。
+// 差異本身：一行一列自己畫，加的行綠字、減的行紅字，跟配對那行比起來改到的字詞才反白。由 widgets 的 w.diff 依畫面呼叫。
 
 import type { RenderChildren } from 'claude-code'
 
-import { DIFF_PAGE_ROWS, DIFF_STYLE } from '../config'
+import { CODE_MAX_CHARS, DIFF_LINE_MAX_CHARS, DIFF_PAGE_ROWS, DIFF_STYLE } from '../config'
 import type { DiffRow, LineRow } from '../git/wordDiff'
 import { markWords, parseDiffRows } from '../git/wordDiff'
-import { clampPage } from '../text'
+import { clampPage, truncate } from '../text'
 import type { Ui } from './actions'
 
 const ROW_STYLE = {
@@ -15,22 +14,35 @@ const ROW_STYLE = {
   same: { mark: ' ', text: undefined, word: undefined },
 } as const
 
-// 面板每次重畫都會走到這裡：同一份差異只切一次行，字詞 diff（逐對跑 Myers，不便宜）只算畫的那頁，也只算一次。
-let parsed: { source: string; rows: LineRow[]; width: number } = { source: '', rows: [], width: 1 }
-let marked: { source: string; page: number; rows: DiffRow[] } = { source: '', page: -1, rows: [] }
+// 面板每次重畫都會走到這裡：同一份差異只切一次行、分一次頁，字詞 diff（逐對跑 Myers，不便宜）只算畫的那頁，也只算一次。
+// starts：每頁第一行是第幾行（最後再放總行數）。
+let parsed: { source: string; rows: LineRow[]; starts: number[]; width: number } = { source: '', rows: [], starts: [0, 0], width: 1 }
+let marked: { source: string; from: number; rows: DiffRow[] } = { source: '', from: -1, rows: [] }
 function parse(source: string) {
   if (parsed.source === source) return parsed
-  const rows = parseDiffRows(source)
+  const rows = parseDiffRows(source).map(r => ({ ...r, text: truncate(r.text, DIFF_LINE_MAX_CHARS) }))
   // 行號的寬度照整份算：換頁時數字不會左右跳。
   const width = String(rows.reduce((n, r) => Math.max(n, r.kind === 'hunk' ? 0 : r.line), 0)).length
-  parsed = { source, rows, width }
+  const starts = [0]
+  let at = 0
+  let chars = 0
+  rows.forEach((r, i) => {
+    // 行號和 +／- 那欄也算進字數。
+    const size = r.text.length + width + 3
+    if (i > at && (i - at >= DIFF_PAGE_ROWS || chars + size > CODE_MAX_CHARS)) {
+      starts.push(i)
+      at = i
+      chars = 0
+    }
+    chars += size
+  })
+  starts.push(rows.length)
+  parsed = { source, rows, starts, width }
 
   return parsed
 }
-function pageRows(source: string, rows: LineRow[], page: number) {
-  if (marked.source !== source || marked.page !== page) {
-    marked = { source, page, rows: markWords(rows, page * DIFF_PAGE_ROWS, (page + 1) * DIFF_PAGE_ROWS) }
-  }
+function pageRows(source: string, rows: LineRow[], from: number, to: number) {
+  if (marked.source !== source || marked.from !== from) marked = { source, from, rows: markWords(rows, from, to) }
 
   return marked.rows
 }
@@ -38,7 +50,7 @@ function pageRows(source: string, rows: LineRow[], page: number) {
 /** The page the diff shows and the pager under it: `pager` draws the bar from what this page holds. */
 export type DiffPaging = {
   page: number
-  pager: (p: { page: number; size: number; count: number; hasNext: boolean; total: number }) => RenderChildren
+  pager: (p: { page: number; from: number; count: number; hasNext: boolean; total: number }) => RenderChildren
 }
 
 /**
@@ -49,12 +61,13 @@ export type DiffPaging = {
  */
 export function diffBody(ui: Pick<Ui, 'Box' | 'Text'>, source: string, isTerminal: boolean, divider: RenderChildren, paging: DiffPaging) {
   const { Box, Text } = ui
-  const { rows, width } = parse(source)
-  const page = clampPage(paging.page, rows.length, DIFF_PAGE_ROWS)
-  const from = page * DIFF_PAGE_ROWS
-  const shown = pageRows(source, rows, page)
+  const { rows, starts, width } = parse(source)
+  const page = clampPage(paging.page, starts.length - 1, 1)
+  const from = starts[page] ?? 0
+  const to = starts[page + 1] ?? rows.length
+  const shown = pageRows(source, rows, from, to)
   const mono = isTerminal ? {} : { mono: true }
-  const bar = paging.pager({ page, size: DIFF_PAGE_ROWS, count: shown.length, hasNext: from + DIFF_PAGE_ROWS < rows.length, total: rows.length })
+  const bar = paging.pager({ page, from, count: shown.length, hasNext: to < rows.length, total: rows.length })
   // 段落開頭：這頁第二段起上面先空一行、畫分隔線，一看就知道跳到檔案的別處了。
   const hunk = (i: number, body: RenderChildren) => (
     <Box key={`diff:${from + i}`} flexDirection="column" marginTop={i === 0 ? 0 : 1}>

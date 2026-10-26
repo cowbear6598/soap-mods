@@ -159,7 +159,7 @@ function branchList(ctx: TabContext, ci: CiView) {
         )
       )}
       {ci.isLoaded && !isSearching && <Text dimColor>{`Branches from the newest ${CI_RECENT} pipelines; search to find older ones.`}</Text>}
-      {ci.isLoaded && w.pager('ci', { page: ci.page, size: CI_PAGE, count: shown.length, hasNext: ci.branches.length > from + CI_PAGE }, p => a.showCiPage(p))}
+      {ci.isLoaded && w.pager('ci', { page: ci.page, from, count: shown.length, hasNext: ci.branches.length > from + CI_PAGE }, p => a.showCiPage(p))}
     </Box>
   )
 }
@@ -198,7 +198,7 @@ function refPipelines(ctx: TabContext, ci: CiView, ref: string) {
       ) : (
         <Box flexDirection="column">{ci.pipelines.map(row)}</Box>
       )}
-      {ci.pipelines !== null && w.pager('ci', { page: ci.pipelinePage, size: CI_PAGE, count: ci.pipelines.length, hasNext: ci.hasNext }, p => a.showCiPage(p))}
+      {ci.pipelines !== null && w.pager('ci', { page: ci.pipelinePage, from: ci.pipelinePage * CI_PAGE, count: ci.pipelines.length, hasNext: ci.hasNext }, p => a.showCiPage(p))}
     </Box>
   )
 }

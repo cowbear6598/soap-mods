@@ -124,7 +124,7 @@ function commitList({ w, d, a }: TabContext, lg: LogView) {
         </Box>
       )}
       {isSearching && lg.isTruncated && <Text dimColor>History is too long; searched only the newest commits.</Text>}
-      {lg.isLoaded && w.pager('log', { page: lg.page, size: LOG_PAGE, count: lg.commits.length, hasNext: lg.hasNext }, p => a.showLogPage(p))}
+      {lg.isLoaded && w.pager('log', { page: lg.page, from: lg.page * LOG_PAGE, count: lg.commits.length, hasNext: lg.hasNext }, p => a.showLogPage(p))}
     </Box>
   )
 }

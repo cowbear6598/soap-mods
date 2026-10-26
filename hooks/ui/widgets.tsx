@@ -9,8 +9,8 @@ import type { IconName, Tint } from '../config'
 import {
   ACTIVE_BG,
   ARMED_TINT,
+  DIVIDER_CHAR,
   DIVIDER_PX,
-  DIVIDER_TEXT,
   FIELD_MIN_WIDTH,
   ICON_BUTTON_LABEL,
   ICON_PX,
@@ -18,7 +18,6 @@ import {
   NBSP,
   PATH_NAME_WIDTH,
   ROW_BUTTON_LABEL,
-  ROW_OVERLAY_WIDTH,
 } from '../config'
 import type { Actions, PanelData, Press, Ui } from './actions'
 import { diffBody } from './diffBody'
@@ -50,8 +49,13 @@ type Row = {
 }
 
 // press：這個面板上的按鈕都經過它，動作做完後丟了焦點會補回來。focusInput：把焦點圈移到某個輸入框。
-export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInput: (key: string) => unknown) {
+// columns：面板內容有幾欄（終端機的整行按鈕、分隔線墊這麼長）。
+export function makeWidgets(ui: Ui, isTerminal: boolean, columns: number, press: Press, focusInput: (key: string) => unknown) {
   const { Box, Button, Code, Markdown, Text } = ui
+  // 整行按鈕的 label：比整行寬，超出的部分被裁掉。包住它的那層再寬一倍（欄數；百分比最多 100%，不夠用），
+  // 按鈕才不會被壓窄而在看得到的地方畫出「…」。會被裁掉的名稱也只留這麼長：畫不出來的字照樣算進引擎的字數上限。
+  const fill = isTerminal && columns > 0 ? NBSP.repeat(columns) : ROW_BUTTON_LABEL
+  const overlayWidth = fill.length * 2
   // 終端機畫不出 Svg（元素表裡有這個 key，但畫成空的），那邊退回文字按鈕。
   const Svg = !isTerminal && 'Svg' in ui ? ui.Svg : undefined
 
@@ -123,7 +127,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
   // 疊在一格上面、比它寬很多再裁掉的那層，按鈕放在裡面（兩種版面共用）。
   const rowOverlay = (button: RenderChildren) => (
     <Box position="absolute" top={0} left={0} right={0} bottom={0} overflow="hidden">
-      <Box width={ROW_OVERLAY_WIDTH} flexShrink={0}>
+      <Box width={overlayWidth} flexShrink={0}>
         {button}
       </Box>
     </Box>
@@ -164,7 +168,8 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
       const innerRest = isWhole && row.isTruncated !== true && labelWidth === undefined && row.rest ? row.rest : undefined
       const grows = labelWidth === undefined && (row.isTruncated === true || !row.rest || innerRest !== undefined)
       const fills = labelWidth !== undefined || grows
-      const shown = hasDetail && row.labelWidth !== undefined ? fit(row.label, row.labelWidth) : row.label
+      const label = fills ? truncate(row.label, fill.length) : row.label
+      const shown = hasDetail && row.labelWidth !== undefined ? fit(label, row.labelWidth) : label
       const onPress = press(row.onPress, row.ringKey)
       // 按鈕本身吃不到顏色、粗體，名稱包一層 Text（資料夾列的 FOLDER_COLOR、標題列的粗體）。
       const name = (text: string) => (
@@ -173,8 +178,8 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
         </Text>
       )
 
-      const rowButton = (key: string, children: RenderChildren) => (
-        <Button key={key} label={row.label} plain dimColor={row.isDim} onPress={onPress}>
+      const rowButton = (key: string, children: RenderChildren, buttonLabel?: string) => (
+        <Button key={key} label={buttonLabel} plain dimColor={row.isDim} onPress={onPress}>
           {children}
         </Button>
       )
@@ -186,21 +191,21 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
         <Box key={`${row.key}:row`} gap={1} paddingLeft={row.indent ?? 2} hover={{ backgroundColor: ACTIVE_BG }}>
           {outerLead}
           {fills ? (
-            // 底下照常排的名稱只用來撐出寬度（被上面蓋住）；按鈕放在 absolute 那層，那串空白才不會把 rest、trailing 擠出畫面。
+            // 寬度由 width、flexGrow 定，底下只墊一格撐出列高（被上面蓋住）；按鈕放在 absolute 那層，那串空白才不會把 rest、trailing 擠出畫面。
             <Box position="relative" width={labelWidth} flexGrow={grows ? 1 : undefined} flexShrink={1} minWidth={0} overflow="hidden">
-              <Text wrap="truncate-end">{row.label}</Text>
+              <Text>{NBSP}</Text>
               {rowOverlay(
                 rowButton(row.key, [
                   innerLead,
                   name(nbsp(shown)),
                   innerRest !== undefined && [NBSP, innerRest],
                   row.detail && <Text dimColor>{nbsp(` ${row.detail}`)}</Text>,
-                  ROW_BUTTON_LABEL,
-                ]),
+                  fill,
+                ], label),
               )}
             </Box>
           ) : (
-            rowButton(row.key, [innerLead, name(row.label)])
+            rowButton(row.key, [innerLead, name(label)], label)
           )}
           {grows && rest ? <Box flexShrink={0}>{rest}</Box> : rest}
           {row.trailing !== undefined && <Box flexShrink={0}>{row.trailing}</Box>}
@@ -210,7 +215,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
     const shrinks = row.isTruncated === true || row.labelWidth !== undefined
     const label = (
       <Text bold={row.isBold} color={row.color} dimColor={row.isDim} hover={row.labelHover} wrap={shrinks ? 'truncate-end' : undefined}>
-        {row.label}
+        {shrinks ? truncate(row.label, fill.length) : row.label}
       </Text>
     )
     const hasTrailing = row.trailing !== undefined
@@ -241,7 +246,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
             row.rest
           )}
         </Box>
-        {rowOverlay(<Button key={row.key} label={ROW_BUTTON_LABEL} plain onPress={press(row.onPress, row.ringKey)} />)}
+        {rowOverlay(<Button key={row.key} label={fill} plain onPress={press(row.onPress, row.ringKey)} />)}
       </Box>
     )
 
@@ -325,7 +330,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
         paddingX={1}
         backgroundColor={ACTIVE_BG}
       >
-        {rowOverlay(<Button key={`${key}:focus`} label={ROW_BUTTON_LABEL} plain onPress={() => void focusInput(key)} />)}
+        {rowOverlay(<Button key={`${key}:focus`} label={fill} plain onPress={() => void focusInput(key)} />)}
         {input}
       </Box>
     ) : (
@@ -363,7 +368,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
           <Button key={key} label={` ${fit(current, width)} ${props.isOpen ? '▴' : '▾'} `} plain onPress={press(() => props.onToggle(!props.isOpen))} />
           {props.isOpen && [
             <Text key={`${key}:divider`} dimColor>
-              {'─'.repeat(rowWidth)}
+              {DIVIDER_CHAR.repeat(rowWidth)}
             </Text>,
             ...props.options.map(o => (
               <Button
@@ -457,13 +462,12 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
   // 按的那顆換頁後不見了（到第一頁、最後一頁），焦點圈移到另一顆。count 是這頁實際有幾列。
   const pager = (
     prefix: string,
-    { page, size, count, hasNext, total }: { page: number; size: number; count: number; hasNext: boolean; total?: number },
+    { page, from, count, hasNext, total }: { page: number; from: number; count: number; hasNext: boolean; total?: number },
     onPage: (page: number) => unknown,
   ) => {
     if (page === 0 && !hasNext) return null
     const prevKey = `${prefix}:prev`
     const nextKey = `${prefix}:next`
-    const from = page * size
     const range = `${from + 1}–${from + count}${total === undefined ? '' : ` of ${total}`}`
 
     return (
@@ -488,7 +492,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
   const divider =
     Svg === undefined ? (
       <Box width="100%" height={1} overflow="hidden">
-        <Text dimColor>{DIVIDER_TEXT}</Text>
+        <Text dimColor>{DIVIDER_CHAR.repeat(fill.length)}</Text>
       </Box>
     ) : (
       stretched(DIVIDER_SVG, 'Divider', 1)

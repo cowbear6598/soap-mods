@@ -100,12 +100,10 @@ export const MENU_WIDTH = 26
 export const NBSP = '\u00a0'
 // 圖示按鈕的寬度：這串空白撐出按鈕，底色、hover、圖示都對齊這塊區域。
 export const ICON_BUTTON_LABEL = NBSP.repeat(10)
-// 一長串字元要多長才比任何面板都寬（超出的部分被裁掉）：整行按鈕的 label、終端機的分隔線和用量 bar。
+// 一長串字元要多長才比任何面板都寬（超出的部分被裁掉）：桌面版整行按鈕的 label、終端機的用量 bar。
+// 終端機知道面板有幾欄，整行按鈕和分隔線只墊那麼長：引擎一次最多畫 100000 字，一列多 400 字，兩百列就八萬字。
 const OVERFLOW_CHARS = 400
-// 整行按鈕的 label：比任何面板都寬，超出整行的部分被裁掉。
 export const ROW_BUTTON_LABEL = NBSP.repeat(OVERFLOW_CHARS)
-// 包住那顆按鈕的那層有多寬（欄數；百分比最多 100%，不夠用）：比按鈕寬，按鈕才不會被壓窄而在最右邊畫出「…」。
-export const ROW_OVERLAY_WIDTH = ROW_BUTTON_LABEL.length * 2
 
 // 沒選中的圖示和分隔線的顏色。
 export const MUTED = '#8b8b8b'
@@ -113,9 +111,9 @@ export const MUTED = '#8b8b8b'
 export const ACTIVE_ICON = '#ffffff'
 
 // 分隔線。桌面版把 Svg 畫成 max-width:100% 的圖，寬度會被壓到面板寬、高度固定 1px；
-// preserveAspectRatio="none" 讓線跟著拉伸，不會被等比縮到看不見。終端機沒有 Svg，用一長串橫線字元。
+// preserveAspectRatio="none" 讓線跟著拉伸，不會被等比縮到看不見。終端機沒有 Svg，用一整行的橫線字元。
 export const DIVIDER_PX = 4000
-export const DIVIDER_TEXT = '─'.repeat(OVERFLOW_CHARS)
+export const DIVIDER_CHAR = '─'
 
 // 一種顏色：theme 給 Text（跟著主題），hex 給 Svg（要色碼）。
 export type Tint = { theme: string; hex: string; background?: string }
@@ -193,8 +191,8 @@ export const FILE_VIEW_MAX_BYTES = 1_000_000
 // Spec 分頁：plan skill 把每個 feature 的計劃寫在這個資料夾（相對 session 資料夾）底下的 <feature>/plan.yaml。
 export const SPEC_DIR = '.soap/tasks'
 export const PLAN_FILE = 'plan.yaml'
-// Wiki 子分頁：頁面是這個資料夾（相對 session 資料夾）底下的 .md；勾了哪幾頁存在 $.store 的「CHECKED_KEY:session 資料夾」，
-// Distill 和 wiki skill 的草稿放在 DRAFTS_DIR（. 開頭的資料夾不算頁面）。頁面最多列幾頁。
+// Wiki 子分頁：頁面是這個資料夾（相對 session 資料夾）底下的 .md；勾了哪幾頁存在 $.store 的「WIKI_CHECKED_KEY:session 資料夾」，
+// Distill 和 wiki skill 的草稿放在 WIKI_DRAFTS_DIR（. 開頭的資料夾不算頁面）。頁面最多列幾頁。
 export const WIKI_DIR = '.soap/wiki'
 export const WIKI_CHECKED_KEY = 'wiki.checked'
 export const WIKI_DRAFTS_DIR = '.drafts'
@@ -227,10 +225,12 @@ export const DB_LOGIN_TIMEOUT_S = 15
 export const DB_QUERY_TIMEOUT_S = 60
 export const DB_PROCESS_TIMEOUT_MS = (DB_LOGIN_TIMEOUT_S + DB_QUERY_TIMEOUT_S + 10) * 1000
 
-// 檔案內容、Wiki 頁面最多畫前面這麼多字（引擎的 Code、Markdown 一次最多畫 100000 字），切在行尾。差異一行一列分頁畫，不切。
+// 引擎一次最多畫 100000 字，面板其他地方也要畫：檔案內容、Wiki 頁面、DB 結果最多畫前面這麼多字（切在行尾），差異一頁也最多這麼多字（含行號）。
 export const CODE_MAX_CHARS = 60_000
 // 差異自己一行一列畫（改到的字詞反白），一頁最多這麼多行，底下用換頁列換頁：一次畫幾千個 Text 會把桌面版卡住。
+// 一行最多畫這麼多字，多的截成「…」：壓縮過的檔案一行就幾十萬字。
 export const DIFF_PAGE_ROWS = 800
+export const DIFF_LINE_MAX_CHARS = 2_000
 
 // 面板最底下的用量：左邊 5h、右邊 weekly，各占一半。kind 是引擎回報的視窗名稱。
 export const USAGE_WINDOWS = [

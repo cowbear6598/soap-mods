@@ -54,7 +54,7 @@ export const diffTab: TabBody = ({ w, d, a }) => {
           {rows.map(entry => fileRow(g.id, entry))}
         </Box>
       ))}
-      {w.pager('file', { page, size: FILE_PAGE, count: end - start, hasNext: end < total, total }, p => a.showFilePage(p))}
+      {w.pager('file', { page, from: start, count: end - start, hasNext: end < total, total }, p => a.showFilePage(p))}
     </Box>
   )
 }

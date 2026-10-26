@@ -81,7 +81,7 @@ export type CommitFile = {
 export type FileKind = 'added' | 'modified' | 'deleted' | 'renamed' | 'conflict'
 
 /** What the diff pane shows: a work tree file (diff tab), or a file in a commit (log tab). */
-/** Which page of a long diff is drawn (DIFF_PAGE_ROWS a page, from 0), and of which diff: another `id` starts at the top. */
+/** Which page of a long diff is drawn (from 0; a page holds at most DIFF_PAGE_ROWS rows and CODE_MAX_CHARS characters), and of which diff: another `id` starts at the top. */
 export type DiffPage = { id: string; page: number }
 
 export type DiffPaneView = {

@@ -223,6 +223,7 @@ export type Actions = {
 export type PanelData = {
   surface: RenderSurface
   bodyRows: number
+  bodyColumns: number
   tab: TabId
   // 有子分頁的 Tab 各自看的子分頁。
   subTabs: SubTabs
