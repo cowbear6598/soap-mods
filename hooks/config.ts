@@ -123,7 +123,7 @@ export const GOOD: Tint = { theme: 'success', hex: '#4eba65' }
 export const WARN: Tint = { theme: 'warning', hex: '#d4a72c' }
 // 危險／不好的紅色：剩餘用量低、停止鈕、有衝突的子分頁。
 export const DANGER: Tint = { theme: 'error', hex: '#e5534b' }
-// 要按兩次的按鈕的打勾：紅底白勾（終端機是紅色方塊加紅字），一看就知道再按會做。
+// 要按兩次的按鈕的打勾：紅底白勾（終端機是紅字 Confirm），一看就知道再按會做。
 export const ARMED_TINT: Tint = { theme: DANGER.theme, hex: ACTIVE_ICON, background: DANGER.hex }
 // 分支名稱複製好了：綠底白勾，COPIED_MS 後換回複製圖示。
 export const COPIED_TINT: Tint = { theme: GOOD.theme, hex: ACTIVE_ICON, background: GOOD.hex }

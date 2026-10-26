@@ -1,6 +1,6 @@
 {
   "name": "soap-mods",
-  "version": "0.11.1",
+  "version": "0.11.2",
   "description": "Soap Panel：Git（diff、branch、log、解衝突、CI：GitLab 的 pipeline、job、log，重跑和跑 manual job、MR：要我 review 的 merge request：Approve、Merge、套用建議）和 Tools（Services：停掉／重跑本機服務、DB：SQL Server 唯讀查詢、HTTP：送 .soap/http 的 .http 請求）的面板，底部顯示用量",
   "types": "./types/index.d.ts"
 }
