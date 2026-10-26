@@ -1,5 +1,5 @@
 import type { HttpDraft, HttpRequest, HttpResult } from '../../../types'
-import { HTTP_PAGES } from '../../config'
+import { HTTP_PAGES, NBSP } from '../../config'
 import { formatSize } from '../../files/list'
 import { requestTitle, substitute, variableNames, variableSource } from '../../http/parse'
 import { backButton } from '../stepBar'
@@ -20,8 +20,6 @@ export const httpTab: TabBody = ctx => {
 export const httpPageBar = ({ w, d, a }: TabContext) => w.iconBar('http:page', HTTP_PAGES, d.http.page, id => a.selectHttpPage(id))
 
 const MASK = '••••••'
-// 按鈕文字裡補齊欄寬用的空白：不斷行（同 widgets.tsx）。
-const NBSP = ' '
 
 // 更長的在框裡捲。
 const EDITOR_ROWS = 14

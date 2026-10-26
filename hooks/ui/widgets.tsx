@@ -1,4 +1,3 @@
-// Soap Panel 上共用的小元件：圖示按鈕、整行可點的列、檔案列、搜尋框、圖示分頁列、差異、分隔線。
 // 依畫面（終端機／桌面版）決定怎麼畫，分頁只管要畫什麼。
 
 import type { RenderChildren, TextHoverProps } from 'claude-code'
@@ -16,6 +15,7 @@ import {
   ICON_BUTTON_LABEL,
   ICON_PX,
   KIND_STYLE,
+  NBSP,
   PATH_NAME_WIDTH,
   ROW_BUTTON_LABEL,
   ROW_OVERLAY_WIDTH,
@@ -59,7 +59,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
   // 1. 墊底的 Button 撐出外框大小，選中的底色畫在外框上；它被蓋住，點不到；
   // 2. Svg 那層鋪滿外框、置中；
   // 3. 最上層是一模一樣的 Button，剛好蓋滿外框，接點擊，hover 的亮底也就是外框大小。
-  // tint：圖示固定用這個顏色；終端機沒有 Svg，就把字上這個顏色（Confirm 是紅字，Copied 是綠字）。
+  // tint：圖示固定用這個顏色；終端機沒有 Svg，就把按鈕的字染成這個顏色（Confirm 是紅字，Copied 是綠字）。
   // tint.background：外框固定用這個底色（等著確認的紅底），蓋過選中的底色。
   const iconButton = (key: string, icon: IconName, label: string, isActive: boolean, action: () => unknown, tint?: Tint) => {
     const onPress = press(action)
@@ -84,7 +84,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
     )
   }
 
-  // 要按兩次的按鈕：圖示按了換成紅底打勾，再按才做。
+  // 要按兩次的按鈕：圖示按了換成紅底打勾（終端機是紅字 Confirm），再按才做。
   const armedButton = (key: string, icon: IconName, label: string, isArmed: boolean, action: () => unknown, armedLabel = 'Confirm') =>
     iconButton(key, isArmed ? 'check' : icon, isArmed ? armedLabel : label, false, action, isArmed ? ARMED_TINT : undefined)
 
@@ -115,11 +115,11 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
   // 看得到的 hover 亮底剛好是整行。
   // 終端機：疊上去的空白會蓋掉底下的字，所以是名稱自己當按鈕，名稱後面接一長串空白撐滿名稱那格（跟桌面版一樣用外層裁掉），
   // 點名稱右邊的空白也算。名稱那格：有 labelWidth 就那麼寬；isTruncated 或沒有 rest 時吃掉剩下的寬度；
-  // 其餘（rest 要緊跟在名稱後面，branch 的切換提示）只有名稱。trailing 貼最右邊。
+  // 其餘（rest 要緊跟在名稱後面）只有名稱，除非整行能點（branch 的切換提示），那時 rest 也畫進名稱那顆按鈕。trailing 貼最右邊。
   // isTruncated：名稱撐滿剩下的寬度、太長時在桌面版截成「…」，rest 留在同一行、貼著最右邊（commit 的 subject 和時間）。
   // 要 minWidth 0 才縮得比內容窄，不然長的名稱會把 rest 擠出畫面。
   // labelWidth：名稱固定這麼寬、太長時截尾，rest 從同一個位置開始，一列一列對齊（檔案列的檔名和資料夾）。
-  // trailing：放在整行最右邊、自己能按的東西（branch 列的 log 圖示），不在透明按鈕底下，才按得到。
+  // trailing：放在整行最右邊、自己能按的東西（branch 列的刪除、複製、log 圖示），不在透明按鈕底下，才按得到。
   // 疊在一格上面、比它寬很多再裁掉的那層，按鈕放在裡面（兩種版面共用）。
   const rowOverlay = (button: RenderChildren) => (
     <Box position="absolute" top={0} left={0} right={0} bottom={0} overflow="hidden">
@@ -130,10 +130,8 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, press: Press, focusInpu
   )
 
   // 名稱裡的空白換成不換行空白：不然後面那串空白連不上，按鈕在名稱的空白處折行，反白只亮到那裡（Show in Explorer）。
-  const NBSP = ' '
   const nbsp = (text: string) => text.replace(/ /g, NBSP)
 
-  // 名稱剛好 width 格：太長截成「…」，太短補空白。
   const fit = (text: string, width: number) => truncate(text, width).padEnd(width)
 
   // 固定 width 格寬的一欄字（log 的 sha、作者、時間）。桌面版字寬不一，是固定寬的 Box、太長截尾；

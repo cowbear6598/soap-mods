@@ -96,13 +96,14 @@ export const DIFF_STYLE = {
 // Files 分頁 ⋯ 選單的底色（不透明，蓋住底下的列）和寬度（字數，放得下 Press again to delete）。
 export const MENU_BG = '#262626'
 export const MENU_WIDTH = 26
+// 不換行空白：按鈕文字裡的一般空白會被吃掉，或讓按鈕在那裡折行。
+export const NBSP = '\u00a0'
 // 圖示按鈕的寬度：這串空白撐出按鈕，底色、hover、圖示都對齊這塊區域。
-// 用不換行空白（ ），一般空白會被吃掉。
-export const ICON_BUTTON_LABEL = ' '.repeat(10)
+export const ICON_BUTTON_LABEL = NBSP.repeat(10)
 // 一長串字元要多長才比任何面板都寬（超出的部分被裁掉）：整行按鈕的 label、終端機的分隔線和用量 bar。
 const OVERFLOW_CHARS = 400
 // 整行按鈕的 label：比任何面板都寬，超出整行的部分被裁掉。
-export const ROW_BUTTON_LABEL = ' '.repeat(OVERFLOW_CHARS)
+export const ROW_BUTTON_LABEL = NBSP.repeat(OVERFLOW_CHARS)
 // 包住那顆按鈕的那層有多寬（欄數；百分比最多 100%，不夠用）：比按鈕寬，按鈕才不會被壓窄而在最右邊畫出「…」。
 export const ROW_OVERLAY_WIDTH = ROW_BUTTON_LABEL.length * 2
 
@@ -121,7 +122,7 @@ export type Tint = { theme: string; hex: string; background?: string }
 
 export const GOOD: Tint = { theme: 'success', hex: '#4eba65' }
 export const WARN: Tint = { theme: 'warning', hex: '#d4a72c' }
-// 危險／不好的紅色：剩餘用量低、停止鈕、有衝突的子分頁。
+// 危險／不好的紅色：剩餘用量低、有衝突的子分頁、等著確認的按鈕和 Files 的刪除。
 export const DANGER: Tint = { theme: 'error', hex: '#e5534b' }
 // 要按兩次的按鈕的打勾：紅底白勾（終端機是紅字 Confirm），一看就知道再按會做。
 export const ARMED_TINT: Tint = { theme: DANGER.theme, hex: ACTIVE_ICON, background: DANGER.hex }
@@ -294,13 +295,13 @@ export const RESTART_CHECK_MS = [2_000, 5_000, 15_000, 30_000]
 // 要按兩次的按鈕（刪除、切換分支、rollback、abort）按了一次後，多久沒再按就收回去。
 export const DELETE_ARM_MS = 3_000
 // 分支按了一次、等著再按一次切換時，那列後面寫的提示。
-// 不換行空白：終端機上它畫在名稱那顆按鈕裡，一般空白會讓按鈕在這裡折行。
-export const SWITCH_ARMED_HINT = 'press\u00a0again\u00a0to\u00a0switch'
+// 終端機上它畫在名稱那顆按鈕裡，所以用不換行空白。
+export const SWITCH_ARMED_HINT = 'press again to switch'.replace(/ /g, NBSP)
 // 複製分支名稱後，綠底打勾留多久。
 export const COPIED_MS = 2_000
 // branch 分頁的 Fetch／Pull 最多等多久（git 預設只等 30 秒，大 repo 抓不完）。
 export const SYNC_TIMEOUT_MS = 300_000
 
-// 多久看一次面板是不是剛被切到前面（要補焦點）；按完按鈕後多久內丟了焦點也補回來。見 register.tsx 的 focusWhenShown。
+// 多久看一次面板是不是剛被切到前面（要補焦點）；按完按鈕後多久內丟了焦點也補回來。見 ui/focus.ts 的 focusWhenShown。
 export const FOCUS_WATCH_MS = 200
 export const REFOCUS_AFTER_PRESS_MS = 600

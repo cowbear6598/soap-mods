@@ -23,7 +23,7 @@ export const branchTab: TabBody = ({ w, d, a }) => {
   const indentAt = (depth: number) => 2 + depth * 2
 
   // 目前分支的 ● 落在縮排的空位裡，名稱跟其他分支對齊；點它不做事。
-  // 右邊的複製圖示按了複製分支名稱（遠端的含 origin/），變成綠底打勾一下再換回來；log 圖示按了到 log 分頁看這個分支；不是目前分支的都多一個垃圾桶（遠端的會刪掉遠端上的分支），按了換成打勾。
+  // 遠端分支的垃圾桶會刪掉遠端上的分支。
   const branchRow = (b: GitBranch, label = b.name, depth = 0) => {
     const id = branchId(b)
     const isCopied = v.copied === b.name
@@ -65,7 +65,6 @@ export const branchTab: TabBody = ({ w, d, a }) => {
     })
   }
 
-  // 可以開合的標題：Remote 是粗體灰字，資料夾用 FOLDER_COLOR 跟分支分開。搜尋時全部打開，畫成點不動的字。
   const toggleRow = (key: string, label: string, isOpen: boolean, indent: number, onPress: () => unknown, isFolder = true) => {
     const style = isFolder ? { color: FOLDER_COLOR } : { isBold: true, isDim: true }
 
@@ -116,7 +115,7 @@ export const branchTab: TabBody = ({ w, d, a }) => {
       {w.searchField('branch:search', query, text => a.searchBranches(text), syncButtons)}
       {v.branchError !== '' && <Text color="error">{v.branchError}</Text>}
       {d.armed.startsWith('force:') && (
-        <Text color="error">{`${d.armed.slice('force:l:'.length)} has unmerged commits; press again to force delete and lose them.`}</Text>
+        <Text color="error">{`${v.branches.find(b => d.armed === `force:${branchId(b)}`)?.name} has unmerged commits; press again to force delete and lose them.`}</Text>
       )}
       {isSearching && shown.length === 0 && <Text dimColor>No matching branches.</Text>}
       {(!isSearching || locals.length > 0) && (

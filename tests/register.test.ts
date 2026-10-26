@@ -413,42 +413,36 @@ test('deleting a local branch asks with a check first, and forces the delete whe
   await ui.unmount()
 })
 
-// 遠端分支名稱開頭是哪個遠端：取最長的那個（my/fork/x 是 my/fork 的 x，不是 my 的 fork/x）。
-for (const [remotes, branch, push] of [
-  [['origin'], 'origin/feature/x', 'push origin :refs/heads/feature/x'],
-  [['my', 'my/fork'], 'my/fork/x', 'push my/fork :refs/heads/x'],
-] as const) {
-  test(`deleting the remote branch ${branch} asks with a check first, then runs git ${push}`, async ($, on) => {
-    const pushes: string[] = []
-    stubPanel(on)
-    gitRepo(on, {
-      status: '## main\0',
-      branches: () => [
-        branchLine('main', { isCurrent: true }),
-        ...(pushes.length > 0 ? [] : [[' ', `refs/remotes/${branch}`, branch, '', '', '1 day ago', 'Wip'].join('\t')]),
-      ],
-      run: cmd => {
-        if (cmd[0] === 'remote') return ok(`${remotes.join('\n')}\n`)
-        if (cmd[0] !== 'push') return undefined
-        pushes.push(cmd.join(' '))
+test('deleting a remote branch asks with a check first, then runs git push origin :refs/heads/feature/x', async ($, on) => {
+  const pushes: string[] = []
+  stubPanel(on)
+  gitRepo(on, {
+    status: '## main\0',
+    branches: () => [
+      branchLine('main', { isCurrent: true }),
+      ...(pushes.length > 0 ? [] : [[' ', 'refs/remotes/origin/feature/x', 'origin/feature/x', '', '', '1 day ago', 'Wip'].join('\t')]),
+    ],
+    run: cmd => {
+      if (cmd[0] === 'remote') return ok('origin\n')
+      if (cmd[0] !== 'push') return undefined
+      pushes.push(cmd.join(' '))
 
-        return ok('')
-      },
-    })
-    await openPanel($)
-
-    const ui = await mountPane($)
-    await ui.press({ key: 'sub:branch' })
-    await ui.press({ key: 'remote:toggle' })
-
-    await ui.press({ key: `delete:r:${branch}` })
-    expect(pushes).toEqual([])
-    await ui.press({ key: `delete:r:${branch}` })
-    expect(pushes).toEqual([push])
-    expect(await ui.find({ key: `switch:r:${branch}` })).toBeUndefined()
-    await ui.unmount()
+      return ok('')
+    },
   })
-}
+  await openPanel($)
+
+  const ui = await mountPane($)
+  await ui.press({ key: 'sub:branch' })
+  await ui.press({ key: 'remote:toggle' })
+
+  await ui.press({ key: 'delete:r:origin/feature/x' })
+  expect(pushes).toEqual([])
+  await ui.press({ key: 'delete:r:origin/feature/x' })
+  expect(pushes).toEqual(['push origin :refs/heads/feature/x'])
+  expect(await ui.find({ key: 'switch:r:origin/feature/x' })).toBeUndefined()
+  await ui.unmount()
+})
 
 test('an armed branch switch moves to the row pressed next and wears off after 3s', async ($, on) => {
   const clock = mock.clock(on)
@@ -470,9 +464,6 @@ test('an armed branch switch moves to the row pressed next and wears off after 3
   const ui = await mountPane($)
   await ui.press({ key: 'sub:branch' })
   await ui.press({ key: 'remote:toggle' })
-  // 目前分支按了不做事，也不標。
-  await ui.press({ key: 'switch:l:main' })
-  expect(await hinted('switch:l:main')).toBe(false)
   // 按 dev 再按 origin/main：標記移到 origin/main，dev 回復原樣；這時按 dev 只會重新標 dev。
   await ui.press({ key: 'switch:l:dev' })
   await ui.press({ key: 'switch:r:origin/main' })

@@ -1,6 +1,3 @@
-// Soap Panel 本體：最上面的 Tab、repo 列（Git）、子分頁（SUB_TABS 有列的 Tab：Git、Tools、Docs），中間是分頁內容，最底下是用量。
-// 打開了衝突檔案、檔案的差異或 Files 分頁的檔案時，上面整塊換成合併（mergeView）、差異（diffView）或內容（fileView），Back 回來。
-
 import type { GitSubTab, SubTabs, TabId } from '../../types'
 import { DANGER, SUB_TABS, TABS, type Tint, hasSubTabs } from '../config'
 import { isConflict } from '../git/parse'
@@ -32,7 +29,6 @@ const GIT_SUB_TAB_BODIES: Record<GitSubTab, TabBody> = {
   conflict: conflictTab,
 }
 
-// Git Tab：還沒讀到、不是 repo 時先擋下來，其餘交給子分頁。
 const gitTab: TabBody = ctx => {
   const { Text } = ctx.w
   if (!ctx.d.view.isLoaded) return <Text dimColor>Loading…</Text>
@@ -75,7 +71,6 @@ function repoBar({ w, d, a }: TabContext) {
 // 面板上的分隔線左右各空一格，跟分頁內容一樣不貼邊。
 const divider = ({ Box, divider }: Widgets) => <Box paddingX={1}>{divider}</Box>
 
-// 子分頁圖示列；tints 是要上色的子分頁。
 function subTabBar<T extends keyof SubTabs>({ w, d, a }: TabContext, tab: T, tints: Partial<Record<SubTabs[T], Tint>> = {}) {
   const { Box } = w
 
@@ -124,10 +119,8 @@ export function renderPanel(drawUi: Ui, d: PanelData, a: Actions, press: Press) 
           {divider(w)}
           {isGit && repoBar(ctx)}
           {isGit ? subTabBar(ctx, 'git', d.view.files.some(isConflict) ? { conflict: DANGER } : {}) : hasSubTabs(d.tab) && subTabBar(ctx, d.tab)}
-          {d.tab === 'tools' && d.subTabs.tools === 'http' && httpPageBar(ctx)}
-          {d.tab === 'tools' && d.subTabs.tools === 'http' && divider(w)}
+          {d.tab === 'tools' && d.subTabs.tools === 'http' && [httpPageBar(ctx), divider(w)]}
         </Box>
-        {/* 分頁內容左右各空一格，不貼著面板邊。 */}
         <Box flexDirection="column" gap={1} paddingX={1}>
           {isGit && d.view.error !== '' && <Text color="error">{d.view.error}</Text>}
           {TAB_BODIES[d.tab](ctx)}
