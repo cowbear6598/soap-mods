@@ -43,6 +43,14 @@ export async function removePath(io: Io, abs: string) {
   else await runOk(io, ['rm', '-rf', '--', abs], 'rm')
 }
 
+// 在瀏覽器打開網址：網址從環境變數給 PowerShell，不拼進指令。
+const OPEN_URL_ARGV = powershellArgv("$ErrorActionPreference = 'Stop'; Start-Process $env:SOAP_URL")
+
+export async function openUrl(io: Io, url: string) {
+  if (await isWindows(io)) await runOk(io, OPEN_URL_ARGV, 'Start-Process', { env: { SOAP_URL: url } })
+  else await runOk(io, ['open', url], 'open')
+}
+
 /**
  * A flag for work in flight (a sync, a query) that the panel draws: a module
  * variable, not an atom, so a hot reload in the middle resets it instead of

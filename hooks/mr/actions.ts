@@ -5,10 +5,9 @@ import { type GitLabProject, isActive, parseUser, userUrl } from '../ci/parse'
 import { savedToken } from '../ci/token'
 import { EMPTY_MR } from '../defaults'
 import { errorText } from '../errors'
-import { type GitLabIo, TokenRefused, api, isDue, repoProject } from '../gitlab'
+import { type GitLabIo, TokenRefused, api, isDue, openGitLabUrl, repoProject } from '../gitlab'
 import { latestOnly } from '../latest'
-import { powershellArgv } from '../services/scan'
-import { busyFlag, isConfirmed, isWindows, runOk } from '../shell'
+import { busyFlag, isConfirmed } from '../shell'
 import {
   applyLines,
   approvalsUrl,
@@ -232,15 +231,9 @@ export async function applySuggestion(io: MrIo, s: MrSuggestion) {
   })
 }
 
-// 在瀏覽器打開 GitLab 的頁面（MR、某則留言）：只開這台 GitLab 的 https 網址；網址從環境變數給 PowerShell，不拼進指令。
-const OPEN_URL_ARGV = powershellArgv("$ErrorActionPreference = 'Stop'; Start-Process $env:SOAP_URL")
-
 export async function openMrLink(io: MrIo, url: string) {
   try {
-    const p = await repoProject(io)
-    if (!url.startsWith(`https://${p.host}/`) && !url.startsWith(`http://${p.host}/`)) throw new Error('not a link to this GitLab')
-    if (await isWindows(io)) await runOk(io, OPEN_URL_ARGV, 'Start-Process', { env: { SOAP_URL: url } })
-    else await runOk(io, ['open', url], 'open')
+    await openGitLabUrl(io, url)
   } catch (err) {
     await io.setMr({ actionError: `Couldn't open the link: ${errorText(err)}` })
   }

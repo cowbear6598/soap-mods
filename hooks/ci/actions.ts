@@ -7,7 +7,7 @@ import type { Timer } from 'claude-code'
 import type { CiBranch, CiJob, CiJobAction, CiPipeline, CiView } from '../../types'
 import { CI_PAGE, CI_SEARCH_DEBOUNCE_MS } from '../config'
 import { errorText } from '../errors'
-import { type GitLabIo, TokenRefused, api, isDue, repoProject } from '../gitlab'
+import { type GitLabIo, TokenRefused, api, isDue, openGitLabUrl, repoProject } from '../gitlab'
 import { latestOnly } from '../latest'
 import { filterWords, hasQuery, searchWords } from '../search'
 import { busyFlag, isConfirmed } from '../shell'
@@ -317,6 +317,14 @@ async function act(io: CiIo, armed: string, run: (p: GitLabProject, open: CiPipe
     await failed(io, err, 'actionError')
   } finally {
     acting.set(io, false)
+  }
+}
+
+export async function openCiLink(io: CiIo, url: string) {
+  try {
+    await openGitLabUrl(io, url)
+  } catch (err) {
+    await io.setCi({ actionError: `Couldn't open the link: ${errorText(err)}` })
   }
 }
 

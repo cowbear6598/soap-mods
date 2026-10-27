@@ -151,6 +151,8 @@ test('the CI sub tab lists the branches that ran pipelines, opens one to its pip
   expect(await ui.find({ type: 'Text', text: '4m 8s' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '12s · allowed' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'manual' })).toBeDefined()
+  await ui.press({ key: 'ci:web' })
+  expect(world.runs.some(r => r.argv[0] === 'open' && r.argv[1] === `https://${HOST}/web-team/app/-/pipelines/1002`)).toBe(true)
 
   await ui.press({ key: 'ci:job:12' })
   await ui.redraw()

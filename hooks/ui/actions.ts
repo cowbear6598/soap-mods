@@ -197,6 +197,8 @@ export type Actions = {
   toggleCiToken: (isOpen: boolean) => unknown
   // 跑、重跑：都要按兩次。pipeline 的 Retry 重跑裡面失敗的 job；job 的 Run（play）跑 manual job、Retry 重跑跑完的。
   retryCiPipeline: () => unknown
+  // 在瀏覽器打開 GitLab 的頁面。
+  openCiLink: (url: string) => unknown
   actOnCiJob: (j: CiJob, kind: CiJobAction) => unknown
   // mr（GitLab）：點 MR 看它的狀態和建議，Back 回清單；Refresh 重讀看得到的那層。
   openMr: (iid: number) => unknown
