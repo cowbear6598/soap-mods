@@ -88,8 +88,8 @@ function searchBody(ctx: TabContext) {
     <Box flexDirection="column" position="relative">
       {found.paths.map(path => w.pathRow(`files:found:${path}`, path, () => a.openFile(path), { indent: 0, trailing: moreButton(ctx, path) }))}
       {hidden > 0 && note(ctx, `… ${hidden} more`)}
-      {found.isCapped && note(ctx, `Only the first ${FILES_WALK_LIMIT} files were searched.`)}
-      {menuCard(ctx, found.paths, Number(hidden > 0) + Number(found.isCapped))}
+      {found.isPartial && note(ctx, `Searching beyond the first ${FILES_WALK_LIMIT} files…`)}
+      {menuCard(ctx, found.paths, Number(hidden > 0) + Number(found.isPartial))}
     </Box>
   )
 }

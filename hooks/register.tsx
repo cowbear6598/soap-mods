@@ -175,7 +175,7 @@ const logQuery = atom({ plugin: 'soap-mods', key: 'logQuery' } as const, '')
 // diff 分頁看的是第幾頁（從 0 開始）。
 const filePage = atom({ plugin: 'soap-mods', key: 'filePage' } as const, 0)
 const services = atom({ plugin: 'soap-mods', key: 'services' } as const, EMPTY_SERVICES)
-const files = atom({ plugin: 'soap-mods', key: 'files' } as const, EMPTY_FILES, { shape: 'files-2' })
+const files = atom({ plugin: 'soap-mods', key: 'files' } as const, EMPTY_FILES, { shape: 'files-3' })
 // Spec 分頁：.soap/tasks 底下的 feature 清單，和點開的那份 plan.yaml。
 const spec = atom({ plugin: 'soap-mods', key: 'spec' } as const, EMPTY_SPEC)
 

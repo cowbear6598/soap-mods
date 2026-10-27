@@ -1,7 +1,7 @@
 // Wiki 子分頁（.soap/wiki）的動作：列頁面、勾選、看頁面和草稿、Accept／Discard、Distill、Send。
 // 不碰 $ 和 atom，用 register.tsx 給的 WikiIo（見 io.ts）。
 
-import type { EngineInterface, ModelForkResult, SessionMessage } from 'claude-code'
+import type { EngineInterface, FsEntry, ModelForkResult, SessionMessage } from 'claude-code'
 
 import type { WikiModel, WikiSent, WikiView } from '../../types'
 import {
@@ -15,7 +15,7 @@ import {
 } from '../config'
 import { NO_WIKI_OPEN } from '../defaults'
 import { errorText } from '../errors'
-import { type Found, type WalkRule, byName, walkTree } from '../files/list'
+import { type Found, byName, walkTree } from '../files/list'
 import type { Io } from '../io'
 import { latestOnly } from '../latest'
 import { unifiedDiff } from '../merge/algo'
@@ -68,9 +68,16 @@ const draftAbs = (root: string, id: string) => `${root}/${DRAFTS_PATH}/${id}`
 // .soap/wiki 底下的頁面和大小：子資料夾也找（. 開頭的不看，草稿在那裡），最多 WIKI_PAGE_LIMIT 頁，照路徑排。
 // 最上層列不出來就丟出去（loadWiki 再看是不存在還是讀不到）。
 async function listPages(io: WikiIo, root: string): Promise<Found[]> {
-  const rule: WalkRule = { limit: WIKI_PAGE_LIMIT, skipDir: name => name.startsWith('.'), keep: (path, e) => e.kind === 'file' && isPagePath(path) }
+  const found: Found[] = []
+  const take = (path: string, e?: FsEntry) => {
+    if (e?.kind !== 'file' || !isPagePath(path)) return true
+    if (found.length >= WIKI_PAGE_LIMIT) return false
+    found.push({ path, size: e.size })
+    return true
+  }
+  await walkTree(`${root}/${WIKI_DIR}`, { list: io.list, skipDir: name => name.startsWith('.'), take })
 
-  return (await walkTree(io.list, `${root}/${WIKI_DIR}`, rule)).found
+  return found.sort((a, b) => byName(a.path, b.path))
 }
 
 // 勾了哪幾頁：存在 $.store（每個 session 資料夾一個 key），專案裡不留檔案；讀不到就是一頁都沒勾。

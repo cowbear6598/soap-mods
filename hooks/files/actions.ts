@@ -1,10 +1,11 @@
 // Files 分頁的動作。引擎不讓 $ 跨檔，所以這裡不碰 $，只呼叫 register.tsx 給的 FilesIo（每個都是抓著 $ 的閉包）。
 
 import type { FileView, FilesView } from '../../types'
-import { FILES_ROW_LIMIT, FILES_WALK_LIMIT, FILES_WALK_SKIP, FILE_VIEW_MAX_BYTES } from '../config'
+import { FILES_ROW_LIMIT, FILES_SEARCH_ALL_DELAY, FILES_WALK_LIMIT, FILES_WALK_SKIP, FILE_VIEW_MAX_BYTES } from '../config'
 import { EMPTY_FILE_VIEW, NO_FILE_MENU } from '../defaults'
 import { errorText } from '../errors'
 import { splitPath } from '../git/parse'
+import { git } from '../git/run'
 import type { Io } from '../io'
 import { latestOnly } from '../latest'
 import { neighbour } from '../neighbour'
@@ -12,7 +13,19 @@ import { patch } from '../patch'
 import { hasQuery } from '../search'
 import { powershellArgv } from '../services/scan'
 import { disarm, isConfirmed, isWindows, removePath, runOk } from '../shell'
-import { type WalkRule, absPath, fileSteps, formatSize, matchPaths, sortEntries, statStamp, viewText, walkTree } from './list'
+import {
+  type WalkRule,
+  absPath,
+  byName,
+  fileSteps,
+  formatSize,
+  matchPaths,
+  pathMatcher,
+  sortEntries,
+  statStamp,
+  viewText,
+  walkTree,
+} from './list'
 
 export type FilesIo = Io & {
   getFiles: () => Promise<FilesView>
@@ -42,28 +55,67 @@ export async function reloadFiles(io: FilesIo) {
   await loadFiles(io, (await io.getFiles()).dir)
 }
 
-type Walk = { paths: string[]; isCapped: boolean }
+type Walk = { paths: string[]; isPartial: boolean }
 
 // 搜尋用的 session 資料夾底下所有檔案，第一次搜的時候才走一遍，之後打字只重新過濾；換分頁、回合結束丟掉。
 let walked: Promise<Walk> | undefined
-// 打字很快時，晚算完的舊搜尋不寫。
+// 打字很快時，晚算完的舊搜尋不寫；要從頭走一遍的也停下來。
 const fileSearches = latestOnly()
 
-// 搜尋用的：整個 session 資料夾，跳過 FILES_WALK_SKIP。之後每次打字只要依序挑出符合的，不用再排。
-async function walkFiles(io: FilesIo): Promise<Walk> {
-  const rule: WalkRule = { limit: FILES_WALK_LIMIT, skipDir: name => FILES_WALK_SKIP.includes(name), keep: () => true }
-  const { found, isCapped } = await walkTree(io.list, await io.root(), rule).catch(() => ({ found: [], isCapped: false }))
+// 有 .git 的資料夾改問 git：追蹤的檔案（R 是已經刪掉的），加上沒被 .gitignore 掉的新檔案（?）。
+// 合併衝突的檔案一個 stage 列一次，所以去重。git 跑不了、輸出被截斷（超過 4 MiB）就給 undefined，照常列資料夾。
+async function repoFiles(io: FilesIo, root: string, dir: string) {
+  const args = ['ls-files', '-z', '-t', '--cached', '--deleted', '--others', '--exclude-standard']
+  const r = await git(io, args, { cwd: absPath(root, dir) }).catch(() => undefined)
+  if (r?.exitCode !== 0 || r.isStdoutTruncated) return undefined
+  const lines = r.stdout.split('\0').filter(l => l !== '')
+  const gone = new Set(lines.filter(l => l.startsWith('R ')).map(l => l.slice(2)))
 
-  return { paths: found.map(f => f.path), isCapped }
+  return [...new Set(lines.map(l => l.slice(2)))].filter(p => !gone.has(p))
+}
+
+// 跳過 FILES_WALK_SKIP，git repo 只收沒被 .gitignore 掉的（bin、obj 這類 build 出來的不收）。
+const walkSession = (io: FilesIo, root: string, take: WalkRule['take'], onBatch?: () => Promise<boolean>) =>
+  walkTree(root, { list: io.list, skipDir: name => FILES_WALK_SKIP.includes(name), take, repoFiles: dir => repoFiles(io, root, dir) }, onBatch)
+
+// 最多記 FILES_WALK_LIMIT 個，排好，之後每次打字只要依序挑出符合的。
+async function walkFiles(io: FilesIo): Promise<Walk> {
+  const root = await io.root()
+  const paths: string[] = []
+  const take = (path: string) => {
+    if (paths.length >= FILES_WALK_LIMIT) return false
+    paths.push(path)
+    return true
+  }
+  const isDone = await walkSession(io, root, take).catch(() => true)
+
+  return { paths: paths.sort(byName), isPartial: !isDone }
 }
 
 // 搜尋框有字就從整個 session 資料夾挑出符合的檔案（存前 FILES_ROW_LIMIT 筆）；沒字就回到資料夾列表。
+// 走到 FILES_WALK_LIMIT 停了的話，先列記住的那些裡符合的，再 searchAll 把整個資料夾搜完。
 async function findFiles(io: FilesIo, query: string) {
   const isStale = fileSearches.start()
   if (!hasQuery(query)) return io.setFiles({ found: null })
   const all = await (walked ??= walkFiles(io))
   if (isStale()) return
-  await io.setFiles({ found: { ...matchPaths(all.paths, query, FILES_ROW_LIMIT), isCapped: all.isCapped } })
+  await io.setFiles({ found: { ...matchPaths(all.paths, query, FILES_ROW_LIMIT), isPartial: all.isPartial } })
+  // 不等它：這次的搜尋已經畫出來了，走完整個資料夾可能要很久。
+  if (all.isPartial) void searchAll(io, query, isStale).catch(() => undefined)
+}
+
+// 不設上限從頭走一遍，只留符合的、不存全部路徑，記憶體不會跟著資料夾變大。打字停了 FILES_SEARCH_ALL_DELAY 才開始，
+// 又打字、清掉搜尋、換分頁就停；走完才換上這次的結果，走的時候畫面留著前面那次的。
+async function searchAll(io: FilesIo, query: string, isStale: () => boolean) {
+  await io.sleep(FILES_SEARCH_ALL_DELAY)
+  if (isStale()) return
+  const matcher = pathMatcher(query, FILES_ROW_LIMIT)
+  const take = (path: string) => {
+    matcher.add(path)
+    return true
+  }
+  const isDone = await walkSession(io, await io.root(), take, async () => !isStale()).catch(() => false)
+  if (isDone && !isStale()) await io.setFiles({ found: { ...matcher.result(), isPartial: false } })
 }
 
 export async function searchFiles(io: FilesIo, text: string) {

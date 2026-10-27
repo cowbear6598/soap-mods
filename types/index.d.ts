@@ -285,8 +285,8 @@ export type FoundFiles = {
   paths: string[]
   /** How many matched, drawn or not. */
   total: number
-  /** The walk stopped at FILES_WALK_LIMIT files: some were not searched. */
-  isCapped: boolean
+  /** Only the first FILES_WALK_LIMIT files were searched; the rest is still being searched. */
+  isPartial: boolean
 }
 
 /** A file of the Files tab opened to read, drawn over the tabs. */

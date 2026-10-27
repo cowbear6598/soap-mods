@@ -28,21 +28,33 @@ export const fileSteps = (files: FilesView) =>
   files.found?.paths ?? files.entries.filter(e => e.kind !== 'dir').map(e => childPath(files.dir, e.name))
 
 /**
- * The first `limit` of `paths` (already sorted by byName) holding every word of `query`, ignoring case:
- * those whose file name matches first, each group kept in order; `total` counts them all.
+ * Takes paths one at a time and keeps the first `limit` holding every word of `query`, ignoring case:
+ * those whose file name matches first, each group in the order taken; `total` counts them all.
  */
-export function matchPaths(paths: readonly string[], query: string, limit: number): { paths: string[]; total: number } {
+export function pathMatcher(query: string, limit: number) {
   const words = searchWords(query)
   const byFileName: string[] = []
   const byFolder: string[] = []
-  for (const path of paths) {
-    const lower = path.toLowerCase()
-    if (!hasWords(lower, words)) continue
-    if (hasWords(lower.slice(lower.lastIndexOf('/') + 1), words)) byFileName.push(path)
-    else byFolder.push(path)
-  }
+  let total = 0
 
-  return { paths: [...byFileName, ...byFolder].slice(0, limit), total: byFileName.length + byFolder.length }
+  return {
+    add(path: string) {
+      const lower = path.toLowerCase()
+      if (!hasWords(lower, words)) return
+      total += 1
+      const group = hasWords(lower.slice(lower.lastIndexOf('/') + 1), words) ? byFileName : byFolder
+      if (group.length < limit) group.push(path)
+    },
+    result: () => ({ paths: [...byFileName, ...byFolder].slice(0, limit), total }),
+  }
+}
+
+/** pathMatcher over `paths` (already sorted by byName). */
+export function matchPaths(paths: readonly string[], query: string, limit: number): { paths: string[]; total: number } {
+  const matcher = pathMatcher(query, limit)
+  for (const path of paths) matcher.add(path)
+
+  return matcher.result()
 }
 
 /**
@@ -77,33 +89,44 @@ export function formatSize(bytes: number) {
 }
 
 export type Found = { path: string; size: number }
-export type WalkRule = { limit: number; skipDir: (name: string) => boolean; keep: (path: string, e: FsEntry) => boolean }
 
-// 由上往下走 base 底下，一次讀 FILES_WALK_BATCH 個資料夾；skipDir 的資料夾不進去，keep 的才收，收滿 limit 個就停。
-// base 本身列不出來就丟出去，底下的資料夾讀不到就略過。走完照 byName 排好。
-export async function walkTree(
-  list: (abs: string) => Promise<FsEntry[]>,
-  base: string,
-  { limit, skipDir, keep }: WalkRule,
-): Promise<{ found: Found[]; isCapped: boolean }> {
-  const found: Found[] = []
-  const queue = ['']
-  while (queue.length > 0 && found.length < limit) {
-    const batch = queue.splice(0, FILES_WALK_BATCH)
-    const lists = await Promise.all(
-      batch.map(async dir => ({ dir, list: dir === '' ? await list(base) : await list(absPath(base, dir)).catch(() => []) })),
-    )
-    for (const { dir, list } of lists) {
-      for (const e of list) {
-        const path = childPath(dir, e.name)
-        if (e.kind !== 'dir') {
-          if (keep(path, e)) found.push({ path, size: e.size })
-        } else if (!skipDir(e.name)) queue.push(path)
-      }
+export type WalkRule = {
+  list: (abs: string) => Promise<FsEntry[]>
+  skipDir: (name: string) => boolean
+  // 收一個檔案（相對 base）；回 false 就整個停下來，那個檔案也不算收到。repoFiles 列出來的沒有 entry。
+  take: (path: string, entry?: FsEntry) => boolean
+  // 底下有 .git 的資料夾（相對 base）不往下列，改問它有哪些檔案：相對它，結尾是 / 的是沒追蹤的另一個 repo，再往下走；
+  // 給 undefined 就照常列資料夾。
+  repoFiles?: (dir: string) => Promise<string[] | undefined>
+}
+
+type Child = { path: string; isDir: boolean; entry?: FsEntry }
+
+// 由上往下走 base 底下，一次讀 FILES_WALK_BATCH 個資料夾，不排序也不存。每批讀完問一次 onBatch，回 false 就停。
+// 全部走完回 true；base 本身列不出來就丟出去，底下的資料夾讀不到就略過。
+export async function walkTree(base: string, rule: WalkRule, onBatch: () => Promise<boolean> = async () => true) {
+  const { list, skipDir, take, repoFiles } = rule
+  const children = async (dir: string): Promise<Child[]> => {
+    const entries = dir === '' ? await list(base) : await list(absPath(base, dir)).catch(() => [])
+    const tracked = repoFiles !== undefined && entries.some(e => e.name === '.git') ? await repoFiles(dir) : undefined
+    if (tracked !== undefined) {
+      return tracked.map(p => (p.endsWith('/') ? { path: childPath(dir, p.slice(0, -1)), isDir: true } : { path: childPath(dir, p), isDir: false }))
     }
+
+    return entries.filter(e => e.kind !== 'dir' || !skipDir(e.name)).map(e => ({ path: childPath(dir, e.name), isDir: e.kind === 'dir', entry: e }))
   }
 
-  return { found: found.slice(0, limit).sort((a, b) => byName(a.path, b.path)), isCapped: found.length > limit || queue.length > 0 }
+  const queue = ['']
+  while (queue.length > 0) {
+    const lists = await Promise.all(queue.splice(0, FILES_WALK_BATCH).map(children))
+    for (const c of lists.flat()) {
+      if (c.isDir) queue.push(c.path)
+      else if (!take(c.path, c.entry)) return false
+    }
+    if (!(await onBatch())) return false
+  }
+
+  return true
 }
 
 /** A file's stamp: its modified time and size. The same stamp, the same contents; a reread skips reading it. */
