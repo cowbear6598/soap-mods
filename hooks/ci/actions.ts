@@ -8,7 +8,7 @@ import type { CiBranch, CiJob, CiJobAction, CiPipeline, CiView } from '../../typ
 import { CI_PAGE, CI_SEARCH_DEBOUNCE_MS } from '../config'
 import { errorText } from '../errors'
 import { type GitLabIo, TokenRefused, api, isDue, openGitLabUrl, repoProject } from '../gitlab'
-import { latestOnly } from '../latest'
+import { lastRead, latestOnly } from '../latest'
 import { filterWords, hasQuery, searchWords } from '../search'
 import { busyFlag, isConfirmed } from '../shell'
 import { clampPage } from '../text'
@@ -66,8 +66,10 @@ const pipelineLoads = latestOnly()
 const jobLoads = latestOnly()
 const traceLoads = latestOnly()
 
-// 最新的 CI_RECENT 條 pipeline（整理成分支清單）：搜尋打字時沿用，重讀（↻、定時、回清單）才再問 GitLab。
-let recent: { base: string; load: Promise<CiPipeline[]> } | undefined
+// 最新的 CI_RECENT 條 pipeline（整理成分支清單），和 GitLab 用搜尋的第一個字找到的分支名：
+// 打字時沿用（只改後面的字不用再問），重讀（↻、定時、回清單）才再問 GitLab。
+const recent = lastRead<CiPipeline[]>()
+const found = lastRead<string[]>()
 
 // commit 的 sha → 標題（讀不到的是 ''）：commit 不會變，定時重讀分支的 pipeline 時只有新的 sha 才再問 GitLab。
 const titles = new Map<string, string>()
@@ -84,35 +86,21 @@ function dropCi() {
   pipelineLoads.drop()
   jobLoads.drop()
   traceLoads.drop()
-  recent = undefined
+  recent.drop()
+  found.drop()
   titles.clear()
 }
 
-function readRecent(io: CiIo, p: GitLabProject, isFresh: boolean) {
-  const base = `${p.host}\n${p.path}`
-  if (!isFresh && recent?.base === base) return recent.load
-  const load = api(io, p, recentPipelinesUrl(p)).then(r => parsePipelines(r.text))
-  recent = { base, load }
-  // 讀失敗不留著，下次再問。
-  load.catch(() => {
-    if (recent?.load === load) recent = undefined
-  })
-
-  return load
-}
-
-// 搜尋時：最近跑過的分支裡名稱符合的排前面，再補上 GitLab 找到、最近沒跑 pipeline 的。
-// GitLab 只能用一段字找，用第一個字問，其他的字自己濾。
-async function searchBranches(io: CiIo, p: GitLabProject, ran: CiBranch[], query: string) {
+// 搜尋時：最近跑過的分支裡名稱符合的排前面，再補上 GitLab 找到、最近沒跑 pipeline 的（names）。
+function searchBranches(ran: CiBranch[], names: string[], query: string): CiBranch[] {
   const matched = filterWords(ran, query, b => b.name)
-  const [first = ''] = searchWords(query)
-  const names = filterWords(parseBranchNames((await api(io, p, branchSearchUrl(p, first))).text), query, n => n)
   const listed = new Set(matched.map(b => b.name))
+  const older = filterWords(names, query, n => n).filter(n => !listed.has(n))
 
-  return [...matched, ...names.filter(n => !listed.has(n)).map(name => ({ name, pipeline: null }))]
+  return [...matched, ...older.map(name => ({ name, pipeline: null }))]
 }
 
-// 讀分支清單（第一層）：最近跑過 pipeline 的分支，最近的先，每個帶最新那條的狀態。isFresh 是 false 時（打字）沿用讀過的 pipeline。
+// 讀分支清單（第一層）：最近跑過 pipeline 的分支，最近的先，每個帶最新那條的狀態。isFresh 是 false 時（打字）沿用讀過的 pipeline 和分支搜尋。
 export async function loadBranches(io: CiIo, { isFresh = true }: { isFresh?: boolean } = {}) {
   const isStale = branchLoads.start()
   listReadAt = await io.now()
@@ -130,8 +118,17 @@ export async function loadBranches(io: CiIo, { isFresh = true }: { isFresh?: boo
       return
     }
     account = { host: p.host, hasToken: true, user: saved.user }
-    const ran = toBranches(await readRecent(io, p, isFresh))
-    const branches = hasQuery(ci.query) ? await searchBranches(io, p, ran, ci.query) : ran
+    // GitLab 只能用一段字找：用第一個字問，其他的字自己濾。
+    const [first] = searchWords(ci.query)
+    const base = `${p.host}\n${p.path}`
+    const [pipelines, names] = await Promise.all([
+      recent.read(base, isFresh, () => api(io, p, recentPipelinesUrl(p)).then(r => parsePipelines(r.text))),
+      first === undefined
+        ? []
+        : found.read(`${base}\n${first}`, isFresh, () => api(io, p, branchSearchUrl(p, first)).then(r => parseBranchNames(r.text))),
+    ])
+    const ran = toBranches(pipelines)
+    const branches = first === undefined ? ran : searchBranches(ran, names, ci.query)
     if (isStale()) return
     // 自己切頁，變少了就夾回最後一頁。
     await io.setCi({ isLoaded: true, ...account, branches, page: clampPage(ci.page, branches.length, CI_PAGE), error: '' })
@@ -179,7 +176,7 @@ async function loadPipelines(io: CiIo, page?: number) {
   }
 }
 
-// 搜尋框打字：從第一頁看，沿用讀過的 pipeline。每打一個字都要問 GitLab 的分支搜尋，所以停手了才讀；清空就馬上回清單。
+// 搜尋框打字：從第一頁看，沿用讀過的 pipeline。第一個字變了要問 GitLab 的分支搜尋，所以停手了才讀；清空就馬上回清單。
 export async function searchCi(io: CiIo, text: string) {
   searchTimer?.cancel()
   await io.setCi({ query: text, page: 0 })

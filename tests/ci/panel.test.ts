@@ -173,7 +173,7 @@ test('the CI sub tab lists the branches that ran pipelines, opens one to its pip
   await ui.unmount()
 })
 
-test('the CI search box finds branches by name once typing stops, recent ones first and then older ones GitLab finds, without rereading the pipelines while typing', async ($, on) => {
+test('the CI search box finds branches by name once typing stops, recent ones first and then older ones GitLab finds, without rereading the pipelines while typing or asking GitLab again when only later words change', async ($, on) => {
   const world = ciWorld(on)
   const ui = await openCi($)
   const recentReads = () => world.fetches.filter(f => f.url.endsWith('/pipelines?per_page=100')).length
@@ -193,9 +193,11 @@ test('the CI search box finds branches by name once typing stops, recent ones fi
   expect(searches()).toBe(1)
   expect((await ui.findAll({ type: 'Text', text: /^(develop|main|feature\/old-login)$/ })).map(t => t.text)).toEqual(['develop'])
 
-  // 最近沒跑 pipeline 的分支也找得到，點開看它的 pipeline。
-  await type('old login')
+  // 最近沒跑 pipeline 的分支也找得到，點開看它的 pipeline。GitLab 只用第一個字找：只改後面的字不再問。
+  await type('old')
   expect(world.fetches.at(-1)?.url).toContain('/repository/branches?per_page=20&search=old')
+  await type('old login')
+  expect(searches()).toBe(2)
   expect((await ui.findAll({ type: 'Text', text: /^(develop|main|feature\/old-login)$/ })).map(t => t.text)).toEqual(['feature/old-login'])
   await ui.press({ key: 'ci:ref:feature/old-login' })
   await ui.redraw()

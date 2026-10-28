@@ -7,6 +7,7 @@ import { readToken } from './ci/token'
 import { CI_IDLE_REFRESH_MS } from './config'
 import { git, repos } from './git/run'
 import type { Io } from './io'
+import { lastRead } from './latest'
 import { openUrl } from './shell'
 
 export type GitLabIo = Io & { fetch: (url: string, init?: HttpInit) => Promise<HttpResponse> }
@@ -17,13 +18,13 @@ const TOKEN_REFUSED = 'GitLab refused the saved token (401): it expired or was r
 
 // 選中的 repo 的 GitLab 專案：看 origin，沒有 origin 就看第一個 remote。
 // 照 repo 記著：定時重讀每 CI_REFRESH_MS 好幾個讀取都要它，remote 幾乎不會變；換 repo（root 不同）、讀失敗就重問 git。
-let project: { root: string; load: Promise<GitLabProject> } | undefined
+const project = lastRead<GitLabProject>()
 
 export function repoProject(io: Io): Promise<GitLabProject> {
   const root = repos.current?.root
   if (root === undefined) return Promise.reject(new Error(NO_REPO))
-  if (project?.root === root) return project.load
-  const load = (async () => {
+
+  return project.read(root, false, async () => {
     const remotes = (await git(io, ['remote'])).stdout.split('\n').map(r => r.trim()).filter(r => r !== '')
     const name = remotes.includes('origin') ? 'origin' : remotes[0]
     const url = name === undefined ? undefined : await git(io, ['remote', 'get-url', name])
@@ -31,13 +32,7 @@ export function repoProject(io: Io): Promise<GitLabProject> {
     if (found === undefined) throw new Error(NOT_GITLAB)
 
     return found
-  })()
-  project = { root, load }
-  load.catch(() => {
-    if (project?.load === load) project = undefined
   })
-
-  return load
 }
 
 // 401：token 失效，畫面要打開換 token 的框；其他錯誤照狀況說。

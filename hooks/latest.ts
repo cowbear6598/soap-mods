@@ -1,5 +1,3 @@
-// 非同步工作的排隊：只寫最新的那次（latestOnly）、同一時間只跑一次（coalesce）。
-
 /** A ticket counter: `start()` returns `isStale`, true once a later `start()` or a `drop()` came. */
 export function latestOnly() {
   let latest = 0
@@ -45,5 +43,29 @@ export function coalesce() {
       return running
     },
     isWanted: () => isQueued,
+  }
+}
+
+/**
+ * Remembers the last read: `read(base, isFresh, fn)` gives the same promise again while `base` stays and `isFresh` is
+ * false, else runs `fn`. A failed read is forgotten so the next one asks again.
+ */
+export function lastRead<T>() {
+  let last: { base: string; load: Promise<T> } | undefined
+
+  return {
+    read(base: string, isFresh: boolean, fn: () => Promise<T>): Promise<T> {
+      if (!isFresh && last?.base === base) return last.load
+      const load = fn()
+      last = { base, load }
+      load.catch(() => {
+        if (last?.load === load) last = undefined
+      })
+
+      return load
+    },
+    drop() {
+      last = undefined
+    },
   }
 }

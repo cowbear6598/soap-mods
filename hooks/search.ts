@@ -5,10 +5,8 @@ export function searchWords(query: string): string[] {
   return query.toLowerCase().split(/\s+/).filter(w => w !== '')
 }
 
-/** Whether a search box holds anything to search for. */
 export const hasQuery = (query: string) => searchWords(query).length > 0
 
-/** Whether lowercased `text` holds every one of `words`. */
 export const hasWords = (text: string, words: readonly string[]) => words.every(w => text.includes(w))
 
 /** Items whose `text` holds every word of `query`, ignoring case; all of them when it is blank. */
