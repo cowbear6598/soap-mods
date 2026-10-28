@@ -1,4 +1,4 @@
-// GitLab 給的 JSON 不信任它的型別：每個欄位都檢查過才用，型別不對就當成空的（CI、MR 子分頁共用）。
+// 外面來的 JSON（GitLab 給的、$.store 裡的）不信任它的型別：每個欄位都檢查過才用，型別不對就當成空的（CI、MR、HTTP 共用）。
 
 export type Json = Record<string, unknown>
 
@@ -7,6 +7,9 @@ export const str = (v: unknown) => (typeof v === 'string' ? v : '')
 export const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
 export const obj = (v: unknown): Json => (isObject(v) ? v : {})
 export const list = (v: unknown): Json[] => (Array.isArray(v) ? v.filter(isObject) : [])
+// 只留值是文字的欄位。
+export const texts = (v: unknown): Record<string, string> =>
+  Object.fromEntries(Object.entries(obj(v)).filter((e): e is [string, string] => typeof e[1] === 'string'))
 
 // ISO 時間轉成 epoch 秒（跟 GitCommit.time 一樣，formatAgo 用）；讀不懂是 0。
 export const seconds = (iso: unknown) => {

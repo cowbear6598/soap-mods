@@ -102,6 +102,7 @@ export const EMPTY_HTTP: HttpView = {
   ownVars: {},
   envError: '',
   secrets: [],
+  prompted: {},
   open: '',
   result: null,
   sendError: '',

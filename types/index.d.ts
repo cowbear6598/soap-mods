@@ -658,7 +658,12 @@ export type HttpRequest = {
   /** '' when none. */
   body: string
   captures: HttpCapture[]
+  /** `# @prompt name description`: variables filled in on the request's page, each once. */
+  prompts: HttpPrompt[]
 }
+
+/** A variable the request's page asks for (REST Client's `# @prompt`); its value is kept by session folder, for every environment. */
+export type HttpPrompt = { name: string; description: string }
 
 /** What the last Send got back. */
 export type HttpResult = {
@@ -684,31 +689,9 @@ export type HttpPage = 'api' | 'env'
 /** A multipart field: text, or a file (`value` its path, relative to the .http file's folder, or absolute). */
 export type HttpPart = { name: string; value: string; isFile: boolean }
 
-/** What the form's Body is: nothing, JSON text, form fields (x-www-form-urlencoded) or multipart fields. */
-export type HttpBodyKind = 'none' | 'json' | 'form' | 'multipart'
-
-/** A request as the editor's form holds it; written to its block by formText. */
-export type HttpForm = {
-  /** '' for none. */
-  name: string
-  method: string
-  url: string
-  /** Without the Content-Type the body kind writes itself. */
-  headers: HttpHeader[]
-  bodyKind: HttpBodyKind
-  /** Each kind's own; switching the kind keeps the others' until Save. */
-  json: string
-  form: HttpHeader[]
-  parts: HttpPart[]
-  /** `@capture`: `value` is the path (`body.data.token`). */
-  captures: HttpHeader[]
-}
-
-export type HttpFormList = 'headers' | 'form' | 'parts' | 'captures'
-
 /**
  * A request being edited on the panel, written to `.soap/http` on Save: a request's block, or a new request for `file`.
- * The form unless `isRaw`, then `text`, the block's text; switching writes one into the other.
+ * `text` is the block's text, edited in vim (Notepad on Windows when there is no vim) and read back as it is saved there.
  */
 export type HttpDraft = ({ kind: 'request'; id: string } | { kind: 'new' }) & {
   /** The file's name, without its folder. */
@@ -716,13 +699,13 @@ export type HttpDraft = ({ kind: 'request'; id: string } | { kind: 'new' }) & {
   /** The folder it goes in, '' for none; Save moves the file when it changed. */
   folder: string
   text: string
-  form: HttpForm
-  isRaw: boolean
-  /** The form's parts unfolded: the Headers and Capture lists, the Folder, Method and Body pickers, the new folder's field. */
-  unfolded: string[]
+  /** The Folder picker is open. */
+  isPickingFolder: boolean
+  /** + New folder was picked: a field for the folder's name shows. */
+  isNewFolder: boolean
 }
 
-/** The Tools tab's HTTP sub tab: the requests in `.soap/http/*.http`, the environment picked, and the last response. */
+/** The Tools tab's HTTP sub tab: the requests in `.soap/http/*.http` and its folders (one level), the environment picked, and the last response. */
 export type HttpView = {
   /** False before the first listing finishes. */
   isLoaded: boolean
@@ -744,6 +727,8 @@ export type HttpView = {
   envError: string
   /** Variables with a value saved in the Keychain or DPAPI for this session folder and environment (the values are never here). */
   secrets: string[]
+  /** The `@prompt` values filled in for this session folder, by name (kept in the mod's store, shared by every environment). */
+  prompted: Record<string, string>
   /** The request opened (its id), '' for the list. */
   open: string
   /** The last response of the opened request, null before one came. */

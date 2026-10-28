@@ -20,10 +20,7 @@ import type {
   GitFile,
   GitSync,
   GitView,
-  HttpForm,
-  HttpFormList,
   HttpPage,
-  HttpPart,
   HttpView,
   LogView,
   MergeChunk,
@@ -161,25 +158,22 @@ export type Actions = {
   saveHttpSecret: (name: string, text: string) => unknown
   deleteHttpSecret: (name: string) => unknown
   editHttpSecret: (name: string) => unknown
+  // @prompt 的那格：打字跟著存（依 session 資料夾、每個環境共用），Enter 存了就送出。
+  typeHttpPrompt: (name: string, value: string) => unknown
   toggleHttpHeaders: (isOpen: boolean) => unknown
   // HTTP 底下那排：API（請求）或 Environment（環境、變數、機密）。
   selectHttpPage: (page: HttpPage) => unknown
-  // 在面板上寫 .soap/http：新請求、編輯點開的請求（表單，或那段原文）；打字跟著存草稿，Save 寫檔，Cancel 是 closeHttpRequest，刪請求要按兩次。
+  // 在面板上寫 .soap/http：新請求、編輯點開的請求（Folder、Name 在面板上打，那段原文在新視窗的 vim 裡改）；
+  // 打字和 vim 存的跟著存草稿，Save 寫檔，Cancel 是 closeHttpRequest，刪請求要按兩次。
   newHttpRequest: () => unknown
   editHttpRequest: () => unknown
-  typeHttpDraft: (change: { text?: string; file?: string; folder?: string }) => unknown
+  typeHttpDraft: (change: { file?: string; folder?: string }) => unknown
+  editHttpInVim: () => unknown
   // Folder 選單選了一個資料夾（'' 不放），或 NEW_FOLDER 打開新資料夾名稱的框；foldHttpFolder 收起（false 展開）列表上的資料夾。
   pickHttpFolder: (folder: string) => unknown
   foldHttpFolder: (folder: string, isFolded: boolean) => unknown
-  // 表單：Name、Method、URL、Body 的種類和 JSON；一列一列的（headers、form、multipart、capture）改、加、拿掉；
-  // 展開收起（Headers、Capture、Folder、Method 和 Body 的選單）；rawHttpDraft 換成改原文（false 換回表單）。
-  typeHttpForm: (change: Partial<Pick<HttpForm, 'name' | 'method' | 'url' | 'bodyKind' | 'json'>>) => unknown
-  changeHttpRow: (list: HttpFormList, index: number, change: Partial<HttpPart>) => unknown
-  addHttpRow: (list: HttpFormList) => unknown
-  deleteHttpRow: (list: HttpFormList, index: number) => unknown
-  foldHttpDraft: (key: string, isOpen: boolean) => unknown
-  rawHttpDraft: (isRaw: boolean) => unknown
-  saveHttpDraft: (text?: string) => unknown
+  openHttpFolderPicker: (isOpen: boolean) => unknown
+  saveHttpDraft: () => unknown
   deleteHttpRequest: () => unknown
   // Environment：+ New 打開（false 收起）新環境名稱的框、新增、刪那一列的環境（兩次）；
   // 變數：+ New 或點一列打開名稱、值兩行的框，打字跟著存，Enter 或 Save 寫檔；刪除兩次。
@@ -274,6 +268,8 @@ export type PanelData = {
   http: HttpView
   // HTTP 正在送出請求、存貼上的機密，或把草稿寫進檔案。
   httpBusy: HttpBusy
+  // 草稿的那段開在 vim 裡（存了就跟到面板）。
+  httpVim: boolean
   // @capture 取到的、選中環境的變數（只放記憶體）。
   httpCaptured: Readonly<Record<string, string>>
   ci: CiView

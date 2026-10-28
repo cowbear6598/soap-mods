@@ -1,10 +1,9 @@
 import type { RenderChildren } from 'claude-code'
 
-import type { HttpBodyKind, HttpDraft, HttpForm, HttpFormList, HttpRequest, HttpResult } from '../../../types'
-import { FOLDER_COLOR, HTTP_PAGES, NBSP } from '../../config'
+import type { HttpDraft, HttpRequest, HttpResult } from '../../../types'
+import { FOLDER_COLOR, HTTP_PAGES, NBSP, NEW_FOLDER } from '../../config'
 import { formatSize } from '../../files/list'
-import { FORM_METHODS, NEW_FOLDER } from '../../http/form'
-import { fileTitle, folderOf, httpFolders, requestTitle, substitute, variableNames, variableSource } from '../../http/parse'
+import { braced, fileTitle, folderOf, httpFolders, promptNames, requestTitle, substitute, variableNames, variableSource, variableValue } from '../../http/parse'
 import { backButton } from '../stepBar'
 import type { TabBody, TabContext } from './context'
 
@@ -24,9 +23,6 @@ export const httpPageBar = ({ w, d, a }: TabContext) => w.iconBar('http:page', H
 
 const MASK = '••••••'
 
-// 更長的在框裡捲。
-const EDITOR_ROWS = 14
-
 // API 這邊只寫目前的環境，換環境到 Environment。
 function envLine({ w, d }: TabContext) {
   const { Text } = w
@@ -35,21 +31,10 @@ function envLine({ w, d }: TabContext) {
   return hv.env === '' ? null : <Text dimColor>{`Env: ${hv.env}`}</Text>
 }
 
-// 表單左邊的標題欄寬（Method 最長）。
+// 編輯頁左邊的標題欄寬（Folder 最長）。
 const LABEL_WIDTH = 7
 
-const JSON_ROWS = 10
-
-const BODY_KINDS: { value: HttpBodyKind; label: string }[] = [
-  { value: 'none', label: 'None' },
-  { value: 'json', label: 'JSON' },
-  { value: 'form', label: 'Form' },
-  { value: 'multipart', label: 'Multipart' },
-]
-
-const FIELD_ROW = { noun: 'Field', name: 'Name', value: 'Value' }
-
-// 表單的一行（也是 Environment 改變數的那兩行）：左邊固定寬的標題，右邊撐滿。
+// 編輯頁的一行（也是 Environment 改變數的那兩行）：左邊固定寬的標題，右邊撐滿。
 function formLine({ w }: TabContext, label: string, node: RenderChildren) {
   const { Box, Text } = w
 
@@ -65,7 +50,7 @@ function formLine({ w }: TabContext, label: string, node: RenderChildren) {
   )
 }
 
-// 「▸ Headers (2)」：點了原地展開、收起（表單的 Headers、Capture，回應的 Headers）。
+// 「▸ Headers (2)」：點了原地展開、收起（回應的 Headers）。
 function foldButton({ w }: TabContext, key: string, label: string, count: number, isOpen: boolean, onToggle: (isOpen: boolean) => unknown) {
   const { Box, Button } = w
 
@@ -76,155 +61,13 @@ function foldButton({ w }: TabContext, key: string, label: string, count: number
   )
 }
 
-// 一列一組名稱和值（header、form 欄位、multipart 欄位、capture）：名稱的框固定寬，值撐滿，✕ 拿掉這列；最後一顆 + 加一列。
-// multipart 中間多一顆 Text／File 切換，File 的值是檔案路徑（相對那個 .http 檔所在的資料夾）。
-function formRows(
-  { w, a }: TabContext,
-  list: HttpFormList,
-  rows: readonly { name: string; value: string; isFile?: boolean }[],
-  props: { noun: string; name: string; value: string; file?: string },
-) {
-  const { Box, Button } = w
-
-  return (
-    <Box flexDirection="column" gap={1}>
-      {rows.map((r, i) => (
-        <Box key={`http:draft:${list}:${i}`} gap={1} alignItems="center" flexWrap="wrap">
-          {w.field(`http:draft:${list}:${i}:name`, {
-            placeholder: props.name,
-            value: r.name,
-            submitLabel: '',
-            isFixed: true,
-            onInput: name => a.changeHttpRow(list, i, { name }),
-            onSubmit: name => a.changeHttpRow(list, i, { name }),
-          })}
-          {list === 'parts' && (
-            <Button key={`http:draft:${list}:${i}:kind`} label={r.isFile === true ? 'File' : 'Text'} onPress={w.press(() => a.changeHttpRow(list, i, { isFile: r.isFile !== true }))} />
-          )}
-          <Box flexGrow={1} flexShrink={1}>
-            {w.field(`http:draft:${list}:${i}:value`, {
-              placeholder: r.isFile === true ? (props.file ?? props.value) : props.value,
-              value: r.value,
-              submitLabel: '',
-              onInput: value => a.changeHttpRow(list, i, { value }),
-              onSubmit: value => a.changeHttpRow(list, i, { value }),
-            })}
-          </Box>
-          <Button key={`http:draft:${list}:${i}:delete`} label="✕" plain onPress={w.press(() => a.deleteHttpRow(list, i))} />
-        </Box>
-      ))}
-      <Box>
-        <Button key={`http:draft:${list}:add`} label={`+ ${props.noun}`} onPress={w.press(() => a.addHttpRow(list))} />
-      </Box>
-    </Box>
-  )
-}
-
-// 收起來的一區（Headers、Capture），開合記在草稿。
-function foldSection(ctx: TabContext, draft: HttpDraft, list: HttpFormList, label: string, rows: readonly { name: string }[], content: RenderChildren) {
-  const { w, a } = ctx
-  const isOpen = draft.unfolded.includes(list)
-  const count = rows.filter(r => r.name.trim() !== '').length
-
-  return (
-    <w.Box flexDirection="column" gap={1}>
-      {foldButton(ctx, `http:draft:fold:${list}`, label, count, isOpen, open => a.foldHttpDraft(list, open))}
-      {isOpen && <w.Box paddingLeft={2}>{content}</w.Box>}
-    </w.Box>
-  )
-}
-
-// 表單的選單（Folder、Method、Body）：開合記在草稿；選了 select 自己收起。
-function picker({ w, a }: TabContext, draft: HttpDraft, key: string, value: string, options: { value: string; label: string }[], onSelect: (value: string) => unknown) {
-  return w.select(`http:draft:${key}`, { value, options, onSelect, isOpen: draft.unfolded.includes(key), onToggle: isOpen => a.foldHttpDraft(key, isOpen) })
-}
-
-function bodyEditor(ctx: TabContext, f: HttpForm, onSave: (json: string) => unknown) {
-  const { w, a } = ctx
-  if (f.bodyKind === 'json') {
-    return w.field('http:draft:json', {
-      placeholder: '{ "user": "{{user}}" }',
-      value: f.json,
-      submitLabel: 'Save',
-      rows: JSON_ROWS,
-      onInput: json => a.typeHttpForm({ json }),
-      onSubmit: onSave,
-    })
-  }
-  if (f.bodyKind === 'form') return formRows(ctx, 'form', f.form, FIELD_ROW)
-  if (f.bodyKind === 'multipart') return formRows(ctx, 'parts', f.parts, { ...FIELD_ROW, file: 'Path, like ./avatar.png' })
-
-  return null
-}
-
-// 表單：Method、URL、Headers（展開）、Body（種類 + 它的框或欄位）、Capture（展開）；showName 時最上面多一格 Name（### 後面那段，
-// 檔案裡有好幾個請求的才有，其他的名稱是檔名）。Name、URL、JSON 按 Enter 就存。
-function formEditor(ctx: TabContext, draft: HttpDraft, showName: boolean) {
-  const { w, a } = ctx
-  const f = draft.form
-  const methods = FORM_METHODS.includes(f.method) ? FORM_METHODS : [...FORM_METHODS, f.method]
-  const saveWith = async (change: Parameters<typeof a.typeHttpForm>[0]) => {
-    await a.typeHttpForm(change)
-    await a.saveHttpDraft()
-  }
-
-  return (
-    <w.Box flexDirection="column" gap={1}>
-      {showName &&
-        formLine(
-          ctx,
-          'Name',
-          w.field('http:draft:name', {
-            placeholder: 'Optional, like Log in',
-            value: f.name,
-            submitLabel: 'Save',
-            onInput: name => a.typeHttpForm({ name }),
-            onSubmit: name => saveWith({ name }),
-          }),
-        )}
-      {formLine(
-        ctx,
-        'Method',
-        picker(
-          ctx,
-          draft,
-          'method',
-          f.method,
-          methods.map(m => ({ value: m, label: m })),
-          method => a.typeHttpForm({ method }),
-        ),
-      )}
-      {formLine(
-        ctx,
-        'URL',
-        w.field('http:draft:url', {
-          placeholder: 'https://example.com/users or {{host}}/users',
-          value: f.url,
-          submitLabel: 'Save',
-          onInput: url => a.typeHttpForm({ url }),
-          onSubmit: url => saveWith({ url }),
-        }),
-      )}
-      {foldSection(ctx, draft, 'headers', 'Headers', f.headers, formRows(ctx, 'headers', f.headers, { noun: 'Header', name: 'Authorization', value: 'Bearer {{token}}' }))}
-      {formLine(
-        ctx,
-        'Body',
-        picker(ctx, draft, 'body', f.bodyKind, BODY_KINDS, kind => a.typeHttpForm({ bodyKind: kind as HttpBodyKind })),
-      )}
-      {bodyEditor(ctx, f, json => saveWith({ json }))}
-      {foldSection(ctx, draft, 'captures', 'Capture', f.captures, formRows(ctx, 'captures', f.captures, { noun: 'Capture', name: 'token', value: 'body.data.token' }))}
-    </w.Box>
-  )
-}
-
-// 編輯：表單，或一個請求那段（### …）的原文（表單留不住的請求一打開就是這個）。
-// 一個請求一個檔：Folder、Name 就是它的資料夾和檔名（不寫 .http），改了存的時候搬檔；檔案裡有好幾個請求的只寫是哪個檔。
-// Enter 或 Save 寫檔，Cancel 不寫；Edit raw／Form 在兩種之間換。
+// 編輯：一個請求一個檔，Folder、Name 就是它的資料夾和檔名（不寫 .http），改了存的時候搬檔；檔案裡有好幾個請求的只寫是哪個檔。
+// 那段（### …）的原文只畫出來，按 Edit in vim 在新視窗的 vim 裡改，存了就跟到這裡。Name 按 Enter 或 Save 寫檔，Cancel 不寫。
 function editor(ctx: TabContext, draft: HttpDraft, r: HttpRequest | undefined) {
   const { w, d, a } = ctx
-  const { Box, Button, Text } = w
+  const { Box, Button, Code, Text } = w
   const isOwnFile = r?.isOwnFile ?? true
-  const isNewFolder = draft.unfolded.includes('new-folder')
+  const { isNewFolder } = draft
   const folders = httpFolders(d.http.requests)
   if (!isNewFolder && draft.folder !== '' && !folders.includes(draft.folder)) folders.push(draft.folder)
 
@@ -234,14 +77,14 @@ function editor(ctx: TabContext, draft: HttpDraft, r: HttpRequest | undefined) {
         formLine(
           ctx,
           'Folder',
-          picker(
-            ctx,
-            draft,
-            'folder',
-            isNewFolder ? NEW_FOLDER : draft.folder,
-            [{ value: '', label: '(None)' }, ...folders.map(f => ({ value: f, label: f })), { value: NEW_FOLDER, label: '+ New folder' }],
-            folder => a.pickHttpFolder(folder),
-          ),
+          // 開合記在草稿；選了 select 自己收起。
+          w.select('http:draft:folder', {
+            value: isNewFolder ? NEW_FOLDER : draft.folder,
+            options: [{ value: '', label: '(None)' }, ...folders.map(f => ({ value: f, label: f })), { value: NEW_FOLDER, label: '+ New folder' }],
+            onSelect: folder => a.pickHttpFolder(folder),
+            isOpen: draft.isPickingFolder,
+            onToggle: isOpen => a.openHttpFolderPicker(isOpen),
+          }),
         )}
       {isOwnFile &&
         isNewFolder &&
@@ -274,23 +117,14 @@ function editor(ctx: TabContext, draft: HttpDraft, r: HttpRequest | undefined) {
       ) : (
         <Text dimColor>{[draft.folder, fileTitle(draft.file)].filter(x => x !== '').join(' / ')}</Text>
       )}
-      {draft.isRaw
-        ? w.field('http:draft:text', {
-            placeholder: 'GET https://example.com',
-            value: draft.text,
-            submitLabel: 'Save',
-            rows: EDITOR_ROWS,
-            onInput: text => a.typeHttpDraft({ text }),
-            onSubmit: text => a.saveHttpDraft(text),
-          })
-        : formEditor(ctx, draft, !isOwnFile)}
+      <Code source={draft.text} path="request.http" startLine={1} />
       {d.httpBusy === 'draft' ? (
         <Text dimColor>Saving…</Text>
       ) : (
         <Box gap={1} justifyContent="center">
+          <Button key="http:draft:vim" label={d.httpVim ? 'Editing in vim…' : 'Edit in vim'} onPress={w.press(() => a.editHttpInVim())} />
           <Button key="http:draft:save" label="Save" variant="primary" onPress={w.press(() => a.saveHttpDraft())} />
           <Button key="http:draft:cancel" label="Cancel" onPress={w.press(() => a.closeHttpRequest())} />
-          <Button key="http:draft:raw" label={draft.isRaw ? 'Form' : 'Edit raw'} onPress={w.press(() => a.rawHttpDraft(!draft.isRaw))} />
         </Box>
       )}
       {d.http.draftError !== '' && <Text color="error">{d.http.draftError}</Text>}
@@ -433,8 +267,8 @@ function resultView(ctx: TabContext, res: HttpResult) {
         <Text bold color={isOk ? 'success' : 'error'}>{String(res.status)}</Text>
         <Text dimColor>{`${res.ms} ms · ${formatSize(res.size)}`}</Text>
       </Box>
-      {res.captured.length > 0 && <Text color="success">{`Captured ${res.captured.map(n => `{{${n}}}`).join(', ')}`}</Text>}
-      {res.missed.length > 0 && <Text color="warning">{`Not in the response, not captured: ${res.missed.map(n => `{{${n}}}`).join(', ')}`}</Text>}
+      {res.captured.length > 0 && <Text color="success">{`Captured ${braced(res.captured)}`}</Text>}
+      {res.missed.length > 0 && <Text color="warning">{`Not in the response, not captured: ${braced(res.missed)}`}</Text>}
       <Box flexDirection="column">
         {foldButton(ctx, 'http:headers', 'Headers', res.headers.length, isOpen, open => a.toggleHttpHeaders(open))}
         {isOpen &&
@@ -472,6 +306,41 @@ function editPage(ctx: TabContext, draft: HttpDraft) {
   )
 }
 
+// @prompt 的變數一個一格：打字跟著存（重開還在、每個環境共用），Enter 就送出；說明寫在右邊。
+function promptFields({ w, d, a }: TabContext, r: HttpRequest) {
+  const { Box, Text } = w
+  if (r.prompts.length === 0) return null
+
+  return (
+    <Box flexDirection="column" gap={1}>
+      {r.prompts.map(p => (
+        <Box key={`http:prompt:${p.name}:box`} gap={1} alignItems="center">
+          <Box flexShrink={0}>
+            <Text bold>{p.name}</Text>
+          </Box>
+          <Box flexGrow={1} flexShrink={1}>
+            {w.field(`http:prompt:${p.name}`, {
+              placeholder: 'Value',
+              value: d.http.prompted[p.name] ?? '',
+              submitLabel: 'Run',
+              onInput: value => a.typeHttpPrompt(p.name, value),
+              onSubmit: async value => {
+                await a.typeHttpPrompt(p.name, value)
+                await a.sendHttp()
+              },
+            })}
+          </Box>
+          {p.description !== '' && (
+            <Box flexShrink={1}>
+              <Text dimColor wrap="truncate-end">{p.description}</Text>
+            </Box>
+          )}
+        </Box>
+      ))}
+    </Box>
+  )
+}
+
 // 回應頁（清單的 Run）：一行方法和 URL（環境的值代換好，機密畫成 ••••••）、Run 再送一次、Edit，底下是回應。
 function requestView(ctx: TabContext) {
   const { w, d, a } = ctx
@@ -479,15 +348,14 @@ function requestView(ctx: TabContext) {
   const hv = d.http
   const r: HttpRequest | undefined = hv.requests.find(x => x.id === hv.open)
   if (r === undefined) return null
-  const sourceOf = (name: string) => variableSource(hv, d.httpCaptured, name)
+  const prompts = promptNames([r])
+  const sourceOf = (name: string) => variableSource(hv, d.httpCaptured, name, prompts)
   // 還沒有值的照寫 {{name}}。
   const show = (text: string) =>
     substitute(text, name => {
       const source = sourceOf(name)
-      if (source === 'captured') return d.httpCaptured[name]
-      if (source === 'env') return hv.vars[name]
 
-      return source === 'secret' ? MASK : undefined
+      return source === 'secret' ? MASK : variableValue(hv, d.httpCaptured, name, source)
     })
   const missing = variableNames(r).filter(n => sourceOf(n) === 'missing')
   const res = hv.result?.id === r.id ? hv.result : null
@@ -510,9 +378,10 @@ function requestView(ctx: TabContext) {
         <Text bold color="suggestion">{r.method}</Text>
         <Text wrap="truncate-end">{show(r.url)}</Text>
       </Box>
+      {promptFields(ctx, r)}
       {missing.length > 0 && (
         <Box gap={1} alignItems="center" flexWrap="wrap">
-          <Text color="warning">{`No value for ${missing.map(n => `{{${n}}}`).join(', ')}: paste it under`}</Text>
+          <Text color="warning">{`No value for ${braced(missing)}: paste it under`}</Text>
           <Button key="http:to-env" label="Environment" onPress={w.press(() => a.openHttpEnv(hv.env))} />
         </Box>
       )}
@@ -614,9 +483,10 @@ function envView(ctx: TabContext) {
   const { w, d, a } = ctx
   const { Box, Button, Text } = w
   const hv = d.http
-  const sourceOf = (name: string) => variableSource(hv, d.httpCaptured, name)
-  const used = new Set([...hv.requests.flatMap(variableNames), ...hv.secrets])
-  const secrets = [...used].filter(n => sourceOf(n) === 'secret' || sourceOf(n) === 'missing').sort()
+  // @prompt 的在請求那頁填，不列成要貼的機密。
+  const prompts = promptNames(hv.requests)
+  const isSecret = (name: string) => ['secret', 'missing'].includes(variableSource(hv, d.httpCaptured, name, prompts))
+  const secrets = [...new Set([...hv.requests.flatMap(variableNames), ...hv.secrets])].filter(isSecret).sort()
   const own = Object.entries(hv.ownVars)
   // $shared 的（這個環境沒有自己蓋掉的）。
   const shared = Object.entries(hv.vars).filter(([name]) => !Object.hasOwn(hv.ownVars, name))

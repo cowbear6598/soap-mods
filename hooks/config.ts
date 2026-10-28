@@ -269,9 +269,15 @@ export const HTTP_DIR = '.soap/http'
 export const HTTP_ENV_FILE = 'http-client.env.json'
 export const HTTP_ENV_KEY = 'http.env'
 export const HTTP_STORE_KEY = 'http.secrets'
+// @prompt 填的值：$.store 的 HTTP_PROMPT_KEY，依 session 資料夾，每個環境共用。
+export const HTTP_PROMPT_KEY = 'http.prompts'
 export const HTTP_KEYCHAIN_SERVICE = 'soap-mods-http'
-// 送出後最多等多久。
 export const HTTP_TIMEOUT_MS = 30_000
+// 編輯頁的 Folder 選單裡「+ New folder」的值（資料夾名稱不會有冒號）。
+export const NEW_FOLDER = ':new'
+// Edit in vim：那段請求寫成這個資料夾（. 開頭，列表不讀）底下的暫存檔，vim 開著時每 HTTP_VIM_POLL_MS 讀一次，存了就更新面板。
+export const HTTP_EDIT_DIR = `${HTTP_DIR}/.edit`
+export const HTTP_VIM_POLL_MS = 500
 // Keychain 讀機密（GitLab token、DB 密碼、HTTP 的機密）會跳視窗等人輸入密碼，最多等這麼久。
 export const KEYCHAIN_TIMEOUT_MS = 120_000
 // pipeline、job 狀態的顏色和符號；沒列到的（created、preparing…）照 pending 畫（ci/parse 的 statusStyle）。

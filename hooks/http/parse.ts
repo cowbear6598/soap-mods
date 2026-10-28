@@ -1,13 +1,14 @@
-import type { HttpCapture, HttpHeader, HttpRequest } from '../../types'
+import type { HttpCapture, HttpHeader, HttpPrompt, HttpRequest } from '../../types'
 import { byName } from '../files/list'
 import { splitPath } from '../git/parse'
 import { isObject } from '../json'
 import { cutAtLineEnd } from '../text'
 
 const METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'TRACE', 'CONNECT'])
-export const COMMENT = /^\s*(?:#|\/\/)/
-export const NAME_TAG = /^\s*(?:#|\/\/)\s*@name\s+(.+?)\s*$/
-export const CAPTURE_TAG = /^\s*(?:#|\/\/)\s*@capture\s+([\w.-]+)\s*=\s*(\S+)\s*$/
+const COMMENT = /^\s*(?:#|\/\/)/
+const NAME_TAG = /^\s*(?:#|\/\/)\s*@name\s+(.+?)\s*$/
+const CAPTURE_TAG = /^\s*(?:#|\/\/)\s*@capture\s+([\w.-]+)\s*=\s*(\S+)\s*$/
+const PROMPT_TAG = /^\s*(?:#|\/\/)\s*@prompt\s+([\w.-]+)(?:\s+(.*?))?\s*$/
 const HEADER = /^([^:\s][^:]*?)\s*:\s?(.*)$/
 // 變數：{{name}}，前後可以有空白；$ 開頭的是 REST Client 的系統變數（{{$guid}}），不管它。
 const VARIABLE = /\{\{\s*([^{}\s]+)\s*\}\}/g
@@ -41,18 +42,21 @@ function stripHandlers(lines: string[]) {
   return kept
 }
 
-// ### 之間的一段：前面的註解（@name、@capture）、請求那行、headers、空行後的 body。沒有請求那行的（只有註解）回 undefined。
+// ### 之間的一段：前面的註解（@name、@capture、@prompt）、請求那行、headers、空行後的 body。沒有請求那行的（只有註解）回 undefined。
 function parseBlock(file: string, index: number, block: number, raw: string, title: string, lines: string[]): Omit<HttpRequest, 'isOwnFile'> | undefined {
   let name = title
   const captures: HttpCapture[] = []
+  const prompts: HttpPrompt[] = []
   const headers: HttpHeader[] = []
   let at = 0
-  // 註解裡的 @name、@capture；其他註解跳過。是不是註解要先看：# 開頭的不是請求。
+  // 註解裡的 @name、@capture、@prompt；其他註解跳過。是不是註解要先看：# 開頭的不是請求。
   const note = (line: string) => {
     const tag = NAME_TAG.exec(line)
     if (tag !== null && name === '') name = tag[1] ?? ''
     const capture = CAPTURE_TAG.exec(line)
     if (capture !== null) captures.push({ name: capture[1] ?? '', path: capture[2] ?? '' })
+    const prompt = PROMPT_TAG.exec(line)
+    if (prompt !== null && !prompts.some(p => p.name === prompt[1])) prompts.push({ name: prompt[1] ?? '', description: prompt[2] ?? '' })
   }
 
   // 請求那行之前：空行、註解、REST Client 的檔案變數（@name = value，這裡不支援，跳過）。
@@ -88,7 +92,7 @@ function parseBlock(file: string, index: number, block: number, raw: string, tit
   }
   const body = stripHandlers(lines.slice(at)).join('\n').replace(/\s+$/, '')
 
-  return { id: `${file}#${index}`, file, index, block, raw, name, method, url, headers, body, captures }
+  return { id: `${file}#${index}`, file, index, block, raw, name, method, url, headers, body, captures, prompts }
 }
 
 /** A `.http` file's lines cut at each `###` line, the `###` line starting its block; block 0 is what comes before the first. Joined again they are the file. */
@@ -147,17 +151,36 @@ export function variableNames(r: HttpRequest): string[] {
   return [...new Set(names)]
 }
 
-/** Where `{{name}}` takes its value from: a capture of this environment, the env file, a saved secret, or nowhere yet. */
+export const promptNames = (requests: readonly HttpRequest[]) => new Set(requests.flatMap(r => r.prompts.map(p => p.name)))
+
+type VariableValues = { vars: Readonly<Record<string, string>>; secrets: readonly string[]; prompted: Readonly<Record<string, string>> }
+
+/**
+ * Where `{{name}}` takes its value from: a prompt (one of `prompts`, the `@prompt` names that apply; `unfilled` until it is filled in on
+ * the request's page), a capture of this environment, the env file, a saved secret, or nowhere yet (`missing`, pasted under Environment).
+ */
 export function variableSource(
-  v: { vars: Readonly<Record<string, string>>; secrets: readonly string[] },
+  v: VariableValues,
   captured: Readonly<Record<string, string>>,
   name: string,
-): 'captured' | 'env' | 'secret' | 'missing' {
+  prompts: ReadonlySet<string>,
+): 'prompt' | 'unfilled' | 'captured' | 'env' | 'secret' | 'missing' {
+  if (prompts.has(name)) return Object.hasOwn(v.prompted, name) ? 'prompt' : 'unfilled'
   if (Object.hasOwn(captured, name)) return 'captured'
   if (Object.hasOwn(v.vars, name)) return 'env'
 
   return v.secrets.includes(name) ? 'secret' : 'missing'
 }
+
+/** The value of a variable from a prompt, a capture or the env file; undefined for a secret (read only to send) or none. */
+export function variableValue(v: VariableValues, captured: Readonly<Record<string, string>>, name: string, source: ReturnType<typeof variableSource>) {
+  if (source === 'prompt') return v.prompted[name]
+  if (source === 'captured') return captured[name]
+
+  return source === 'env' ? v.vars[name] : undefined
+}
+
+export const braced = (names: readonly string[]) => names.map(n => `{{${n}}}`).join(', ')
 
 /** `text` with each `{{name}}` that `lookup` knows replaced; the rest stay as written. */
 export const substitute = (text: string, lookup: (name: string) => string | undefined) =>
@@ -181,7 +204,6 @@ export function capturePath(data: unknown, path: string): string | undefined {
   return typeof at === 'string' ? at : JSON.stringify(at)
 }
 
-/** JSON text parsed, undefined when it is not JSON. */
 export function parseJson(text: string): unknown {
   try {
     return JSON.parse(text) as unknown
@@ -190,8 +212,37 @@ export function parseJson(text: string): unknown {
   }
 }
 
-/** Text that starts like a JSON object or list. */
-export const looksJson = (text: string) => /^\s*[[{]/.test(text)
+const looksJson = (text: string) => /^\s*[[{]/.test(text)
+
+/**
+ * A JSON body with its comments (line and block) and the commas left before `}` or `]` taken out, as a server's JSON reader
+ * (System.Text.Json) refuses them; what is inside strings stays. Sent when Content-Type names JSON, or there is none and the body looks like JSON.
+ */
+export function plainJson(text: string, contentType: string): string {
+  if (!(contentType === '' ? looksJson(text) : /json/i.test(contentType))) return text
+  let out = ''
+  let at = 0
+  while (at < text.length) {
+    const c = text[at] ?? ''
+    if (c === '"') {
+      let end = at + 1
+      while (end < text.length && text[end] !== '"' && text[end] !== '\n') end += text[end] === '\\' ? 2 : 1
+      out += text.slice(at, end + 1)
+      at = end + 1
+    } else if (text.startsWith('//', at)) {
+      while (at < text.length && text[at] !== '\n') at += 1
+    } else if (text.startsWith('/*', at)) {
+      const end = text.indexOf('*/', at + 2)
+      at = end < 0 ? text.length : end + 2
+    } else {
+      out += c
+      at += 1
+    }
+  }
+
+  // 註解拿掉後才看得到的：最後一項被註解掉，留下的逗號。
+  return out.replace(/("(?:[^"\\\n]|\\.)*")|,(\s*[}\]])/g, (whole, str: string | undefined, close: string | undefined) => str ?? close ?? whole)
+}
 
 /** Adds a header to a record, a repeated one joined with `, ` as HTTP folds them. */
 export function addHeader(headers: Record<string, string>, name: string, value: string) {
@@ -228,7 +279,6 @@ export const fileTitle = (file: string) => splitPath(file).name.replace(/\.http$
 /** The folder under `.soap/http` a request file is in (one level), '' for none. */
 export const folderOf = (file: string) => splitPath(file).dir
 
-/** The folders the requests are in, by name. */
 export const httpFolders = (requests: readonly HttpRequest[]) => [...new Set(requests.map(r => folderOf(r.file)))].filter(f => f !== '').sort(byName)
 
 /** The request's name on the panel: its file's for a file's only request, else the text after `###`, else the method and URL. */

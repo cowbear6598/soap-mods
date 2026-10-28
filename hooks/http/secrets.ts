@@ -1,10 +1,11 @@
 // HTTP 子分頁的機密：請求用到、環境檔沒有的變數，貼在面板上，依 session 資料夾和環境各存一份，存法見 secret.ts（一個 session 每項只問一次 Keychain）。
 // 值不經過命令列、不寫進檔案，也不進對話。$.store 的 HTTP_STORE_KEY 只記存了哪些（macOS 是記號、Windows 是密文）：
 // { [session 資料夾]: { [環境]: { [變數]: 記號或密文 } } }。選的環境放在 HTTP_ENV_KEY：{ [session 資料夾]: 環境 }。
+// @prompt 填的值不是機密，明文放在 HTTP_PROMPT_KEY：{ [session 資料夾]: { [變數]: 值 } }。
 
-import { HTTP_ENV_KEY, HTTP_KEYCHAIN_SERVICE, HTTP_STORE_KEY } from '../config'
+import { HTTP_ENV_KEY, HTTP_KEYCHAIN_SERVICE, HTTP_PROMPT_KEY, HTTP_STORE_KEY } from '../config'
 import type { Io } from '../io'
-import { isObject } from '../json'
+import { isObject, obj, texts } from '../json'
 import { deleteSecret, readSecret, saveSecret, toHex } from '../secret'
 
 type Saved = Record<string, Record<string, Record<string, string>>>
@@ -22,7 +23,7 @@ async function readSaved(io: Io): Promise<Saved> {
     saved[root] = {}
     for (const [env, names] of Object.entries(envs)) {
       if (!isObject(names)) continue
-      saved[root][env] = Object.fromEntries(Object.entries(names).filter((e): e is [string, string] => typeof e[1] === 'string' && e[1] !== ''))
+      saved[root][env] = Object.fromEntries(Object.entries(texts(names)).filter(e => e[1] !== ''))
     }
   }
 
@@ -68,4 +69,23 @@ export async function savedEnv(io: Io, root: string): Promise<string> {
 export async function saveEnv(io: Io, root: string, env: string) {
   const raw = await io.storeGet(HTTP_ENV_KEY)
   await io.storeSet(HTTP_ENV_KEY, { ...(isObject(raw) ? raw : {}), [root]: env })
+}
+
+// $.store 裡的值不信任：只留文字。
+async function readPrompts(io: Io): Promise<Record<string, Record<string, string>>> {
+  return Object.fromEntries(Object.entries(obj(await io.storeGet(HTTP_PROMPT_KEY))).map(([root, names]) => [root, texts(names)]))
+}
+
+export async function savedPrompts(io: Io, root: string): Promise<Record<string, string>> {
+  return (await readPrompts(io))[root] ?? {}
+}
+
+/** Keeps a `@prompt` value for this session folder; '' forgets it. Resolves the values now kept. */
+export async function savePrompt(io: Io, root: string, name: string, value: string): Promise<Record<string, string>> {
+  const saved = await readPrompts(io)
+  const { [name]: _old, ...rest } = saved[root] ?? {}
+  const values = value === '' ? rest : { ...rest, [name]: value }
+  await io.storeSet(HTTP_PROMPT_KEY, { ...saved, [root]: values })
+
+  return values
 }

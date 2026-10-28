@@ -1,7 +1,7 @@
 import type { HttpInit, ProcessRunInit } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
-import { FOLDER_COLOR, HTTP_ENV_KEY, HTTP_STORE_KEY } from '../../hooks/config'
+import { FOLDER_COLOR, HTTP_ENV_KEY, HTTP_PROMPT_KEY, HTTP_STORE_KEY, HTTP_VIM_POLL_MS } from '../../hooks/config'
 import { KEYCHAIN, toHex } from '../../hooks/secret'
 import { type Pane, type TestOn, endTurn, fakeKeychain, fsEntry, json, mountPane, ok, openTool, posix, stubPanel, stubStore } from '../test-fixtures'
 
@@ -39,7 +39,7 @@ async function useEnv(ui: Pane, env: string) {
 const ENV = JSON.stringify({ $shared: { version: 'v1' }, dev: { host: 'http://localhost:3000' }, prod: { host: 'https://api.example.com' } })
 
 // HTTP 子分頁要的引擎回應：/proj/.soap/http 的檔案（給了才有這個資料夾）、$.store 放在記憶體、Keychain 是 fakeKeychain，
-// http.fetch 交給 answer（沒給就 200 回 { id: 1 }），curl 交給 curl（拿 stdin 的設定），rm 刪掉那個檔。記下每個程序、每次 fetch、toast。
+// http.fetch 交給 answer（沒給就 200 回 { id: 1 }），curl 交給 curl（拿 stdin 的設定），rm 刪掉那個檔，osascript 是開了 vim 的視窗。記下每個程序、每次 fetch、toast。
 function httpWorld(
   on: TestOn,
   { files, answer, curl }: { files?: Record<string, string>; answer?: (f: Fetch) => unknown; curl?: (config: string) => unknown } = {},
@@ -90,6 +90,8 @@ function httpWorld(
   on('process.run', (_$, e) => {
     runs.push(e)
     if (e.argv[0] === 'curl') return (curl?.(e.init?.stdin ?? '') ?? ok('')) as never
+    // Edit in vim 開的 Terminal 視窗是 42。
+    if (e.argv[0] === 'osascript') return ok(e.argv.includes('return id of front window') ? '42\n' : '')
     if (e.argv[0] === 'rm') {
       const { [at(e.argv.at(-1)) ?? '']: _, ...rest } = state.files ?? {}
       state.files = rest
@@ -128,37 +130,45 @@ test('the top tabs are Files, Git, Tools and Docs; with no .soap/http the HTTP s
   await ui.unmount()
 })
 
+// Edit in vim：按了開新視窗的 vim（osascript），把暫存檔改成 text，isDone 時也寫 done（vim 結束），等面板讀到。
+async function vimEdit(ui: Pane, world: ReturnType<typeof httpWorld>, text: string, isDone = true) {
+  if ((await label(ui, 'http:draft:vim')) === 'Edit in vim') await ui.press({ key: 'http:draft:vim' })
+  const tmp = Object.keys(world.state.files ?? {}).find(f => f.startsWith('.edit/') && f.endsWith('.http')) ?? ''
+  world.state.files = { ...world.state.files, [tmp]: `${text}\n`, ...(isDone ? { [tmp.replace(/\.http$/, '.done')]: '' } : {}) }
+  await world.clock.advance(HTTP_VIM_POLL_MS)
+  for (let i = 0; i < 20; i++) await world.clock.advance(0)
+}
+
+const label = async (ui: Pane, key: string) => String((await ui.find({ key }))?.props.label)
+const shown = async (ui: Pane) => (await codes(ui))[0]
+
 test('New writes a request into its own file under .soap/http, the name being the file name without .http', async ($, on) => {
   const world = httpWorld(on)
   const ui = await mountPane($)
   await openTool(ui, 'http')
   await ui.press({ key: 'http:new' })
-  // Edit raw：表單寫成原文。
-  await ui.press({ key: 'http:draft:raw' })
-  expect((await ui.find({ key: 'http:draft:text' }))?.props.value).toBe('###\nGET ')
-  expect(await ui.find({ key: 'http:draft:url' })).toBeUndefined()
-
+  expect(await shown(ui)).toBe('GET https://example.com')
   // 名稱只能是 .soap/http 底下的一個檔：../x 不寫，說哪裡不對。
-  await ui.input({ key: 'http:draft:file', text: '../x', kind: 'change' })
-  await ui.input({ key: 'http:draft:text', text: 'GET https://x.test/users' })
+  await ui.input({ key: 'http:draft:file', text: '../x' })
   expect(await ui.find({ type: 'Text', text: /^A name has only letters/ })).toBeDefined()
   expect(world.state.files).toBeUndefined()
 
   // 打字跟著存草稿，Save 拿那份；沒寫 ### 的補一行，檔名補 .http。
   await ui.input({ key: 'http:draft:file', text: 'users', kind: 'change' })
-  await ui.input({ key: 'http:draft:text', text: 'GET https://x.test/users', kind: 'change' })
+  await vimEdit(ui, world, 'GET https://x.test/users')
+  expect(await shown(ui)).toBe('GET https://x.test/users')
   await ui.press({ key: 'http:draft:save' })
   expect(world.state.files).toEqual({ 'users.http': '###\nGET https://x.test/users\n' })
   // 存完回清單，一列是名稱（沒有 .http）。
   expect(world.toasts).toContain('Saved users')
-  expect(await ui.find({ key: 'http:draft:text' })).toBeUndefined()
+  expect(await ui.find({ key: 'http:draft:save' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: 'users' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'users.http' })).toBeUndefined()
 
-  // 名稱已經有了：不寫，不接到那個檔後面。
+  // 名稱已經有了：不寫，不接到那個檔後面；Name 按 Enter 就存。
   await ui.press({ key: 'http:new' })
-  await ui.input({ key: 'http:draft:file', text: 'users', kind: 'change' })
-  await ui.input({ key: 'http:draft:url', text: 'https://x.test/two' })
+  await vimEdit(ui, world, 'GET https://x.test/two')
+  await ui.input({ key: 'http:draft:file', text: 'users' })
   expect(await ui.find({ type: 'Text', text: 'There is already users; pick another name.' })).toBeDefined()
   await ui.input({ key: 'http:draft:file', text: 'two' })
   expect(world.state.files).toEqual({ 'users.http': '###\nGET https://x.test/users\n', 'two.http': '###\nGET https://x.test/two\n' })
@@ -169,24 +179,22 @@ test("Edit rewrites only the opened request's block, keeping CRLF; a file change
   const world = httpWorld(on, { files: { 'api.http': '### A\r\nGET https://x.test/a\r\n\r\n### B\r\nGET https://x.test/b\r\n' } })
   const ui = await mountPane($)
   await openTool(ui, 'http')
-  // 點一列直接編輯；表單讀得回來的請求是表單。
+  // 點一列直接編輯：它那段的原文。
   await ui.press({ key: 'http:req:api.http#0' })
-  expect((await ui.find({ key: 'http:draft:name' }))?.props.value).toBe('A')
-  expect((await ui.find({ key: 'http:draft:url' }))?.props.value).toBe('https://x.test/a')
-  await ui.press({ key: 'http:draft:raw' })
-  expect((await ui.find({ key: 'http:draft:text' }))?.props.value).toBe('### A\nGET https://x.test/a')
+  expect(await shown(ui)).toBe('### A\nGET https://x.test/a')
   expect(await ui.find({ key: 'http:send' })).toBeUndefined()
-  await ui.input({ key: 'http:draft:text', text: '### A2\nPOST https://x.test/a2\nX-Y: 1' })
+  await vimEdit(ui, world, '### A2\nPOST https://x.test/a2\nX-Y: 1')
+  await ui.press({ key: 'http:draft:save' })
   expect(world.state.files?.['api.http']).toBe('### A2\r\nPOST https://x.test/a2\r\nX-Y: 1\r\n\r\n### B\r\nGET https://x.test/b\r\n')
   // 存完回清單。
   expect(await ui.find({ type: 'Text', text: 'A2' })).toBeDefined()
-  expect(await ui.find({ key: 'http:draft:text' })).toBeUndefined()
+  expect(await ui.find({ key: 'http:draft:save' })).toBeUndefined()
 
   // 編輯期間檔案被改了：不寫，請重開。
   await ui.press({ key: 'http:req:api.http#0' })
-  await ui.press({ key: 'http:draft:raw' })
   world.state.files = { 'api.http': '### A3\r\nGET https://x.test/a3\r\n\r\n### B\r\nGET https://x.test/b\r\n' }
-  await ui.input({ key: 'http:draft:text', text: '### mine\nGET https://x.test/mine' })
+  await vimEdit(ui, world, '### mine\nGET https://x.test/mine')
+  await ui.press({ key: 'http:draft:save' })
   expect(await ui.find({ type: 'Text', text: 'api.http changed since it was read; Cancel and open the request again.' })).toBeDefined()
   expect(world.state.files['api.http']).toContain('A3')
   await ui.press({ key: 'http:draft:cancel' })
@@ -202,69 +210,31 @@ test("Edit rewrites only the opened request's block, keeping CRLF; a file change
   await ui.unmount()
 })
 
-const label = async (ui: Pane, key: string) => String((await ui.find({ key }))?.props.label)
-
-test('the form writes a request: Method picked, URL, Headers and Capture unfolded in place, a JSON body; Edit opens it as the form again', async ($, on) => {
-  const world = httpWorld(on)
+test('Edit in vim opens the block in a new Terminal window, shows each save there, and closes the window when vim ends', async ($, on) => {
+  const world = httpWorld(on, { files: { 'a.http': '### A\nGET https://x.test/a\n' } })
   const ui = await mountPane($)
   await openTool(ui, 'http')
-  await ui.press({ key: 'http:new' })
-  await ui.input({ key: 'http:draft:file', text: 'login', kind: 'change' })
-  await ui.press({ key: 'http:draft:method' })
-  await ui.press({ key: 'http:draft:method:POST' })
-  // 選了就收起來。
-  expect(await ui.find({ key: 'http:draft:method:GET' })).toBeUndefined()
-  await ui.input({ key: 'http:draft:url', text: '{{host}}/login', kind: 'change' })
+  await ui.press({ key: 'http:req:a.http#0' })
+  await ui.press({ key: 'http:draft:vim' })
+  const tmp = Object.keys(world.state.files ?? {}).find(f => f.startsWith('.edit/')) ?? ''
+  expect(world.state.files?.[tmp]).toBe('### A\nGET https://x.test/a\n')
+  // 路徑從參數給 osascript，不拼進 AppleScript。
+  const open = world.runs.find(r => r.argv[0] === 'osascript')?.argv ?? []
+  expect(open.slice(-2)).toEqual([`${DIR}/${tmp}`, `${DIR}/${tmp.replace(/\.http$/, '.done')}`])
+  expect(await label(ui, 'http:draft:vim')).toBe('Editing in vim…')
 
-  // Headers 收著，點了原地展開；✕ 拿掉一列。
-  expect(await label(ui, 'http:draft:fold:headers')).toBe('▸ Headers (0)')
-  expect(await ui.find({ key: 'http:draft:headers:add' })).toBeUndefined()
-  await ui.press({ key: 'http:draft:fold:headers' })
-  await ui.press({ key: 'http:draft:headers:add' })
-  await ui.input({ key: 'http:draft:headers:0:name', text: 'Authorization', kind: 'change' })
-  await ui.input({ key: 'http:draft:headers:0:value', text: 'Bearer {{token}}', kind: 'change' })
-  await ui.press({ key: 'http:draft:headers:add' })
-  await ui.input({ key: 'http:draft:headers:1:name', text: 'X-Gone', kind: 'change' })
-  await ui.press({ key: 'http:draft:headers:1:delete' })
-  expect(await label(ui, 'http:draft:fold:headers')).toBe('▾ Headers (1)')
-
-  await ui.press({ key: 'http:draft:body' })
-  await ui.press({ key: 'http:draft:body:json' })
-  await ui.input({ key: 'http:draft:json', text: '{ "user": "me", "n": {{n}} }', kind: 'change' })
-
-  await ui.press({ key: 'http:draft:fold:captures' })
-  await ui.press({ key: 'http:draft:captures:add' })
-  await ui.input({ key: 'http:draft:captures:0:name', text: 'token', kind: 'change' })
-  await ui.input({ key: 'http:draft:captures:0:value', text: 'body.data.token', kind: 'change' })
+  // vim 裡 :w 就跟到面板，還開著。
+  await vimEdit(ui, world, '### A\nGET https://x.test/saved', false)
+  expect(await shown(ui)).toBe('### A\nGET https://x.test/saved')
+  expect(await label(ui, 'http:draft:vim')).toBe('Editing in vim…')
+  // :wq：讀最後一次，關掉那個視窗，暫存檔刪掉。
+  await vimEdit(ui, world, '### A\nGET https://x.test/done')
+  expect(await shown(ui)).toBe('### A\nGET https://x.test/done')
+  expect(await label(ui, 'http:draft:vim')).toBe('Edit in vim')
+  expect(world.runs.filter(r => r.argv[0] === 'osascript').at(-1)?.argv.at(-1)).toBe('42')
+  expect(Object.keys(world.state.files ?? {})).toEqual(['a.http'])
   await ui.press({ key: 'http:draft:save' })
-  expect(world.state.files).toEqual({
-    'login.http':
-      '###\n# @capture token = body.data.token\nPOST {{host}}/login\nAuthorization: Bearer {{token}}\nContent-Type: application/json\n\n{ "user": "me", "n": {{n}} }\n',
-  })
-  expect(await ui.find({ type: 'Text', text: 'login' })).toBeDefined()
-
-  // 再打開還是表單，Content-Type 不列在 Headers（Body 自己寫）。
-  await ui.press({ key: 'http:req:login.http#0' })
-  expect((await ui.find({ key: 'http:draft:file' }))?.props.value).toBe('login')
-  expect((await ui.find({ key: 'http:draft:json' }))?.props.value).toBe('{ "user": "me", "n": {{n}} }')
-  expect(await label(ui, 'http:draft:fold:headers')).toBe('▸ Headers (1)')
-  expect(await label(ui, 'http:draft:fold:captures')).toBe('▸ Capture (1)')
-
-  // 換成 Form：欄位裡的 & = 編碼，{{變數}} 照留；改名稱就是改檔名，URL 按 Enter 就存。
-  await ui.press({ key: 'http:draft:body' })
-  await ui.press({ key: 'http:draft:body:form' })
-  await ui.press({ key: 'http:draft:form:add' })
-  await ui.input({ key: 'http:draft:form:0:name', text: 'q', kind: 'change' })
-  await ui.input({ key: 'http:draft:form:0:value', text: 'a&b=c {{x}}', kind: 'change' })
-  await ui.input({ key: 'http:draft:file', text: 'search', kind: 'change' })
-  await ui.input({ key: 'http:draft:url', text: '{{host}}/search' })
-  expect(world.state.files).toEqual({
-    'search.http':
-      '###\n# @capture token = body.data.token\nPOST {{host}}/search\nAuthorization: Bearer {{token}}\nContent-Type: application/x-www-form-urlencoded\n\nq=a%26b%3Dc {{x}}\n',
-  })
-  expect(await ui.find({ type: 'Text', text: 'search' })).toBeDefined()
-  await ui.press({ key: 'http:req:search.http#0' })
-  expect((await ui.find({ key: 'http:draft:form:0:value' }))?.props.value).toBe('a&b=c {{x}}')
+  expect(world.state.files?.['a.http']).toBe('### A\nGET https://x.test/done\n')
   await ui.unmount()
 })
 
@@ -273,7 +243,7 @@ test('Save goes back to the list only once the files are read again, so the row 
   const ui = await mountPane($)
   await openTool(ui, 'http')
   await ui.press({ key: 'http:req:a.http#0' })
-  await ui.input({ key: 'http:draft:url', text: 'https://x.test/new', kind: 'change' })
+  await vimEdit(ui, world, '###\nGET https://x.test/new')
   let release = () => undefined as void
   world.state.hold = new Promise(resolve => {
     release = resolve
@@ -287,7 +257,7 @@ test('Save goes back to the list only once the files are read again, so the row 
   release()
   await saving
   await ui.press({ key: 'http:req:a.http#0' })
-  expect((await ui.find({ key: 'http:draft:url' }))?.props.value).toBe('https://x.test/new')
+  expect(await shown(ui)).toBe('###\nGET https://x.test/new')
   await ui.unmount()
 })
 
@@ -299,7 +269,7 @@ test('a request goes in a folder picked or added in the editor; folders fold on 
   expect(await reqRows(ui)).toEqual(['http:req:賽事/刷新.http#0', 'http:req:a.http#0'])
   expect(await label(ui, 'http:folder:賽事')).toBe('▾ 賽事 (1)')
   // 資料夾的顏色同 Files、Wiki 的資料夾；列表的空白畫成不換行空白。
-  expect((await ui.find({ type: 'Text', text: '▾\u00a0賽事\u00a0(1)' }))?.props.color).toBe(FOLDER_COLOR)
+  expect((await ui.find({ type: 'Text', text: '▾ 賽事 (1)' }))?.props.color).toBe(FOLDER_COLOR)
   expect(await ui.find({ type: 'Text', text: '刷新' })).toBeDefined()
 
   // + New folder：打名稱，存的時候建立。
@@ -308,9 +278,8 @@ test('a request goes in a folder picked or added in the editor; folders fold on 
   expect(await label(ui, 'http:draft:folder:賽事')).toMatch(/賽事/)
   await ui.press({ key: 'http:draft:folder::new' })
   await ui.input({ key: 'http:draft:new-folder', text: '會員', kind: 'change' })
-  await ui.input({ key: 'http:draft:file', text: '登入', kind: 'change' })
-  await ui.input({ key: 'http:draft:url', text: 'https://x.test/login' })
-  expect(world.state.files?.['會員/登入.http']).toBe('###\nGET https://x.test/login\n')
+  await ui.input({ key: 'http:draft:file', text: '登入' })
+  expect(world.state.files?.['會員/登入.http']).toBe('###\nGET https://example.com\n')
   expect(await reqRows(ui)).toEqual(['http:req:會員/登入.http#0', 'http:req:賽事/刷新.http#0', 'http:req:a.http#0'])
 
   // 收起來記著。
@@ -338,64 +307,32 @@ test('a request goes in a folder picked or added in the editor; folders fold on 
   await ui.unmount()
 })
 
-test('a request the form cannot keep opens as text, and Form says why until it can', async ($, on) => {
-  httpWorld(on, { files: { 'a.http': '### A\n# just a note\nGET https://x.test/a\n' } })
-  const ui = await mountPane($)
-  await openTool(ui, 'http')
-  await ui.press({ key: 'http:req:a.http#0' })
-  expect((await ui.find({ key: 'http:draft:text' }))?.props.value).toBe('### A\n# just a note\nGET https://x.test/a')
-  expect(await ui.find({ key: 'http:draft:url' })).toBeUndefined()
-  expect(await label(ui, 'http:draft:raw')).toBe('Form')
-  await ui.press({ key: 'http:draft:raw' })
-  expect(await ui.find({ type: 'Text', text: /^The form can't keep everything here/ })).toBeDefined()
-  await ui.input({ key: 'http:draft:text', text: '### A\nGET https://x.test/a', kind: 'change' })
-  await ui.press({ key: 'http:draft:raw' })
-  expect((await ui.find({ key: 'http:draft:url' }))?.props.value).toBe('https://x.test/a')
-  await ui.unmount()
-})
-
-test('a multipart request is written from the form and sent through curl, its settings on stdin', async ($, on) => {
+test('a multipart request is sent through curl, its settings on stdin, a file relative to its .http file', async ($, on) => {
   const world = httpWorld(on, {
-    files: { 'http-client.env.json': ENV, 'a.png': '' },
+    files: {
+      'http-client.env.json': ENV,
+      'a.png': '',
+      'upload.http': [
+        '###',
+        'POST {{host}}/upload',
+        'Content-Type: multipart/form-data; boundary=----SoapBoundary',
+        '',
+        '------SoapBoundary',
+        'Content-Disposition: form-data; name="title"',
+        '',
+        'hi',
+        '------SoapBoundary',
+        'Content-Disposition: form-data; name="file"; filename="a.png"',
+        '',
+        '< ./a.png',
+        '------SoapBoundary--',
+        '',
+      ].join('\n'),
+    },
     curl: () => ok('HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 201 Created\r\nContent-Type: application/json\r\n\r\n{"id":7}'),
   })
   const ui = await mountPane($)
   await openTool(ui, 'http')
-  await ui.press({ key: 'http:new' })
-  await ui.input({ key: 'http:draft:file', text: 'upload', kind: 'change' })
-  await ui.press({ key: 'http:draft:method' })
-  await ui.press({ key: 'http:draft:method:POST' })
-  await ui.input({ key: 'http:draft:url', text: '{{host}}/upload', kind: 'change' })
-  await ui.press({ key: 'http:draft:body' })
-  await ui.press({ key: 'http:draft:body:multipart' })
-  await ui.press({ key: 'http:draft:parts:add' })
-  await ui.input({ key: 'http:draft:parts:0:name', text: 'title', kind: 'change' })
-  await ui.input({ key: 'http:draft:parts:0:value', text: 'hi', kind: 'change' })
-  await ui.press({ key: 'http:draft:parts:add' })
-  await ui.input({ key: 'http:draft:parts:1:name', text: 'file', kind: 'change' })
-  await ui.press({ key: 'http:draft:parts:1:kind' })
-  expect(await label(ui, 'http:draft:parts:1:kind')).toBe('File')
-  await ui.input({ key: 'http:draft:parts:1:value', text: './a.png', kind: 'change' })
-  await ui.press({ key: 'http:draft:save' })
-  expect(world.state.files?.['upload.http']).toBe(
-    [
-      '###',
-      'POST {{host}}/upload',
-      'Content-Type: multipart/form-data; boundary=----SoapBoundary',
-      '',
-      '------SoapBoundary',
-      'Content-Disposition: form-data; name="title"',
-      '',
-      'hi',
-      '------SoapBoundary',
-      'Content-Disposition: form-data; name="file"; filename="a.png"',
-      '',
-      '< ./a.png',
-      '------SoapBoundary--',
-      '',
-    ].join('\n'),
-  )
-
   // 送出走 curl，不是 $.http.fetch；Content-Type 不帶（curl 自己寫 boundary），100 Continue 跳過。
   await ui.press({ key: 'http:run:upload.http#0' })
   expect(world.fetches).toEqual([])
@@ -513,6 +450,57 @@ test('requests are listed by file and ###; Run sends one with the picked environ
   expect(await ui.find({ type: 'Text', text: 'x-request-id:' })).toBeUndefined()
   await ui.press({ key: 'http:headers' })
   expect(await ui.find({ type: 'Text', text: 'x-request-id:' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a # @prompt variable is filled in on the request page, kept by session folder for every environment, and Enter sends it without the JSON comments', async ($, on) => {
+  const world = httpWorld(on, {
+    files: {
+      'http-client.env.json': ENV,
+      'stream.http': [
+        '### 開聊天室',
+        '# @prompt RealMatchId 比賽 ID',
+        'POST {{host}}/open',
+        'Content-Type: application/json',
+        '',
+        '{',
+        '  "SmartUrl": "https://storage.googleapis.com/", // SampleSite(4227600)',
+        '  /* 需隱藏的訊源 */',
+        '  "MatchInfo": {',
+        '    "RealMatchId": {{RealMatchId}},',
+        '    // "AnchorId": 13',
+        '  },',
+        '}',
+        '',
+      ].join('\n'),
+    },
+  })
+  // 存在 $.store（重開還在），依 session 資料夾：別的資料夾填的不算。
+  world.store[HTTP_PROMPT_KEY] = { '/other': { RealMatchId: '1' } }
+  const ui = await mountPane($, 'desktop')
+  await openTool(ui, 'http')
+  // 還沒填：Run 打開回應頁，說要先填，不送。
+  await ui.press({ key: 'http:run:stream.http#0' })
+  expect(world.fetches).toEqual([])
+  expect(await ui.find({ type: 'Text', text: 'Fill in {{RealMatchId}} first.' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '比賽 ID' })).toBeDefined()
+  // 不叫人去 Environment 貼。
+  expect(await ui.find({ key: 'http:to-env' })).toBeUndefined()
+
+  // 打字跟著存，Enter 就送出；值照寫進 body（數字不加引號）。註解和它留下的逗號不送（伺服器的 JSON 不收），字串裡的 // 照留。
+  await ui.input({ key: 'http:prompt:RealMatchId', text: '136623254' })
+  const sent = { SmartUrl: 'https://storage.googleapis.com/', MatchInfo: { RealMatchId: 136623254 } }
+  expect(JSON.parse(String(world.fetches[0]?.init?.body))).toEqual(sent)
+  expect(world.store[HTTP_PROMPT_KEY]).toEqual({ '/other': { RealMatchId: '1' }, '/proj': { RealMatchId: '136623254' } })
+
+  // 換環境也是同一個值；Environment 不把它列成機密。
+  await useEnv(ui, 'prod')
+  expect(await ui.find({ key: 'http:var:RealMatchId' })).toBeUndefined()
+  await page(ui, 'api')
+  expect((await ui.find({ key: 'http:prompt:RealMatchId' }))?.props.value).toBe('136623254')
+  await ui.press({ key: 'http:send' })
+  expect(world.fetches.map(f => f.url)).toEqual(['http://localhost:3000/open', 'https://api.example.com/open'])
+  expect(JSON.parse(String(world.fetches[1]?.init?.body))).toEqual(sent)
   await ui.unmount()
 })
 

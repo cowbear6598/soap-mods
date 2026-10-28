@@ -1,7 +1,7 @@
 import type { HttpInit, HttpResponse, Timer } from 'claude-code'
 
-import type { HttpDraft, HttpForm, HttpFormList, HttpPage, HttpPart, HttpRequest, HttpResult, HttpView } from '../../types'
-import { HTTP_DIR, HTTP_ENV_FILE, HTTP_TIMEOUT_MS } from '../config'
+import type { HttpDraft, HttpPage, HttpPart, HttpRequest, HttpResult, HttpView } from '../../types'
+import { HTTP_DIR, HTTP_EDIT_DIR, HTTP_ENV_FILE, HTTP_TIMEOUT_MS, HTTP_VIM_POLL_MS, NEW_FOLDER } from '../config'
 import { errorText, failure, isMissingCommand } from '../errors'
 import { absPath, childPath } from '../files/list'
 import { splitPath } from '../git/parse'
@@ -10,10 +10,11 @@ import type { Io } from '../io'
 import { latestOnly } from '../latest'
 import { busyFlag, disarm, isConfirmed, removePath } from '../shell'
 import type { HttpBusy } from '../ui/actions'
-import { BLANK_FORM, type CurlRequest, NEW_FOLDER, contentTypeOf, curlConfig, curlResponse, formError, formOf, formText, partsOf } from './form'
+import { type CurlRequest, contentTypeOf, curlConfig, curlResponse, partsOf } from './multipart'
 import {
   addHeader,
   blockText,
+  braced,
   capturePath,
   envNames,
   envVars,
@@ -24,12 +25,16 @@ import {
   parseEnvFile,
   parseHttpFile,
   parseJson,
+  plainJson,
+  promptNames,
   substitute,
   utf8Size,
   variableNames,
   variableSource,
+  variableValue,
 } from './parse'
-import { deleteHttpSecret, readHttpSecret, saveEnv, saveHttpSecret, savedEnv, savedSecrets } from './secrets'
+import { deleteHttpSecret, readHttpSecret, saveEnv, saveHttpSecret, savePrompt, savedEnv, savedPrompts, savedSecrets } from './secrets'
+import { closeVim, openVim } from './vim'
 
 export type HttpIo = Io & {
   getHttp: () => Promise<HttpView>
@@ -100,7 +105,7 @@ export async function reloadHttp(io: HttpIo) {
   const isStale = loads.start()
   const root = await io.root()
   const dir = `${root}/${HTTP_DIR}`
-  const [listed, { envs, envError }, picked, prev] = await Promise.all([readRequests(io, dir), readEnvs(io, dir), savedEnv(io, root), io.getHttp()])
+  const [listed, { envs, envError }, picked, prompted, prev] = await Promise.all([readRequests(io, dir), readEnvs(io, dir), savedEnv(io, root), savedPrompts(io, root), io.getHttp()])
   const names = envNames(envs)
   // 記著的環境不在檔案裡了（改名、刪掉）就用第一個。
   const env = names.includes(picked) ? picked : (names[0] ?? '')
@@ -118,6 +123,7 @@ export async function reloadHttp(io: HttpIo) {
     ...(env === '' ? { isEnvOpen: false, varDraft: null } : {}),
     envError,
     secrets,
+    prompted,
     ...(isGone ? NO_REQUEST : {}),
   })
 }
@@ -146,50 +152,42 @@ export async function closeHttpRequest(io: HttpIo) {
   await io.setHttp(NO_REQUEST)
 }
 
-// 空白的表單；一個請求一個檔，名稱就是檔名，存的時候建立。
+// 新請求從這段開始改（存的時候補 ###）。
+const NEW_TEXT = 'GET https://example.com'
+
+// 一個請求一個檔，名稱就是檔名，存的時候建立。
 export async function newHttpRequest(io: HttpIo) {
-  const draft: HttpDraft = { kind: 'new', file: '', folder: '', text: '', form: BLANK_FORM, isRaw: false, unfolded: [] }
+  const draft: HttpDraft = { kind: 'new', file: '', folder: '', text: NEW_TEXT, isPickingFolder: false, isNewFolder: false }
   await io.setHttp({ ...NO_REQUEST, draft })
   await io.scrollTop()
 }
 
-// 它那段（### 那行到下一個 ### 前）讀成表單；表單留不住的（多的註解、腳本、XML 之類的 body）改原文。
+// 改的是它那段（### 那行到下一個 ### 前）的原文。
 export async function editHttpRequest(io: HttpIo) {
   const v = await io.getHttp()
   const r = v.requests.find(x => x.id === v.open)
   if (r === undefined) return
-  const form = formOf(r.raw)
   const { name, dir } = splitPath(r.file)
-  const draft: HttpDraft = {
-    kind: 'request',
-    id: r.id,
-    file: name,
-    folder: dir,
-    text: r.raw,
-    form: form ?? BLANK_FORM,
-    isRaw: form === undefined,
-    unfolded: [],
-  }
+  const draft: HttpDraft = { kind: 'request', id: r.id, file: name, folder: dir, text: r.raw, isPickingFolder: false, isNewFolder: false }
   await io.setHttp({ draft, draftError: '' })
 }
 
-// 清單裡加上（isOn）或拿掉一個 key。
 const toggled = (keys: readonly string[], key: string, isOn: boolean) => [...keys.filter(k => k !== key), ...(isOn ? [key] : [])]
 
-async function changeDraft(io: HttpIo, change: (d: HttpDraft) => Partial<Pick<HttpDraft, 'text' | 'file' | 'folder' | 'form' | 'unfolded'>>) {
+async function changeDraft(io: HttpIo, change: Partial<Omit<HttpDraft, 'kind' | 'id'>>) {
   const d = (await io.getHttp()).draft
-  if (d !== null) await io.setHttp({ draft: { ...d, ...change(d) } })
+  if (d !== null) await io.setHttp({ draft: { ...d, ...change } })
 }
 
 // 草稿跟著存（熱重載後還在），Save 按鈕拿這份。
-export async function typeHttpDraft(io: HttpIo, change: { text?: string; file?: string; folder?: string }) {
-  await changeDraft(io, () => change)
+export async function typeHttpDraft(io: HttpIo, change: { file?: string; folder?: string }) {
+  await changeDraft(io, change)
 }
 
 /** The Folder picker's choice: a folder ('' none), or NEW_FOLDER, which opens a field for a new folder's name. */
 export async function pickHttpFolder(io: HttpIo, folder: string) {
-  const isNew = folder === NEW_FOLDER
-  await changeDraft(io, d => ({ folder: isNew ? '' : folder, unfolded: toggled(d.unfolded, 'new-folder', isNew) }))
+  const isNewFolder = folder === NEW_FOLDER
+  await changeDraft(io, { folder: isNewFolder ? '' : folder, isNewFolder })
 }
 
 export async function foldHttpFolder(io: HttpIo, folder: string, isFolded: boolean) {
@@ -197,46 +195,8 @@ export async function foldHttpFolder(io: HttpIo, folder: string, isFolded: boole
   await io.setHttp({ foldedFolders: toggled(v.foldedFolders, folder, isFolded) })
 }
 
-export async function typeHttpForm(io: HttpIo, change: Partial<Pick<HttpForm, 'name' | 'method' | 'url' | 'bodyKind' | 'json'>>) {
-  await changeDraft(io, d => ({ form: { ...d.form, ...change } }))
-}
-
-// 一列（header、form 欄位、multipart 欄位、capture）：改、加一列（並展開它那區）、拿掉。isFile 只有 multipart 的列讀。
-const withRows = (f: HttpForm, list: HttpFormList, edit: (rows: HttpPart[]) => HttpPart[]): HttpForm => ({ ...f, [list]: edit(f[list] as HttpPart[]) })
-
-export async function changeHttpRow(io: HttpIo, list: HttpFormList, index: number, change: Partial<HttpPart>) {
-  await changeDraft(io, d => ({ form: withRows(d.form, list, rows => rows.map((r, i) => (i === index ? { ...r, ...change } : r))) }))
-}
-
-export async function addHttpRow(io: HttpIo, list: HttpFormList) {
-  await changeDraft(io, d => ({
-    form: withRows(d.form, list, rows => [...rows, { name: '', value: '', isFile: false }]),
-    unfolded: toggled(d.unfolded, list, true),
-  }))
-}
-
-export async function deleteHttpRow(io: HttpIo, list: HttpFormList, index: number) {
-  await changeDraft(io, d => ({ form: withRows(d.form, list, rows => rows.filter((_, i) => i !== index)) }))
-}
-
-export async function foldHttpDraft(io: HttpIo, key: string, isOpen: boolean) {
-  await changeDraft(io, d => ({ unfolded: toggled(d.unfolded, key, isOpen) }))
-}
-
-// 新請求第一段前沒有別的，一定寫成 ### 開頭；改的那段照它在檔案的位置（第一個 ### 前那段沒有 ###）。
-const hasTitle = (v: HttpView, d: HttpDraft) => d.kind === 'new' || (v.requests.find(r => r.id === d.id)?.block ?? 1) > 0
-
-// 表單 → 原文：照表單寫；原文 → 表單：讀得回表單才換，不然顯示錯誤、留在原文。
-export async function rawHttpDraft(io: HttpIo, isRaw: boolean) {
-  const v = await io.getHttp()
-  const d = v.draft
-  if (d === null || d.isRaw === isRaw) return
-  if (isRaw) return io.setHttp({ draft: { ...d, isRaw, text: formText(d.form, hasTitle(v, d)) }, draftError: '' })
-  const form = formOf(d.text.replace(/\r\n/g, '\n'))
-  if (form === undefined) {
-    return io.setHttp({ draftError: "The form can't keep everything here (other comments, scripts, a body that is not JSON, form or multipart); edit it as text." })
-  }
-  await io.setHttp({ draft: { ...d, isRaw, form }, draftError: '' })
+export async function openHttpFolderPicker(io: HttpIo, isOpen: boolean) {
+  await changeDraft(io, { isPickingFolder: isOpen })
 }
 
 // 一段請求要從 ### 開始（不然會接到上一段）；使用者刪了 ### 那行就補一行沒有名字的。
@@ -307,7 +267,6 @@ async function saveEditedRequest(io: HttpIo, v: HttpView, d: { id: string; file:
   const block = r.block > 0 ? titled(text) : text
   mustHaveRequest(file, block)
   const { path, eol, blocks, lines } = await readBlocks(io, r)
-  // 那段結尾的空行（隔開下一段）照原樣留著。
   let end = lines.length
   while (end > 0 && (lines[end - 1] ?? '').trim() === '') end -= 1
   blocks[r.block] = [...block.split('\n'), ...lines.slice(end)]
@@ -318,14 +277,15 @@ async function saveEditedRequest(io: HttpIo, v: HttpView, d: { id: string; file:
   return file
 }
 
-/** Writes the draft (the form, or the text when isRaw) to `.soap/http`: a request's block in place (keeping the file's line ends), or a new request at the end of its file. */
-export async function saveHttpDraft(io: HttpIo, typed?: string) {
+/** Writes the draft's text to `.soap/http`: a request's block in place (keeping the file's line ends), or a new request in a file of its own. */
+export async function saveHttpDraft(io: HttpIo) {
   const v = await io.getHttp()
   const d = v.draft
   if (d === null || busy.get() !== '') return
-  const error = d.isRaw ? '' : formError(d.form)
-  if (error !== '') return io.setHttp({ draftError: error })
-  const text = (d.isRaw ? (typed ?? d.text) : formText(d.form, hasTitle(v, d))).replace(/\r\n/g, '\n').replace(/\s+$/, '')
+  // vim 開著：存的時候再讀一次暫存檔，:w 後還沒輪到讀的也算。
+  const s = vim.get()
+  const typed = s !== null && s.draft === draftKey(d) ? await readVim(io, s) : undefined
+  const text = editedText(typed ?? d.text)
   busy.set(io, 'draft')
   try {
     // 重讀完才回清單（重讀還要問 Keychain 存了哪些機密，要一點時間）：先回的話，這時點開的是還沒重讀的舊內容。
@@ -338,6 +298,60 @@ export async function saveHttpDraft(io: HttpIo, typed?: string) {
   } finally {
     busy.set(io, '')
   }
+}
+
+// ───── Edit in vim：那段寫成 HTTP_EDIT_DIR 的暫存檔，在新視窗的 vim 裡改（見 vim.ts）─────
+
+// 模組變數：熱重載後歸零，輪詢的計時器也跟著沒了（vim 那邊存的不再跟到面板）。window 是 macOS 改完要關的視窗。
+type VimSession = { path: string; done: string; window?: string; draft: string; timer?: Timer }
+
+const vim = busyFlag<VimSession | null>(null)
+export const httpVimNow = () => vim.get() !== null
+
+const draftKey = (d: HttpDraft) => (d.kind === 'request' ? d.id : 'new')
+
+// 存檔、vim 讀回來的字：換行一律 \n，結尾的空白不算。
+const editedText = (text: string) => text.replace(/\r\n/g, '\n').replace(/\s+$/, '')
+
+const readVim = (io: HttpIo, s: VimSession) => io.readFile(s.path).then(editedText, () => undefined)
+
+/** Opens the draft's text in vim in a window of its own; each save there shows on the panel, and Save writes it to the request's file. */
+export async function editHttpInVim(io: HttpIo) {
+  const d = (await io.getHttp()).draft
+  if (d === null || vim.get() !== null) return
+  const path = `${await io.root()}/${HTTP_EDIT_DIR}/${await io.now()}.http`
+  const done = path.replace(/\.http$/, '.done')
+  try {
+    await io.writeFile(path, `${d.text}\n`)
+    const s: VimSession = { path, done, window: await openVim(io, path, done), draft: draftKey(d) }
+    vim.set(io, s)
+    await io.setHttp({ draftError: '' })
+    s.timer = io.after(HTTP_VIM_POLL_MS, () => pollVim(io, s))
+  } catch (err) {
+    await removePath(io, path).catch(() => undefined)
+    await io.setHttp({ draftError: `Couldn't open vim: ${errorText(err)}` })
+  }
+}
+
+// 每 HTTP_VIM_POLL_MS 讀一次暫存檔，改了就換草稿的字；done 出現了（vim 結束）讀最後一次就收掉。草稿關了（Save、Cancel）也收掉。
+async function pollVim(io: HttpIo, s: VimSession) {
+  if (vim.get() !== s) return
+  const d = (await io.getHttp()).draft
+  if (d === null || draftKey(d) !== s.draft) return endVim(io, s, false)
+  // 先看 done 再讀：done 是 vim 寫完檔、結束後才建立的，看到它時讀到的就是最後的內容。
+  const isDone = await io.exists(s.done).catch(() => false)
+  const text = await readVim(io, s)
+  if (text !== undefined && text !== d.text) await changeDraft(io, { text })
+  if (isDone) return endVim(io, s, true)
+  s.timer = io.after(HTTP_VIM_POLL_MS, () => pollVim(io, s))
+}
+
+// vim 還開著（草稿先關了）就不關視窗：Terminal 會問要不要結束還在跑的 vim。
+async function endVim(io: HttpIo, s: VimSession, isDone: boolean) {
+  s.timer?.cancel()
+  if (vim.get() === s) vim.set(io, null)
+  if (isDone) await closeVim(io, s.window).catch(() => undefined)
+  for (const path of [s.path, s.done]) await removePath(io, path).catch(() => undefined)
 }
 
 // 按第一次只是待確認，再按才從檔案拿掉那段，回清單。
@@ -365,26 +379,29 @@ async function selectHttpEnv(io: HttpIo, env: string) {
   await reloadHttp(io)
 }
 
-// 每個變數照 variableSource 找值，機密這時才讀（Keychain 一個 session 每項只問一次）。還沒有值的列在 missing。
+// 每個變數照 variableSource 找值，機密這時才讀（Keychain 一個 session 每項只問一次）。還沒有值的：@prompt 的列在 unfilled，其他的在 missing。
 async function resolve(io: HttpIo, v: HttpView, r: HttpRequest) {
   const root = await io.root()
   const values: Record<string, string> = {}
   const missing: string[] = []
   const got = capturedFor(v.env)
+  const unfilled: string[] = []
+  const prompts = promptNames([r])
   for (const name of variableNames(r)) {
-    const source = variableSource(v, got, name)
-    if (source === 'captured') values[name] = got[name] ?? ''
-    else if (source === 'env') values[name] = v.vars[name] ?? ''
-    else if (source === 'secret') values[name] = await readHttpSecret(io, root, v.env, name)
-    else missing.push(name)
+    const source = variableSource(v, got, name, prompts)
+    if (source === 'secret') values[name] = await readHttpSecret(io, root, v.env, name)
+    else if (source === 'unfilled') unfilled.push(name)
+    else if (source === 'missing') missing.push(name)
+    else values[name] = variableValue(v, got, name, source) ?? ''
   }
   const fill = (text: string) => substitute(text, name => values[name])
 
   return {
     missing,
+    unfilled,
     url: fill(r.url),
     headers: r.headers.map(h => ({ name: fill(h.name), value: fill(h.value) })),
-    body: fill(r.body),
+    body: fill(plainJson(r.body, contentTypeOf(r.headers))),
   }
 }
 
@@ -459,8 +476,8 @@ export async function sendHttp(io: HttpIo) {
     const req = await resolve(io, v, r).catch((err: unknown) => {
       throw new Error(`Couldn't read a saved value: ${errorText(err)}`)
     })
-    if (req.missing.length > 0) {
-      await io.setHttp({ sendError: `Paste a value for ${req.missing.map(n => `{{${n}}}`).join(', ')} first.` })
+    if (req.missing.length > 0 || req.unfilled.length > 0) {
+      await io.setHttp({ sendError: req.missing.length > 0 ? `Paste a value for ${braced(req.missing)} first.` : `Fill in ${braced(req.unfilled)} first.` })
 
       return
     }
@@ -529,6 +546,12 @@ export async function deleteHttpSecretValue(io: HttpIo, name: string) {
   }
 }
 
+/** Keeps what is typed in a `@prompt` field, by session folder for every environment; '' forgets it. */
+export async function typeHttpPrompt(io: HttpIo, name: string, value: string) {
+  const prompted = await savePrompt(io, await io.root(), name, value)
+  await io.setHttp({ prompted, sendError: '' })
+}
+
 export async function editHttpSecret(io: HttpIo, name: string) {
   await io.setHttp({ editing: name, secretError: '' })
 }
@@ -571,7 +594,6 @@ export async function typeHttpEnvName(io: HttpIo, name: string) {
   await io.setHttp({ newEnvName: name })
 }
 
-// 沒有或不是物件就換一個空的。
 function varsOf(data: Record<string, unknown>, env: string) {
   const vars = data[env]
   if (isObject(vars)) return vars
