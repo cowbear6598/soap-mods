@@ -355,11 +355,11 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, columns: number, press:
 
   // 下拉選單（Wiki 的模型）；手機版沒有 Select，是 null。終端機的 Select 只吃鍵盤（滑鼠點選項沒反應、展開還會變寬、點了收不回去），
   // 自己畫一個：ACTIVE_BG 底的「Opus ▾」點了開合（isOpen、onToggle），底下隔一條線列出選項，選的在箭頭那欄打勾；
-  // 點了就選、收起來，焦點圈回到「Opus ▾」。每一列都補到同一個寬度，開合時不會變寬。
+  // 點了就選、收起來，焦點圈回到「Opus ▾」。每一列都補到同一個寬度，開合時不會變寬。沒給 label 不畫標題（旁邊自己畫，例如 HTTP 的表單）。
   const select = (
     key: string,
     props: {
-      label: string
+      label?: string
       value: string
       options: { value: string; label: string }[]
       onSelect: (value: string) => unknown
@@ -369,7 +369,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, columns: number, press:
   ) => {
     if (!('Select' in ui)) return null
     if (!isTerminal) {
-      return <ui.Select key={key} label={props.label} value={props.value} options={props.options} onSelect={value => void props.onSelect(value)} />
+      return <ui.Select key={key} {...(props.label === undefined ? {} : { label: props.label })} value={props.value} options={props.options} onSelect={value => void props.onSelect(value)} />
     }
     const width = Math.max(...props.options.map(o => o.label.length))
     // 每一列「 名稱 ✓ 」：名稱前後各一格、箭頭或勾一格、再一格。
@@ -378,7 +378,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, columns: number, press:
 
     return (
       <Box key={`${key}:row`} gap={1} alignItems="flex-start">
-        <Text>{`${props.label}:`}</Text>
+        {props.label !== undefined && <Text>{`${props.label}:`}</Text>}
         <Box key={`${key}:bg`} flexDirection="column" backgroundColor={ACTIVE_BG}>
           <Button key={key} label={` ${fit(current, width)} ${props.isOpen ? '▴' : '▾'} `} plain onPress={press(() => props.onToggle(!props.isOpen))} />
           {props.isOpen && [
@@ -390,7 +390,10 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, columns: number, press:
                 key={`${key}:${o.value}`}
                 label={` ${fit(o.label, width)} ${o.value === props.value ? '✓' : ' '} `}
                 plain
-                onPress={press(() => props.onSelect(o.value), key)}
+                onPress={press(async () => {
+                  await props.onSelect(o.value)
+                  await props.onToggle(false)
+                }, key)}
               />
             )),
           ]}

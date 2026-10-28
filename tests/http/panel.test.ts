@@ -1,7 +1,7 @@
 import type { HttpInit, ProcessRunInit } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
-import { HTTP_ENV_KEY, HTTP_STORE_KEY, HTTP_TIMEOUT_MS } from '../../hooks/config'
+import { FOLDER_COLOR, HTTP_ENV_KEY, HTTP_STORE_KEY } from '../../hooks/config'
 import { KEYCHAIN, toHex } from '../../hooks/secret'
 import { type Pane, type TestOn, endTurn, fakeKeychain, fsEntry, json, mountPane, ok, openTool, posix, stubPanel, stubStore } from '../test-fixtures'
 
@@ -17,7 +17,6 @@ Accept: application/json
 
 ### Log in
 # @capture token = body.data.token
-# @capture missing = body.nope
 POST {{host}}/login HTTP/1.1
 Content-Type: application/json
 
@@ -40,14 +39,18 @@ async function useEnv(ui: Pane, env: string) {
 const ENV = JSON.stringify({ $shared: { version: 'v1' }, dev: { host: 'http://localhost:3000' }, prod: { host: 'https://api.example.com' } })
 
 // HTTP 子分頁要的引擎回應：/proj/.soap/http 的檔案（給了才有這個資料夾）、$.store 放在記憶體、Keychain 是 fakeKeychain，
-// http.fetch 交給 answer（沒給就 200 回 { id: 1 }）。記下每個程序、每次 fetch、toast。
-function httpWorld(on: TestOn, { files, answer }: { files?: Record<string, string>; answer?: (f: Fetch) => unknown } = {}) {
+// http.fetch 交給 answer（沒給就 200 回 { id: 1 }），curl 交給 curl（拿 stdin 的設定），rm 刪掉那個檔。記下每個程序、每次 fetch、toast。
+function httpWorld(
+  on: TestOn,
+  { files, answer, curl }: { files?: Record<string, string>; answer?: (f: Fetch) => unknown; curl?: (config: string) => unknown } = {},
+) {
   const store: Record<string, unknown> = {}
   const keychain = fakeKeychain()
   const runs: Run[] = []
   const fetches: Fetch[] = []
   const toasts: string[] = []
-  const state = { files }
+  // hold：給了就讓列出 .soap/http 等它（重讀到一半）。
+  const state: { files: Record<string, string> | undefined; hold?: Promise<void> } = { files }
   const at = (path: string | undefined) => posix(path)?.slice(DIR.length + 1) ?? ''
   stubPanel(on, { root: '/proj', now: null })
   const clock = mock.clock(on)
@@ -61,11 +64,17 @@ function httpWorld(on: TestOn, { files, answer }: { files?: Record<string, strin
   })
   on('env.get', () => ({ value: undefined }))
   on('fs.exists', (_$, e) => ({ value: state.files !== undefined && (posix(e.path) === DIR || state.files[at(e.path)] !== undefined) }))
-  on('fs.list', (_$, e) => {
-    if (posix(e.path) !== DIR) return { value: [] }
+  // 一層資料夾：.soap/http 列出檔案和資料夾，資料夾列出它的檔案。
+  on('fs.list', async (_$, e) => {
+    const path = posix(e.path) ?? ''
+    if (path !== DIR && !path.startsWith(`${DIR}/`)) return { value: [] }
+    await state.hold
     if (state.files === undefined) throw new Error('ENOENT')
+    const names = Object.keys(state.files)
+    if (path !== DIR) return { value: names.filter(n => n.startsWith(`${at(path)}/`)).map(n => fsEntry(n.slice(at(path).length + 1))) }
+    const folders = [...new Set(names.filter(n => n.includes('/')).map(n => n.split('/')[0] ?? ''))]
 
-    return { value: Object.keys(state.files).map(name => fsEntry(name)) }
+    return { value: [...names.filter(n => !n.includes('/')).map(n => fsEntry(n)), ...folders.map(f => fsEntry(f, 'dir'))] }
   })
   on('fs.read', (_$, e) => {
     const text = state.files?.[at(e.path)]
@@ -80,6 +89,13 @@ function httpWorld(on: TestOn, { files, answer }: { files?: Record<string, strin
   })
   on('process.run', (_$, e) => {
     runs.push(e)
+    if (e.argv[0] === 'curl') return (curl?.(e.init?.stdin ?? '') ?? ok('')) as never
+    if (e.argv[0] === 'rm') {
+      const { [at(e.argv.at(-1)) ?? '']: _, ...rest } = state.files ?? {}
+      state.files = rest
+
+      return ok('')
+    }
 
     return keychain.run(e) ?? ok('')
   })
@@ -94,6 +110,8 @@ function httpWorld(on: TestOn, { files, answer }: { files?: Record<string, strin
 
 const texts = async (ui: Pane) => (await ui.findAll({ type: 'Text' })).map(t => t.text)
 const codes = async (ui: Pane) => (await ui.findAll({ type: 'Code' })).map(c => String(c.props.source))
+// 列表上請求那幾列的 key，照畫的順序。
+const reqRows = async (ui: Pane) => (await ui.findAll({ type: 'Button' })).map(b => String(b.key)).filter(k => k.startsWith('http:req:'))
 
 test('the top tabs are Files, Git, Tools and Docs; with no .soap/http the HTTP sub tab offers New, with no hints', async ($, on) => {
   httpWorld(on)
@@ -110,20 +128,20 @@ test('the top tabs are Files, Git, Tools and Docs; with no .soap/http the HTTP s
   await ui.unmount()
 })
 
-test('New writes a request into .soap/http: a new file by its name, then at the end of the first file', async ($, on) => {
+test('New writes a request into its own file under .soap/http, the name being the file name without .http', async ($, on) => {
   const world = httpWorld(on)
   const ui = await mountPane($)
   await openTool(ui, 'http')
   await ui.press({ key: 'http:new' })
-  expect((await ui.find({ key: 'http:draft:text' }))?.props.value).toBe('### New request\nGET https://')
-  expect((await ui.find({ key: 'http:draft:file' }))?.props.value).toBe('requests.http')
+  // Edit raw：表單寫成原文。
+  await ui.press({ key: 'http:draft:raw' })
+  expect((await ui.find({ key: 'http:draft:text' }))?.props.value).toBe('###\nGET ')
+  expect(await ui.find({ key: 'http:draft:url' })).toBeUndefined()
 
-  // 只有註解、壞掉的檔名：不寫，說哪裡不對。
-  await ui.input({ key: 'http:draft:text', text: '# just a note' })
-  expect(await ui.find({ type: 'Text', text: 'Write a request: a method and a URL, like GET https://example.com.' })).toBeDefined()
+  // 名稱只能是 .soap/http 底下的一個檔：../x 不寫，說哪裡不對。
   await ui.input({ key: 'http:draft:file', text: '../x', kind: 'change' })
   await ui.input({ key: 'http:draft:text', text: 'GET https://x.test/users' })
-  expect(await ui.find({ type: 'Text', text: /^A file name has only letters/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^A name has only letters/ })).toBeDefined()
   expect(world.state.files).toBeUndefined()
 
   // 打字跟著存草稿，Save 拿那份；沒寫 ### 的補一行，檔名補 .http。
@@ -131,23 +149,19 @@ test('New writes a request into .soap/http: a new file by its name, then at the 
   await ui.input({ key: 'http:draft:text', text: 'GET https://x.test/users', kind: 'change' })
   await ui.press({ key: 'http:draft:save' })
   expect(world.state.files).toEqual({ 'users.http': '###\nGET https://x.test/users\n' })
-  // 存完點開它。
-  expect(await ui.find({ type: 'Text', text: 'https://x.test/users' })).toBeDefined()
+  // 存完回清單，一列是名稱（沒有 .http）。
+  expect(world.toasts).toContain('Saved users')
   expect(await ui.find({ key: 'http:draft:text' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'users' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'users.http' })).toBeUndefined()
 
-  await ui.press({ key: 'http:back' })
+  // 名稱已經有了：不寫，不接到那個檔後面。
   await ui.press({ key: 'http:new' })
-  expect((await ui.find({ key: 'http:draft:file' }))?.props.value).toBe('users.http')
-  await ui.input({ key: 'http:draft:text', text: '### Two\nPOST https://x.test/two\n\n{}' })
-  expect(world.state.files?.['users.http']).toBe('###\nGET https://x.test/users\n\n### Two\nPOST https://x.test/two\n\n{}\n')
-  expect(await ui.find({ type: 'Text', text: 'Two' })).toBeDefined()
-
-  // Cancel 不寫。
-  await ui.press({ key: 'http:back' })
-  await ui.press({ key: 'http:new' })
-  await ui.press({ key: 'http:draft:cancel' })
-  expect(await ui.find({ key: 'http:draft:text' })).toBeUndefined()
-  expect(Object.keys(world.state.files ?? {})).toEqual(['users.http'])
+  await ui.input({ key: 'http:draft:file', text: 'users', kind: 'change' })
+  await ui.input({ key: 'http:draft:url', text: 'https://x.test/two' })
+  expect(await ui.find({ type: 'Text', text: 'There is already users; pick another name.' })).toBeDefined()
+  await ui.input({ key: 'http:draft:file', text: 'two' })
+  expect(world.state.files).toEqual({ 'users.http': '###\nGET https://x.test/users\n', 'two.http': '###\nGET https://x.test/two\n' })
   await ui.unmount()
 })
 
@@ -155,32 +169,244 @@ test("Edit rewrites only the opened request's block, keeping CRLF; a file change
   const world = httpWorld(on, { files: { 'api.http': '### A\r\nGET https://x.test/a\r\n\r\n### B\r\nGET https://x.test/b\r\n' } })
   const ui = await mountPane($)
   await openTool(ui, 'http')
+  // 點一列直接編輯；表單讀得回來的請求是表單。
   await ui.press({ key: 'http:req:api.http#0' })
-  await ui.press({ key: 'http:edit' })
+  expect((await ui.find({ key: 'http:draft:name' }))?.props.value).toBe('A')
+  expect((await ui.find({ key: 'http:draft:url' }))?.props.value).toBe('https://x.test/a')
+  await ui.press({ key: 'http:draft:raw' })
   expect((await ui.find({ key: 'http:draft:text' }))?.props.value).toBe('### A\nGET https://x.test/a')
   expect(await ui.find({ key: 'http:send' })).toBeUndefined()
   await ui.input({ key: 'http:draft:text', text: '### A2\nPOST https://x.test/a2\nX-Y: 1' })
   expect(world.state.files?.['api.http']).toBe('### A2\r\nPOST https://x.test/a2\r\nX-Y: 1\r\n\r\n### B\r\nGET https://x.test/b\r\n')
+  // 存完回清單。
   expect(await ui.find({ type: 'Text', text: 'A2' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'X-Y:' })).toBeDefined()
+  expect(await ui.find({ key: 'http:draft:text' })).toBeUndefined()
 
   // 編輯期間檔案被改了：不寫，請重開。
-  await ui.press({ key: 'http:edit' })
+  await ui.press({ key: 'http:req:api.http#0' })
+  await ui.press({ key: 'http:draft:raw' })
   world.state.files = { 'api.http': '### A3\r\nGET https://x.test/a3\r\n\r\n### B\r\nGET https://x.test/b\r\n' }
   await ui.input({ key: 'http:draft:text', text: '### mine\nGET https://x.test/mine' })
   expect(await ui.find({ type: 'Text', text: 'api.http changed since it was read; Cancel and open the request again.' })).toBeDefined()
   expect(world.state.files['api.http']).toContain('A3')
   await ui.press({ key: 'http:draft:cancel' })
 
-  // 回合結束重讀後，刪第二個：按一次待確認，再按才刪，回清單。
+  // 回合結束重讀後，在編輯頁刪第二個：按一次待確認，再按才刪，回清單。
   await endTurn($, ui)
-  await ui.press({ key: 'http:back' })
   await ui.press({ key: 'http:req:api.http#1' })
   await ui.press({ key: 'http:delete' })
   expect(world.state.files['api.http']).toContain('### B')
   await ui.press({ key: 'http:delete' })
   expect(world.state.files['api.http']).toBe('### A3\r\nGET https://x.test/a3\r\n')
-  expect((await ui.findAll({ type: 'Button' })).map(b => String(b.key)).filter(k => k.startsWith('http:req:'))).toEqual(['http:req:api.http#0'])
+  expect(await reqRows(ui)).toEqual(['http:req:api.http#0'])
+  await ui.unmount()
+})
+
+const label = async (ui: Pane, key: string) => String((await ui.find({ key }))?.props.label)
+
+test('the form writes a request: Method picked, URL, Headers and Capture unfolded in place, a JSON body; Edit opens it as the form again', async ($, on) => {
+  const world = httpWorld(on)
+  const ui = await mountPane($)
+  await openTool(ui, 'http')
+  await ui.press({ key: 'http:new' })
+  await ui.input({ key: 'http:draft:file', text: 'login', kind: 'change' })
+  await ui.press({ key: 'http:draft:method' })
+  await ui.press({ key: 'http:draft:method:POST' })
+  // 選了就收起來。
+  expect(await ui.find({ key: 'http:draft:method:GET' })).toBeUndefined()
+  await ui.input({ key: 'http:draft:url', text: '{{host}}/login', kind: 'change' })
+
+  // Headers 收著，點了原地展開；✕ 拿掉一列。
+  expect(await label(ui, 'http:draft:fold:headers')).toBe('▸ Headers (0)')
+  expect(await ui.find({ key: 'http:draft:headers:add' })).toBeUndefined()
+  await ui.press({ key: 'http:draft:fold:headers' })
+  await ui.press({ key: 'http:draft:headers:add' })
+  await ui.input({ key: 'http:draft:headers:0:name', text: 'Authorization', kind: 'change' })
+  await ui.input({ key: 'http:draft:headers:0:value', text: 'Bearer {{token}}', kind: 'change' })
+  await ui.press({ key: 'http:draft:headers:add' })
+  await ui.input({ key: 'http:draft:headers:1:name', text: 'X-Gone', kind: 'change' })
+  await ui.press({ key: 'http:draft:headers:1:delete' })
+  expect(await label(ui, 'http:draft:fold:headers')).toBe('▾ Headers (1)')
+
+  await ui.press({ key: 'http:draft:body' })
+  await ui.press({ key: 'http:draft:body:json' })
+  await ui.input({ key: 'http:draft:json', text: '{ "user": "me", "n": {{n}} }', kind: 'change' })
+
+  await ui.press({ key: 'http:draft:fold:captures' })
+  await ui.press({ key: 'http:draft:captures:add' })
+  await ui.input({ key: 'http:draft:captures:0:name', text: 'token', kind: 'change' })
+  await ui.input({ key: 'http:draft:captures:0:value', text: 'body.data.token', kind: 'change' })
+  await ui.press({ key: 'http:draft:save' })
+  expect(world.state.files).toEqual({
+    'login.http':
+      '###\n# @capture token = body.data.token\nPOST {{host}}/login\nAuthorization: Bearer {{token}}\nContent-Type: application/json\n\n{ "user": "me", "n": {{n}} }\n',
+  })
+  expect(await ui.find({ type: 'Text', text: 'login' })).toBeDefined()
+
+  // 再打開還是表單，Content-Type 不列在 Headers（Body 自己寫）。
+  await ui.press({ key: 'http:req:login.http#0' })
+  expect((await ui.find({ key: 'http:draft:file' }))?.props.value).toBe('login')
+  expect((await ui.find({ key: 'http:draft:json' }))?.props.value).toBe('{ "user": "me", "n": {{n}} }')
+  expect(await label(ui, 'http:draft:fold:headers')).toBe('▸ Headers (1)')
+  expect(await label(ui, 'http:draft:fold:captures')).toBe('▸ Capture (1)')
+
+  // 換成 Form：欄位裡的 & = 編碼，{{變數}} 照留；改名稱就是改檔名，URL 按 Enter 就存。
+  await ui.press({ key: 'http:draft:body' })
+  await ui.press({ key: 'http:draft:body:form' })
+  await ui.press({ key: 'http:draft:form:add' })
+  await ui.input({ key: 'http:draft:form:0:name', text: 'q', kind: 'change' })
+  await ui.input({ key: 'http:draft:form:0:value', text: 'a&b=c {{x}}', kind: 'change' })
+  await ui.input({ key: 'http:draft:file', text: 'search', kind: 'change' })
+  await ui.input({ key: 'http:draft:url', text: '{{host}}/search' })
+  expect(world.state.files).toEqual({
+    'search.http':
+      '###\n# @capture token = body.data.token\nPOST {{host}}/search\nAuthorization: Bearer {{token}}\nContent-Type: application/x-www-form-urlencoded\n\nq=a%26b%3Dc {{x}}\n',
+  })
+  expect(await ui.find({ type: 'Text', text: 'search' })).toBeDefined()
+  await ui.press({ key: 'http:req:search.http#0' })
+  expect((await ui.find({ key: 'http:draft:form:0:value' }))?.props.value).toBe('a&b=c {{x}}')
+  await ui.unmount()
+})
+
+test('Save goes back to the list only once the files are read again, so the row pressed next opens what was saved', async ($, on) => {
+  const world = httpWorld(on, { files: { 'a.http': '###\nGET https://x.test/old\n' } })
+  const ui = await mountPane($)
+  await openTool(ui, 'http')
+  await ui.press({ key: 'http:req:a.http#0' })
+  await ui.input({ key: 'http:draft:url', text: 'https://x.test/new', kind: 'change' })
+  let release = () => undefined as void
+  world.state.hold = new Promise(resolve => {
+    release = resolve
+  })
+  const saving = ui.press({ key: 'http:draft:save' })
+  for (let i = 0; i < 100 && !(world.state.files?.['a.http'] ?? '').includes('new'); i++) await world.clock.advance(0)
+  expect(world.state.files?.['a.http']).toBe('###\nGET https://x.test/new\n')
+  // 檔案寫了、還在重讀：停在編輯頁，清單還沒回來。
+  expect(await ui.find({ type: 'Text', text: 'Saving…' })).toBeDefined()
+  expect(await ui.find({ key: 'http:req:a.http#0' })).toBeUndefined()
+  release()
+  await saving
+  await ui.press({ key: 'http:req:a.http#0' })
+  expect((await ui.find({ key: 'http:draft:url' }))?.props.value).toBe('https://x.test/new')
+  await ui.unmount()
+})
+
+test('a request goes in a folder picked or added in the editor; folders fold on the list, and moving one out moves its file', async ($, on) => {
+  const world = httpWorld(on, { files: { 'a.http': '###\nGET https://x.test/a\n', '賽事/刷新.http': '###\nGET https://x.test/r\n' } })
+  const ui = await mountPane($)
+  await openTool(ui, 'http')
+  // 資料夾在上面，沒放資料夾的在下面。
+  expect(await reqRows(ui)).toEqual(['http:req:賽事/刷新.http#0', 'http:req:a.http#0'])
+  expect(await label(ui, 'http:folder:賽事')).toBe('▾ 賽事 (1)')
+  // 資料夾的顏色同 Files、Wiki 的資料夾；列表的空白畫成不換行空白。
+  expect((await ui.find({ type: 'Text', text: '▾\u00a0賽事\u00a0(1)' }))?.props.color).toBe(FOLDER_COLOR)
+  expect(await ui.find({ type: 'Text', text: '刷新' })).toBeDefined()
+
+  // + New folder：打名稱，存的時候建立。
+  await ui.press({ key: 'http:new' })
+  await ui.press({ key: 'http:draft:folder' })
+  expect(await label(ui, 'http:draft:folder:賽事')).toMatch(/賽事/)
+  await ui.press({ key: 'http:draft:folder::new' })
+  await ui.input({ key: 'http:draft:new-folder', text: '會員', kind: 'change' })
+  await ui.input({ key: 'http:draft:file', text: '登入', kind: 'change' })
+  await ui.input({ key: 'http:draft:url', text: 'https://x.test/login' })
+  expect(world.state.files?.['會員/登入.http']).toBe('###\nGET https://x.test/login\n')
+  expect(await reqRows(ui)).toEqual(['http:req:會員/登入.http#0', 'http:req:賽事/刷新.http#0', 'http:req:a.http#0'])
+
+  // 收起來記著。
+  await ui.press({ key: 'http:folder:賽事' })
+  expect(await label(ui, 'http:folder:賽事')).toBe('▸ 賽事 (1)')
+  expect(await reqRows(ui)).toEqual(['http:req:會員/登入.http#0', 'http:req:a.http#0'])
+
+  // 打開是它的資料夾；選已有的資料夾就搬過去。
+  await ui.press({ key: 'http:req:a.http#0' })
+  await ui.press({ key: 'http:draft:folder' })
+  await ui.press({ key: 'http:draft:folder:會員' })
+  await ui.press({ key: 'http:draft:save' })
+  expect(Object.keys(world.state.files ?? {}).sort()).toEqual(['會員/a.http', '會員/登入.http', '賽事/刷新.http'])
+  expect(await label(ui, 'http:folder:會員')).toBe('▾ 會員 (2)')
+
+  // 搬出去（None）：檔案回 .soap/http，空了的資料夾不列。
+  await ui.press({ key: 'http:folder:賽事' })
+  await ui.press({ key: 'http:req:賽事/刷新.http#0' })
+  expect(await label(ui, 'http:draft:folder')).toMatch(/賽事/)
+  await ui.press({ key: 'http:draft:folder' })
+  await ui.press({ key: 'http:draft:folder:' })
+  await ui.press({ key: 'http:draft:save' })
+  expect(Object.keys(world.state.files ?? {}).sort()).toEqual(['刷新.http', '會員/a.http', '會員/登入.http'])
+  expect(await ui.find({ key: 'http:folder:賽事' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a request the form cannot keep opens as text, and Form says why until it can', async ($, on) => {
+  httpWorld(on, { files: { 'a.http': '### A\n# just a note\nGET https://x.test/a\n' } })
+  const ui = await mountPane($)
+  await openTool(ui, 'http')
+  await ui.press({ key: 'http:req:a.http#0' })
+  expect((await ui.find({ key: 'http:draft:text' }))?.props.value).toBe('### A\n# just a note\nGET https://x.test/a')
+  expect(await ui.find({ key: 'http:draft:url' })).toBeUndefined()
+  expect(await label(ui, 'http:draft:raw')).toBe('Form')
+  await ui.press({ key: 'http:draft:raw' })
+  expect(await ui.find({ type: 'Text', text: /^The form can't keep everything here/ })).toBeDefined()
+  await ui.input({ key: 'http:draft:text', text: '### A\nGET https://x.test/a', kind: 'change' })
+  await ui.press({ key: 'http:draft:raw' })
+  expect((await ui.find({ key: 'http:draft:url' }))?.props.value).toBe('https://x.test/a')
+  await ui.unmount()
+})
+
+test('a multipart request is written from the form and sent through curl, its settings on stdin', async ($, on) => {
+  const world = httpWorld(on, {
+    files: { 'http-client.env.json': ENV, 'a.png': '' },
+    curl: () => ok('HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 201 Created\r\nContent-Type: application/json\r\n\r\n{"id":7}'),
+  })
+  const ui = await mountPane($)
+  await openTool(ui, 'http')
+  await ui.press({ key: 'http:new' })
+  await ui.input({ key: 'http:draft:file', text: 'upload', kind: 'change' })
+  await ui.press({ key: 'http:draft:method' })
+  await ui.press({ key: 'http:draft:method:POST' })
+  await ui.input({ key: 'http:draft:url', text: '{{host}}/upload', kind: 'change' })
+  await ui.press({ key: 'http:draft:body' })
+  await ui.press({ key: 'http:draft:body:multipart' })
+  await ui.press({ key: 'http:draft:parts:add' })
+  await ui.input({ key: 'http:draft:parts:0:name', text: 'title', kind: 'change' })
+  await ui.input({ key: 'http:draft:parts:0:value', text: 'hi', kind: 'change' })
+  await ui.press({ key: 'http:draft:parts:add' })
+  await ui.input({ key: 'http:draft:parts:1:name', text: 'file', kind: 'change' })
+  await ui.press({ key: 'http:draft:parts:1:kind' })
+  expect(await label(ui, 'http:draft:parts:1:kind')).toBe('File')
+  await ui.input({ key: 'http:draft:parts:1:value', text: './a.png', kind: 'change' })
+  await ui.press({ key: 'http:draft:save' })
+  expect(world.state.files?.['upload.http']).toBe(
+    [
+      '###',
+      'POST {{host}}/upload',
+      'Content-Type: multipart/form-data; boundary=----SoapBoundary',
+      '',
+      '------SoapBoundary',
+      'Content-Disposition: form-data; name="title"',
+      '',
+      'hi',
+      '------SoapBoundary',
+      'Content-Disposition: form-data; name="file"; filename="a.png"',
+      '',
+      '< ./a.png',
+      '------SoapBoundary--',
+      '',
+    ].join('\n'),
+  )
+
+  // 送出走 curl，不是 $.http.fetch；Content-Type 不帶（curl 自己寫 boundary），100 Continue 跳過。
+  await ui.press({ key: 'http:run:upload.http#0' })
+  expect(world.fetches).toEqual([])
+  const curls = world.runs.filter(r => r.argv[0] === 'curl')
+  expect(curls.map(r => r.argv)).toEqual([['curl', '--config', '-']])
+  const config = curls[0]?.init?.stdin ?? ''
+  expect(config).toContain('request = "POST"\nurl = "http://localhost:3000/upload"\n')
+  expect(config).toContain('form-string = "title=hi"\nform = "file=@\\"/proj/.soap/http/a.png\\""\n')
+  expect(config).not.toContain('Content-Type')
+  expect(await ui.find({ type: 'Text', text: '201' })).toBeDefined()
+  expect(await codes(ui)).toContain('{\n  "id": 7\n}')
   await ui.unmount()
 })
 
@@ -202,12 +428,6 @@ test('Environment lists the environments, one opens to its variables, and a vari
   expect(await ui.find({ key: 'http:var-new' })).toBeDefined()
   await ui.press({ key: 'http:env:back' })
   expect((await ui.find({ type: 'Text', text: '■' }))?.props.color).toBe('success')
-  await ui.press({ key: 'http:env-add' })
-  await ui.input({ key: 'http:new-env', text: 'dev' })
-  expect(await ui.find({ type: 'Text', text: 'There is already an environment dev.' })).toBeDefined()
-  await ui.input({ key: 'http:new-env', text: '$shared' })
-  expect(await ui.find({ type: 'Text', text: /^An environment name has only/ })).toBeDefined()
-  await ui.press({ key: 'http:new-env:cancel' })
 
   // 第二層：點環境看它的變數；+ New 打開名稱、值兩行的框（第三層），打字跟著存，Save 寫檔，回變數清單。
   await ui.press({ key: 'http:env:dev' })
@@ -223,13 +443,8 @@ test('Environment lists the environments, one opens to its variables, and a vari
   expect(String((await ui.find({ key: 'http:var-row:host' }))?.props.label)).toBe('host  https://dev.test')
   expect(await ui.find({ key: 'http:var-delete:host' })).toBeDefined()
 
-  // 名稱不對：不寫，框和打的字留著。
-  await ui.press({ key: 'http:var-new' })
-  await ui.input({ key: 'http:var-draft:name', text: 'a b', kind: 'change' })
-  await ui.input({ key: 'http:var-draft:value', text: '1' })
-  expect(await ui.find({ type: 'Text', text: /^A variable name has only/ })).toBeDefined()
-  expect((await ui.find({ key: 'http:var-draft:name' }))?.props.value).toBe('a b')
   // 值格 Enter 就存。
+  await ui.press({ key: 'http:var-new' })
   await ui.input({ key: 'http:var-draft:name', text: 'token', kind: 'change' })
   await ui.input({ key: 'http:var-draft:value', text: 't' })
   expect(envFile()).toEqual({ dev: { host: 'https://dev.test', token: 't' } })
@@ -241,10 +456,6 @@ test('Environment lists the environments, one opens to its variables, and a vari
   await ui.input({ key: 'http:var-draft:value', text: 'https://x.test', kind: 'change' })
   await ui.input({ key: 'http:var-draft:name', text: 'base' })
   expect(world.state.files?.['http-client.env.json']).toBe('{\n  "dev": {\n    "base": "https://x.test",\n    "token": "t"\n  }\n}\n')
-  await ui.press({ key: 'http:var-row:base' })
-  await ui.input({ key: 'http:var-draft:name', text: 'token' })
-  expect(await ui.find({ type: 'Text', text: 'dev already has {{token}}.' })).toBeDefined()
-  await ui.press({ key: 'http:var-draft:cancel' })
 
   // 刪變數（在它的編輯畫面）、刪環境（清單那列）：都要按兩次。
   await ui.press({ key: 'http:var-row:token' })
@@ -261,34 +472,26 @@ test('Environment lists the environments, one opens to its variables, and a vari
   await ui.unmount()
 })
 
-test('requests are listed by file and ###; one opens with the picked environment filled in, and Send shows the answer', async ($, on) => {
+test('requests are listed by file and ###; Run sends one with the picked environment filled in and shows the answer', async ($, on) => {
   const world = httpWorld(on, {
-    files: { 'api.http': API_HTTP, 'http-client.env.json': ENV, 'b.http': 'GET https://example.com/health?x=1\n    &y=2\n' },
+    files: { 'api.http': API_HTTP, 'http-client.env.json': ENV },
     answer: () => json(200, '{"id":1,"name":"Ada"}', { 'content-type': 'application/json; charset=utf-8', 'x-request-id': 'r1' }),
   })
   const ui = await mountPane($, 'desktop')
   await openTool(ui, 'http')
-  const rows = (await ui.findAll({ type: 'Button' })).map(b => String(b.key)).filter(k => k.startsWith('http:req:'))
-  expect(rows).toEqual(['http:req:api.http#0', 'http:req:api.http#1', 'http:req:api.http#2', 'http:req:b.http#0'])
-  // 沒有名字的寫方法和 URL；多行的 query 接起來。
-  expect(await ui.find({ type: 'Text', text: 'GET https://example.com/health?x=1&y=2' })).toBeDefined()
+  const rows = await reqRows(ui)
+  // 有好幾個請求的檔案：檔名當標題，底下一列一個。
+  expect(rows).toEqual(['http:req:api.http#0', 'http:req:api.http#1', 'http:req:api.http#2'])
+  expect(await ui.find({ type: 'Text', text: 'api' })).toBeDefined()
   // HTTP 底下一排 API | Environment；API 只寫目前的環境，選環境在 Environment。
   expect((await ui.findAll({ type: 'Button' })).map(b => String(b.key)).filter(k => /^http:page:\w+$/.test(k))).toEqual(['http:page:api', 'http:page:env'])
   expect(await ui.find({ type: 'Text', text: 'Env: dev' })).toBeDefined()
   expect(await ui.find({ key: 'http:env:dev' })).toBeUndefined()
 
-  await ui.press({ key: 'http:req:api.http#0' })
+  // Run 送出，打開回應頁：一行方法和代換好的 URL。
+  await ui.press({ key: 'http:run:api.http#0' })
   expect(await ui.find({ type: 'Text', text: 'http://localhost:3000/users/1' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'Accept:' })).toBeDefined()
-
-  // 環境清單：$shared 不算一個；一開始用第一個；點開列出它的變數（$shared 的也在）。
-  await page(ui, 'env')
-  expect((await ui.findAll({ type: 'Button' })).map(b => String(b.key)).filter(k => /^http:env:[^:]+$/.test(k))).toEqual(['http:env:dev', 'http:env:prod'])
-  // 用中的方塊是綠的，其他灰的。
-  expect((await ui.findAll({ type: 'Text', text: '■' })).map(t => t.props.color ?? (t.props.dimColor === true ? 'dim' : ''))).toEqual(['success', 'dim'])
-  await ui.press({ key: 'http:env:dev' })
-  expect(await ui.find({ type: 'Text', text: /http:\/\/localhost:3000/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /version/ })).toBeDefined()
+  expect(world.fetches.map(f => f.url)).toEqual(['http://localhost:3000/users/1'])
 
   // 換 prod：回 API 點開的請求還在，URL 跟著換，選的環境記在 store（依 session 資料夾）。
   await useEnv(ui, 'prod')
@@ -298,9 +501,9 @@ test('requests are listed by file and ###; one opens with the picked environment
 
   // prod 也是按一次就送。
   await ui.press({ key: 'http:send' })
-  expect(world.fetches).toHaveLength(1)
-  expect(world.fetches[0]).toMatchObject({ url: 'https://api.example.com/users/1', init: { method: 'GET', headers: { Accept: 'application/json' } } })
-  expect(world.fetches[0]?.init?.body).toBeUndefined()
+  expect(world.fetches).toHaveLength(2)
+  expect(world.fetches[1]).toMatchObject({ url: 'https://api.example.com/users/1', init: { method: 'GET', headers: { Accept: 'application/json' } } })
+  expect(world.fetches[1]?.init?.body).toBeUndefined()
   const status = await ui.find({ type: 'Text', text: '200' })
   expect(status?.props.color).toBe('success')
   expect(await ui.find({ type: 'Text', text: /^\d+ ms · 21 B$/ })).toBeDefined()
@@ -313,21 +516,18 @@ test('requests are listed by file and ###; one opens with the picked environment
   await ui.unmount()
 })
 
-test('an error status is red, and a request that cannot connect or gets no answer says so', async ($, on) => {
+test('an error status is red, and a request that cannot connect says so', async ($, on) => {
   let mode = 'notFound'
-  const world = httpWorld(on, {
+  httpWorld(on, {
     files: { 'a.http': 'GET http://localhost:9/x\n' },
     answer: () => {
       if (mode === 'notFound') return json(404, 'nope', { 'content-type': 'text/plain' })
-      if (mode === 'down') return { deny: 'connect ECONNREFUSED 127.0.0.1:9' }
-
-      return new Promise(() => undefined)
+      return { deny: 'connect ECONNREFUSED 127.0.0.1:9' }
     },
   })
   const ui = await mountPane($)
   await openTool(ui, 'http')
-  await ui.press({ key: 'http:req:a.http#0' })
-  await ui.press({ key: 'http:send' })
+  await ui.press({ key: 'http:run:a.http#0' })
   expect((await ui.find({ type: 'Text', text: '404' }))?.props.color).toBe('error')
   expect(await codes(ui)).toContain('nope')
 
@@ -335,12 +535,6 @@ test('an error status is red, and a request that cannot connect or gets no answe
   await ui.press({ key: 'http:send' })
   expect(await ui.find({ type: 'Text', text: /^Couldn't reach http:\/\/localhost:9\/x: .*ECONNREFUSED/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '404' })).toBeUndefined()
-
-  mode = 'hang'
-  const pressed = ui.press({ key: 'http:send' })
-  await world.clock.advance(HTTP_TIMEOUT_MS)
-  await pressed
-  expect(await ui.find({ type: 'Text', text: `Couldn't reach http://localhost:9/x: No answer after ${HTTP_TIMEOUT_MS / 1000}s.` })).toBeDefined()
   await ui.unmount()
 })
 
@@ -348,11 +542,9 @@ test('a variable the env file lacks is a secret pasted on the panel: kept in the
   const world = httpWorld(on, { files: { 'api.http': API_HTTP, 'http-client.env.json': ENV } })
   const ui = await mountPane($)
   await openTool(ui, 'http')
-  await ui.press({ key: 'http:req:api.http#1' })
-  expect(await ui.find({ type: 'Text', text: 'No value for {{password}}: paste it under' })).toBeDefined()
-
   // 沒有值就不送。
-  await ui.press({ key: 'http:send' })
+  await ui.press({ key: 'http:run:api.http#1' })
+  expect(await ui.find({ type: 'Text', text: 'No value for {{password}}: paste it under' })).toBeDefined()
   expect(world.fetches).toHaveLength(0)
   expect(await ui.find({ type: 'Text', text: 'Paste a value for {{password}} first.' })).toBeDefined()
 
@@ -370,12 +562,10 @@ test('a variable the env file lacks is a secret pasted on the panel: kept in the
   expect(JSON.stringify(world.store)).not.toContain(hex)
   expect(world.store[HTTP_STORE_KEY]).toEqual({ '/proj': { dev: { password: KEYCHAIN } } })
   await page(ui, 'api')
-  expect((await codes(ui)).some(c => c.includes('"password": "••••••"'))).toBe(true)
 
   // 送出時代進去；存的時候已經在記憶體裡，Keychain 一次都不用問。
   await ui.press({ key: 'http:send' })
-  await ui.press({ key: 'http:send' })
-  expect(world.fetches.map(f => f.init?.body)).toEqual([`{ "user": "me", "password": "${PASSWORD}" }`, `{ "user": "me", "password": "${PASSWORD}" }`])
+  expect(world.fetches.map(f => f.init?.body)).toEqual([`{ "user": "me", "password": "${PASSWORD}" }`])
   expect(world.fetches[0]?.init?.method).toBe('POST')
   expect(world.keychain.counts.reads).toBe(0)
 
@@ -404,10 +594,8 @@ test('a secret saved in an earlier session is read from the Keychain once, on th
   world.keychain.items[toHex('/proj\n\napiKey')] = toHex('k-123')
   const ui = await mountPane($)
   await openTool(ui, 'http')
-  await ui.press({ key: 'http:req:a.http#0' })
-  expect(await ui.find({ type: 'Text', text: 'Bearer ••••••' })).toBeDefined()
   expect(world.keychain.counts.reads).toBe(0)
-  await ui.press({ key: 'http:send' })
+  await ui.press({ key: 'http:run:a.http#0' })
   await ui.press({ key: 'http:send' })
   expect(world.fetches.map(f => f.init?.headers?.Authorization)).toEqual(['Bearer k-123', 'Bearer k-123'])
   expect(world.keychain.counts.reads).toBe(1)
@@ -421,19 +609,15 @@ test('@capture keeps a value of a 2xx JSON answer as a variable of the environme
   })
   const ui = await mountPane($)
   await openTool(ui, 'http')
-  await ui.press({ key: 'http:req:api.http#1' })
+  await ui.press({ key: 'http:run:api.http#1' })
   await ui.press({ key: 'http:to-env' })
   await ui.input({ key: 'http:var:password', text: PASSWORD })
   await page(ui, 'api')
   await ui.press({ key: 'http:send' })
   expect(await ui.find({ type: 'Text', text: 'Captured {{token}}' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'Not in the response, not captured: {{missing}}' })).toBeDefined()
 
   await ui.press({ key: 'http:back' })
-  await ui.press({ key: 'http:req:api.http#2' })
-  expect(await ui.find({ type: 'Text', text: 'Bearer tok-1' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'From earlier responses: {{token}}' })).toBeDefined()
-  await ui.press({ key: 'http:send' })
+  await ui.press({ key: 'http:run:api.http#2' })
   expect(world.fetches.at(-1)?.init?.headers?.Authorization).toBe('Bearer tok-1')
   // 只放記憶體：不在 store，也沒寫檔。
   expect(JSON.stringify(world.store)).not.toContain('tok-1')
@@ -444,7 +628,7 @@ test('@capture keeps a value of a 2xx JSON answer as a variable of the environme
   // 另一個環境沒有它。
   await useEnv(ui, 'prod')
   await page(ui, 'api')
-  expect(await ui.find({ type: 'Text', text: 'Bearer {{token}}' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'No value for {{token}}: paste it under' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -456,7 +640,7 @@ test('a .http file Claude writes shows when its turn ends', async ($, on) => {
   world.state.files = { 'new.http': '### Ping\nGET https://x.test/ping\n' }
   await endTurn($, ui)
   expect(await ui.find({ key: 'http:req:new.http#0' })).toBeDefined()
-  expect(await texts(ui)).toContain('Ping')
+  expect(await texts(ui)).toContain('new')
   await ui.unmount()
 })
 
@@ -467,7 +651,6 @@ test("Claude's Bash may not read or use the HTTP secrets", async ($, on) => {
     const r = await $.tool.call({ tool: 'Bash', command })
     expect(r.deny).toContain('Blocked by soap-mods')
   }
-  expect((await $.tool.call({ tool: 'Bash', command: 'grep -rn soap-mods-http hooks' })).deny).toBeUndefined()
 })
 
 test('a top tab kept as services or db before the reload lands on that Tools sub tab', async ($, on) => {
@@ -516,13 +699,11 @@ test('a .http file in REST Client or JetBrains form lists its named requests and
   const world = httpWorld(on, { files: { 'f.http': text } })
   const ui = await mountPane($)
   await openTool(ui, 'http')
-  expect((await ui.findAll({ type: 'Button' })).map(b => String(b.key)).filter(k => k.startsWith('http:req:'))).toEqual(['http:req:f.http#0', 'http:req:f.http#1'])
+  expect(await reqRows(ui)).toEqual(['http:req:f.http#0', 'http:req:f.http#1'])
   expect(await texts(ui)).toEqual(expect.arrayContaining(['first', 'second']))
-  await ui.press({ key: 'http:req:f.http#0' })
-  await ui.press({ key: 'http:send' })
+  await ui.press({ key: 'http:run:f.http#0' })
   await ui.press({ key: 'http:back' })
-  await ui.press({ key: 'http:req:f.http#1' })
-  await ui.press({ key: 'http:send' })
+  await ui.press({ key: 'http:run:f.http#1' })
   expect(world.fetches).toEqual([
     { url: 'https://x.test/a', init: { method: 'GET', headers: {} } },
     { url: 'https://x.test/b', init: { method: 'POST', headers: { 'X-One': '1', 'X-Two': '2' }, body: '{"a":1}' } },

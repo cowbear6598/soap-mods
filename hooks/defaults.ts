@@ -108,6 +108,7 @@ export const EMPTY_HTTP: HttpView = {
   editing: '',
   secretError: '',
   showHeaders: false,
+  foldedFolders: [],
   draft: null,
   draftError: '',
   varDraft: null,

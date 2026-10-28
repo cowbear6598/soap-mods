@@ -159,7 +159,7 @@ async function readWikiModel(io: WikiIo): Promise<WikiModel | ''> {
 }
 
 export async function selectWikiModel(io: WikiIo, model: WikiModel) {
-  await io.setWiki({ model, isModelOpen: false })
+  await io.setWiki({ model })
   await io.storeSet(WIKI_MODEL_KEY, model).catch(() => undefined)
 }
 

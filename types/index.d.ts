@@ -641,8 +641,10 @@ export type HttpCapture = { name: string; path: string }
 export type HttpRequest = {
   /** `<file>#<index>`. */
   id: string
-  /** The file's name under `.soap/http`. */
+  /** The file's path under `.soap/http`: `name.http`, or `folder/name.http` (one level of folders). */
   file: string
+  /** It is its file's only request: the file's name is its name, and editing it can rename or move the file. */
+  isOwnFile: boolean
   /** Its place in the file, from 0. */
   index: number
   /** Its block of the file (httpBlocks: block 0 is before the first `###`), and that block's text as written, its ending blank lines left out. */
@@ -679,8 +681,46 @@ export type HttpResult = {
 /** The HTTP sub tab's own tabs: the requests and sending them, or the environments, their variables and the secrets. */
 export type HttpPage = 'api' | 'env'
 
-/** A request's text being edited on the panel, written to `.soap/http` on Save: a request's block, or a new request for `file`. */
-export type HttpDraft = { kind: 'request'; id: string; file: string; text: string } | { kind: 'new'; file: string; text: string }
+/** A multipart field: text, or a file (`value` its path, relative to the .http file's folder, or absolute). */
+export type HttpPart = { name: string; value: string; isFile: boolean }
+
+/** What the form's Body is: nothing, JSON text, form fields (x-www-form-urlencoded) or multipart fields. */
+export type HttpBodyKind = 'none' | 'json' | 'form' | 'multipart'
+
+/** A request as the editor's form holds it; written to its block by formText. */
+export type HttpForm = {
+  /** '' for none. */
+  name: string
+  method: string
+  url: string
+  /** Without the Content-Type the body kind writes itself. */
+  headers: HttpHeader[]
+  bodyKind: HttpBodyKind
+  /** Each kind's own; switching the kind keeps the others' until Save. */
+  json: string
+  form: HttpHeader[]
+  parts: HttpPart[]
+  /** `@capture`: `value` is the path (`body.data.token`). */
+  captures: HttpHeader[]
+}
+
+export type HttpFormList = 'headers' | 'form' | 'parts' | 'captures'
+
+/**
+ * A request being edited on the panel, written to `.soap/http` on Save: a request's block, or a new request for `file`.
+ * The form unless `isRaw`, then `text`, the block's text; switching writes one into the other.
+ */
+export type HttpDraft = ({ kind: 'request'; id: string } | { kind: 'new' }) & {
+  /** The file's name, without its folder. */
+  file: string
+  /** The folder it goes in, '' for none; Save moves the file when it changed. */
+  folder: string
+  text: string
+  form: HttpForm
+  isRaw: boolean
+  /** The form's parts unfolded: the Headers and Capture lists, the Folder, Method and Body pickers, the new folder's field. */
+  unfolded: string[]
+}
 
 /** The Tools tab's HTTP sub tab: the requests in `.soap/http/*.http`, the environment picked, and the last response. */
 export type HttpView = {
@@ -716,7 +756,9 @@ export type HttpView = {
   secretError: string
   /** The response's headers are unfolded. */
   showHeaders: boolean
-  /** The text being edited, null when none. */
+  /** The folders the list shows folded. */
+  foldedFolders: string[]
+  /** The request being edited, null when none. */
   draft: HttpDraft | null
   /** Why saving the draft failed (no request in it, a bad file name, the file changed), '' when none. */
   draftError: string

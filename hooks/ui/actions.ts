@@ -20,7 +20,10 @@ import type {
   GitFile,
   GitSync,
   GitView,
+  HttpForm,
+  HttpFormList,
   HttpPage,
+  HttpPart,
   HttpView,
   LogView,
   MergeChunk,
@@ -148,8 +151,9 @@ export type Actions = {
   setDbQuery: (text: string) => unknown
   // text：按 Enter 時框裡的字。
   runDbQuery: (text: string) => unknown
-  // http：id 是請求（<檔名>#<第幾個>），name 是請求用到的變數。
+  // http：id 是請求（<資料夾/檔名>#<第幾個>）。點一列是編輯它，Run 是送出並打開它的回應。
   openHttpRequest: (id: string) => unknown
+  runHttpRequest: (id: string) => unknown
   closeHttpRequest: () => unknown
   // 送出點開的請求：任何環境都按一次就送。
   sendHttp: () => unknown
@@ -160,12 +164,22 @@ export type Actions = {
   toggleHttpHeaders: (isOpen: boolean) => unknown
   // HTTP 底下那排：API（請求）或 Environment（環境、變數、機密）。
   selectHttpPage: (page: HttpPage) => unknown
-  // 在面板上寫 .soap/http：新請求、編輯點開的請求（那段原文）；打字跟著存草稿，Save 寫檔，刪請求要按兩次。
+  // 在面板上寫 .soap/http：新請求、編輯點開的請求（表單，或那段原文）；打字跟著存草稿，Save 寫檔，Cancel 是 closeHttpRequest，刪請求要按兩次。
   newHttpRequest: () => unknown
   editHttpRequest: () => unknown
-  typeHttpDraft: (change: { text?: string; file?: string }) => unknown
+  typeHttpDraft: (change: { text?: string; file?: string; folder?: string }) => unknown
+  // Folder 選單選了一個資料夾（'' 不放），或 NEW_FOLDER 打開新資料夾名稱的框；foldHttpFolder 收起（false 展開）列表上的資料夾。
+  pickHttpFolder: (folder: string) => unknown
+  foldHttpFolder: (folder: string, isFolded: boolean) => unknown
+  // 表單：Name、Method、URL、Body 的種類和 JSON；一列一列的（headers、form、multipart、capture）改、加、拿掉；
+  // 展開收起（Headers、Capture、Folder、Method 和 Body 的選單）；rawHttpDraft 換成改原文（false 換回表單）。
+  typeHttpForm: (change: Partial<Pick<HttpForm, 'name' | 'method' | 'url' | 'bodyKind' | 'json'>>) => unknown
+  changeHttpRow: (list: HttpFormList, index: number, change: Partial<HttpPart>) => unknown
+  addHttpRow: (list: HttpFormList) => unknown
+  deleteHttpRow: (list: HttpFormList, index: number) => unknown
+  foldHttpDraft: (key: string, isOpen: boolean) => unknown
+  rawHttpDraft: (isRaw: boolean) => unknown
   saveHttpDraft: (text?: string) => unknown
-  cancelHttpDraft: () => unknown
   deleteHttpRequest: () => unknown
   // Environment：+ New 打開（false 收起）新環境名稱的框、新增、刪那一列的環境（兩次）；
   // 變數：+ New 或點一列打開名稱、值兩行的框，打字跟著存，Enter 或 Save 寫檔；刪除兩次。
@@ -173,7 +187,7 @@ export type Actions = {
   addHttpEnv: (name?: string) => unknown
   typeHttpEnvName: (name: string) => unknown
   deleteHttpEnv: (env: string) => unknown
-  // 點環境：選它（Send 用它）並打開它的變數；closeHttpEnv 回環境清單。
+  // 點環境：選它（Run 用它）並打開它的變數；closeHttpEnv 回環境清單。
   openHttpEnv: (env: string) => unknown
   closeHttpEnv: () => unknown
   newHttpVar: () => unknown

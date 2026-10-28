@@ -1,20 +1,24 @@
-// 不碰 $ 和 atom，用 register.tsx 給的 HttpIo（見 io.ts）。請求經 $.http.fetch。
-
 import type { HttpInit, HttpResponse, Timer } from 'claude-code'
 
-import type { HttpPage, HttpRequest, HttpResult, HttpView } from '../../types'
+import type { HttpDraft, HttpForm, HttpFormList, HttpPage, HttpPart, HttpRequest, HttpResult, HttpView } from '../../types'
 import { HTTP_DIR, HTTP_ENV_FILE, HTTP_TIMEOUT_MS } from '../config'
-import { errorText } from '../errors'
+import { errorText, failure, isMissingCommand } from '../errors'
+import { absPath, childPath } from '../files/list'
+import { splitPath } from '../git/parse'
 import { isObject } from '../json'
 import type { Io } from '../io'
 import { latestOnly } from '../latest'
-import { busyFlag, disarm, isConfirmed } from '../shell'
+import { busyFlag, disarm, isConfirmed, removePath } from '../shell'
 import type { HttpBusy } from '../ui/actions'
+import { BLANK_FORM, type CurlRequest, NEW_FOLDER, contentTypeOf, curlConfig, curlResponse, formError, formOf, formText, partsOf } from './form'
 import {
+  addHeader,
   blockText,
   capturePath,
   envNames,
   envVars,
+  fileTitle,
+  folderOf,
   formatBody,
   httpBlocks,
   parseEnvFile,
@@ -33,7 +37,6 @@ export type HttpIo = Io & {
   fetch: (url: string, init?: HttpInit) => Promise<HttpResponse>
 }
 
-// 關掉點開的請求，回清單；它的草稿也不要了。
 const NO_REQUEST = {
   open: '',
   result: null,
@@ -44,10 +47,6 @@ const NO_REQUEST = {
   draft: null,
   draftError: '',
 } satisfies Partial<HttpView>
-
-// 新請求一開始的樣子；沒有檔案時寫進 DEFAULT_FILE。
-const NEW_REQUEST = '### New request\nGET https://'
-const DEFAULT_FILE = 'requests.http'
 
 // 換了環境、回環境清單：變數的框、新環境的框、錯誤都不算數了。
 const NO_ENV_FORM = { varDraft: null, isAddingEnv: false, newEnvName: '', envFormError: '' } satisfies Partial<HttpView>
@@ -79,11 +78,15 @@ async function readEnvs(io: HttpIo, dir: string) {
   }
 }
 
-// 還沒有資料夾不是錯誤，就是還沒有請求。
+// 還沒有資料夾不是錯誤，就是還沒有請求。.soap/http 底下的 .http，加上它底下一層資料夾裡的（. 開頭的資料夾不算）。
 async function readRequests(io: HttpIo, dir: string): Promise<{ requests: HttpRequest[]; error: string }> {
   if (!(await io.exists(dir).catch(() => false))) return { requests: [], error: '' }
   try {
-    const files = (await io.list(dir)).filter(e => e.kind === 'file' && /\.http$/i.test(e.name)).map(e => e.name).sort()
+    const isHttp = (e: { kind: string; name: string }) => e.kind === 'file' && /\.http$/i.test(e.name)
+    const top = await io.list(dir)
+    const folders = top.filter(e => e.kind === 'dir' && !e.name.startsWith('.')).map(e => e.name)
+    const inside = await Promise.all(folders.map(async f => (await io.list(`${dir}/${f}`)).filter(isHttp).map(e => `${f}/${e.name}`)))
+    const files = [...top.filter(isHttp).map(e => e.name), ...inside.flat()].sort()
     const texts = await Promise.all(files.map(f => io.readFile(`${dir}/${f}`)))
 
     return { requests: files.flatMap((f, i) => parseHttpFile(f, texts[i] ?? '')), error: '' }
@@ -120,10 +123,16 @@ export async function reloadHttp(io: HttpIo) {
 }
 
 export async function openHttpRequest(io: HttpIo, id: string) {
-  const prev = await io.getHttp()
-  if (prev.open === id) return
   await io.setHttp({ ...NO_REQUEST, open: id })
+  await editHttpRequest(io)
   await io.scrollTop()
+}
+
+export async function runHttpRequest(io: HttpIo, id: string) {
+  if (busy.get() !== '') return
+  if ((await io.getHttp()).open !== id) await io.setHttp({ ...NO_REQUEST, open: id })
+  await io.scrollTop()
+  await sendHttp(io)
 }
 
 // 點開的請求留著（回 API 還在），待確認的刪除和換值的框收起。
@@ -137,41 +146,132 @@ export async function closeHttpRequest(io: HttpIo) {
   await io.setHttp(NO_REQUEST)
 }
 
-// 檔案預設第一個 .http（沒有就是 DEFAULT_FILE），可以改成別的（沒有的檔案存的時候建立）。
+// 空白的表單；一個請求一個檔，名稱就是檔名，存的時候建立。
 export async function newHttpRequest(io: HttpIo) {
-  const prev = await io.getHttp()
-  await io.setHttp({ ...NO_REQUEST, draft: { kind: 'new', file: prev.requests[0]?.file ?? DEFAULT_FILE, text: NEW_REQUEST } })
+  const draft: HttpDraft = { kind: 'new', file: '', folder: '', text: '', form: BLANK_FORM, isRaw: false, unfolded: [] }
+  await io.setHttp({ ...NO_REQUEST, draft })
   await io.scrollTop()
 }
 
-// 它那段（### 那行到下一個 ### 前）的原文。
+// 它那段（### 那行到下一個 ### 前）讀成表單；表單留不住的（多的註解、腳本、XML 之類的 body）改原文。
 export async function editHttpRequest(io: HttpIo) {
   const v = await io.getHttp()
   const r = v.requests.find(x => x.id === v.open)
   if (r === undefined) return
-  await io.setHttp({ draft: { kind: 'request', id: r.id, file: r.file, text: r.raw }, draftError: '' })
+  const form = formOf(r.raw)
+  const { name, dir } = splitPath(r.file)
+  const draft: HttpDraft = {
+    kind: 'request',
+    id: r.id,
+    file: name,
+    folder: dir,
+    text: r.raw,
+    form: form ?? BLANK_FORM,
+    isRaw: form === undefined,
+    unfolded: [],
+  }
+  await io.setHttp({ draft, draftError: '' })
+}
+
+// 清單裡加上（isOn）或拿掉一個 key。
+const toggled = (keys: readonly string[], key: string, isOn: boolean) => [...keys.filter(k => k !== key), ...(isOn ? [key] : [])]
+
+async function changeDraft(io: HttpIo, change: (d: HttpDraft) => Partial<Pick<HttpDraft, 'text' | 'file' | 'folder' | 'form' | 'unfolded'>>) {
+  const d = (await io.getHttp()).draft
+  if (d !== null) await io.setHttp({ draft: { ...d, ...change(d) } })
 }
 
 // 草稿跟著存（熱重載後還在），Save 按鈕拿這份。
-export async function typeHttpDraft(io: HttpIo, change: { text?: string; file?: string }) {
-  const d = (await io.getHttp()).draft
-  if (d === null) return
-  await io.setHttp({ draft: { ...d, ...change } })
+export async function typeHttpDraft(io: HttpIo, change: { text?: string; file?: string; folder?: string }) {
+  await changeDraft(io, () => change)
 }
 
-export async function cancelHttpDraft(io: HttpIo) {
-  await io.setHttp({ draft: null, draftError: '' })
+/** The Folder picker's choice: a folder ('' none), or NEW_FOLDER, which opens a field for a new folder's name. */
+export async function pickHttpFolder(io: HttpIo, folder: string) {
+  const isNew = folder === NEW_FOLDER
+  await changeDraft(io, d => ({ folder: isNew ? '' : folder, unfolded: toggled(d.unfolded, 'new-folder', isNew) }))
+}
+
+export async function foldHttpFolder(io: HttpIo, folder: string, isFolded: boolean) {
+  const v = await io.getHttp()
+  await io.setHttp({ foldedFolders: toggled(v.foldedFolders, folder, isFolded) })
+}
+
+export async function typeHttpForm(io: HttpIo, change: Partial<Pick<HttpForm, 'name' | 'method' | 'url' | 'bodyKind' | 'json'>>) {
+  await changeDraft(io, d => ({ form: { ...d.form, ...change } }))
+}
+
+// 一列（header、form 欄位、multipart 欄位、capture）：改、加一列（並展開它那區）、拿掉。isFile 只有 multipart 的列讀。
+const withRows = (f: HttpForm, list: HttpFormList, edit: (rows: HttpPart[]) => HttpPart[]): HttpForm => ({ ...f, [list]: edit(f[list] as HttpPart[]) })
+
+export async function changeHttpRow(io: HttpIo, list: HttpFormList, index: number, change: Partial<HttpPart>) {
+  await changeDraft(io, d => ({ form: withRows(d.form, list, rows => rows.map((r, i) => (i === index ? { ...r, ...change } : r))) }))
+}
+
+export async function addHttpRow(io: HttpIo, list: HttpFormList) {
+  await changeDraft(io, d => ({
+    form: withRows(d.form, list, rows => [...rows, { name: '', value: '', isFile: false }]),
+    unfolded: toggled(d.unfolded, list, true),
+  }))
+}
+
+export async function deleteHttpRow(io: HttpIo, list: HttpFormList, index: number) {
+  await changeDraft(io, d => ({ form: withRows(d.form, list, rows => rows.filter((_, i) => i !== index)) }))
+}
+
+export async function foldHttpDraft(io: HttpIo, key: string, isOpen: boolean) {
+  await changeDraft(io, d => ({ unfolded: toggled(d.unfolded, key, isOpen) }))
+}
+
+// 新請求第一段前沒有別的，一定寫成 ### 開頭；改的那段照它在檔案的位置（第一個 ### 前那段沒有 ###）。
+const hasTitle = (v: HttpView, d: HttpDraft) => d.kind === 'new' || (v.requests.find(r => r.id === d.id)?.block ?? 1) > 0
+
+// 表單 → 原文：照表單寫；原文 → 表單：讀得回表單才換，不然顯示錯誤、留在原文。
+export async function rawHttpDraft(io: HttpIo, isRaw: boolean) {
+  const v = await io.getHttp()
+  const d = v.draft
+  if (d === null || d.isRaw === isRaw) return
+  if (isRaw) return io.setHttp({ draft: { ...d, isRaw, text: formText(d.form, hasTitle(v, d)) }, draftError: '' })
+  const form = formOf(d.text.replace(/\r\n/g, '\n'))
+  if (form === undefined) {
+    return io.setHttp({ draftError: "The form can't keep everything here (other comments, scripts, a body that is not JSON, form or multipart); edit it as text." })
+  }
+  await io.setHttp({ draft: { ...d, isRaw, form }, draftError: '' })
 }
 
 // 一段請求要從 ### 開始（不然會接到上一段）；使用者刪了 ### 那行就補一行沒有名字的。
 const titled = (text: string) => (text.startsWith('###') ? text : `###\n${text}`)
 
+// 檔名、資料夾名：哪種語言的字、數字都可以（登入、ログイン），加上空白、- _ .；斜線、冒號那些路徑和 Windows 不收的字不行。
+const NAME_CHARS = /^[\p{L}\p{M}\p{N}_. -]+$/u
+
 // 只能是 .soap/http 底下的一個檔，沒寫 .http 就補上。
 function httpFileName(name: string) {
+  if (name.trim() === '') throw new Error('Write a name, like login.')
   const file = /\.http$/i.test(name.trim()) ? name.trim() : `${name.trim()}.http`
-  if (!/^[\w.-]+\.http$/i.test(file)) throw new Error('A file name has only letters, digits, -, _ and . (like users.http).')
+  if (!NAME_CHARS.test(file)) throw new Error('A name has only letters, digits, spaces, -, _ and . (like login or 登入).')
 
   return file
+}
+
+// 資料夾一層，'' 是不放資料夾；. 開頭的不行（列表不讀 . 開頭的資料夾）。
+function httpFolderName(name: string) {
+  const folder = name.trim()
+  if (folder !== '' && (!NAME_CHARS.test(folder) || folder.startsWith('.'))) {
+    throw new Error('A folder name has only letters, digits, spaces, -, _ and . (like 會員), and does not start with a dot.')
+  }
+
+  return folder
+}
+
+const draftFile = (d: { file: string; folder: string }) => childPath(httpFolderName(d.folder), httpFileName(d.file))
+
+// 名稱就是檔名：已經有這個檔就不寫（不接到別的請求後面、不蓋掉）。
+async function mustBeNewFile(io: HttpIo, file: string) {
+  const path = `${await io.root()}/${HTTP_DIR}/${file}`
+  if (await io.exists(path).catch(() => false)) throw new Error(`There is already ${fileTitle(file)}; pick another name.`)
+
+  return path
 }
 
 function mustHaveRequest(file: string, text: string) {
@@ -189,50 +289,50 @@ async function readBlocks(io: HttpIo, r: HttpRequest) {
   return { path, eol: eolOf(text), blocks, lines }
 }
 
-// 新請求接在它檔案的最後，存完點開它。
-async function saveNewRequest(io: HttpIo, d: { file: string }, text: string) {
-  const file = httpFileName(d.file)
+async function saveNewRequest(io: HttpIo, d: { file: string; folder: string }, text: string) {
+  const file = draftFile(d)
   const block = titled(text)
   mustHaveRequest(file, block)
-  const path = `${await io.root()}/${HTTP_DIR}/${file}`
-  const old = await readOrEmpty(io, path)
-  const before = old.replace(/\r\n/g, '\n').replace(/\s+$/, '')
-  await io.writeFile(path, withEolOf(old, `${before === '' ? block : `${before}\n\n${block}`}\n`))
-  await io.setHttp({ draft: null, draftError: '' })
-  await reloadHttp(io)
-  const added = (await io.getHttp()).requests.filter(r => r.file === file).at(-1)
-  if (added !== undefined) await openHttpRequest(io, added.id)
+  await io.writeFile(await mustBeNewFile(io, file), `${block}\n`)
+
+  return file
 }
 
-// 改過的那段寫回原處；存完點開同一段（照檔案和第幾段找，改了名字、方法也找得到），這段沒有請求了就回清單。
-async function saveEditedRequest(io: HttpIo, v: HttpView, id: string, text: string) {
-  const r = v.requests.find(x => x.id === id)
+// 改過的那段寫回原處（那段結尾隔開下一段的空行照留）。
+// 檔案只有這個請求時，名稱、資料夾改了就是搬檔：寫到新檔、刪掉舊的。
+async function saveEditedRequest(io: HttpIo, v: HttpView, d: { id: string; file: string; folder: string }, text: string) {
+  const r = v.requests.find(x => x.id === d.id)
   if (r === undefined) throw new Error('The request is no longer in its file.')
+  const file = r.isOwnFile ? draftFile(d) : r.file
   const block = r.block > 0 ? titled(text) : text
-  mustHaveRequest(r.file, block)
+  mustHaveRequest(file, block)
   const { path, eol, blocks, lines } = await readBlocks(io, r)
   // 那段結尾的空行（隔開下一段）照原樣留著。
   let end = lines.length
   while (end > 0 && (lines[end - 1] ?? '').trim() === '') end -= 1
   blocks[r.block] = [...block.split('\n'), ...lines.slice(end)]
-  await io.writeFile(path, blocks.flat().join(eol))
-  await io.setHttp({ draft: null, draftError: '', result: null, sendError: '' })
-  await reloadHttp(io)
-  const saved = (await io.getHttp()).requests.find(x => x.file === r.file && x.block === r.block)
-  if (saved === undefined) await closeHttpRequest(io)
-  else await io.setHttp({ open: saved.id })
+  const isRenamed = file.toLowerCase() !== r.file.toLowerCase()
+  await io.writeFile(isRenamed ? await mustBeNewFile(io, file) : path, blocks.flat().join(eol))
+  if (isRenamed) await removePath(io, path)
+
+  return file
 }
 
-/** Writes the draft to `.soap/http`: a request's block in place (keeping the file's line ends), or a new request at the end of its file. */
+/** Writes the draft (the form, or the text when isRaw) to `.soap/http`: a request's block in place (keeping the file's line ends), or a new request at the end of its file. */
 export async function saveHttpDraft(io: HttpIo, typed?: string) {
   const v = await io.getHttp()
   const d = v.draft
   if (d === null || busy.get() !== '') return
-  const text = (typed ?? d.text).replace(/\r\n/g, '\n').replace(/\s+$/, '')
+  const error = d.isRaw ? '' : formError(d.form)
+  if (error !== '') return io.setHttp({ draftError: error })
+  const text = (d.isRaw ? (typed ?? d.text) : formText(d.form, hasTitle(v, d))).replace(/\r\n/g, '\n').replace(/\s+$/, '')
   busy.set(io, 'draft')
   try {
-    if (d.kind === 'new') await saveNewRequest(io, d, text)
-    else await saveEditedRequest(io, v, d.id, text)
+    // 重讀完才回清單（重讀還要問 Keychain 存了哪些機密，要一點時間）：先回的話，這時點開的是還沒重讀的舊內容。
+    const file = d.kind === 'new' ? await saveNewRequest(io, d, text) : await saveEditedRequest(io, v, d, text)
+    await reloadHttp(io)
+    await closeHttpRequest(io)
+    io.toast(`Saved ${fileTitle(file)}`)
   } catch (err) {
     await io.setHttp({ draftError: errorText(err) })
   } finally {
@@ -250,8 +350,9 @@ export async function deleteHttpRequest(io: HttpIo) {
     if (r.block === 0) blocks[0] = []
     else blocks.splice(r.block, 1)
     await io.writeFile(path, blocks.flat().join(eol))
-    await closeHttpRequest(io)
+    // 同 Save：重讀完才回清單，刪掉的那列不會還點得到。
     await reloadHttp(io)
+    await closeHttpRequest(io)
   } catch (err) {
     await io.setHttp({ sendError: `Couldn't delete it: ${errorText(err)}` })
   }
@@ -299,6 +400,38 @@ async function fetchWithin(io: HttpIo, url: string, init: HttpInit) {
   }
 }
 
+const isAbsolute = (path: string) => path.startsWith('/') || path.startsWith('\\') || /^[A-Za-z]:[\\/]/.test(path)
+
+// multipart 用 curl 送（$.http.fetch 的 body 只能是文字）。File 的相對路徑從 .http 檔所在的資料夾算（同 REST Client），先確定每個檔案都在。
+async function curlFiles(io: HttpIo, file: string, parts: HttpPart[]): Promise<HttpPart[]> {
+  const dir = absPath(`${await io.root()}/${HTTP_DIR}`, folderOf(file))
+  const files = parts.map(p => (p.isFile && !isAbsolute(p.value) ? { ...p, value: `${dir}/${p.value.replace(/^\.[\\/]/, '')}` } : p))
+  for (const p of files) {
+    if (p.isFile && !(await io.exists(p.value).catch(() => false))) throw new Error(`There is no file ${p.value}.`)
+  }
+
+  return files
+}
+
+// 設定從 stdin 給，機密不會出現在程序清單上。不用 runOk：只有跑不起來（rejected）才算沒裝 curl。
+async function curlSend(io: HttpIo, req: CurlRequest) {
+  const out = await io.run(['curl', '--config', '-'], { stdin: curlConfig(req, HTTP_TIMEOUT_MS), timeoutMs: HTTP_TIMEOUT_MS + 5000 }).catch((err: unknown) => {
+    throw isMissingCommand(err) ? new Error('curl is not installed; a multipart request needs it.') : err
+  })
+  if (out.exitCode !== 0) throw failure(out, 'curl')
+  const res = curlResponse(out.stdout)
+  if (res === undefined) throw new Error('curl printed no HTTP answer.')
+
+  return res
+}
+
+async function fetchRequest(io: HttpIo, method: string, req: { url: string; headers: { name: string; value: string }[]; body: string }) {
+  const headers: Record<string, string> = {}
+  for (const h of req.headers) addHeader(headers, h.name, h.value)
+
+  return fetchWithin(io, req.url, req.body === '' ? { method, headers } : { method, headers, body: req.body })
+}
+
 // 回應成功（2xx）才取；取到的存成目前環境的變數（只放記憶體），取不到的回報。
 function runCaptures(r: HttpRequest, env: string, res: HttpResponse) {
   if (!res.ok || r.captures.length === 0) return { captured: [], missed: [] }
@@ -315,7 +448,7 @@ function runCaptures(r: HttpRequest, env: string, res: HttpResponse) {
   return { captured: Object.keys(got), missed }
 }
 
-/** Sends the opened request with the variables of the environment picked; any environment sends on one press. */
+/** Sends the opened request with the variables of the environment picked; any environment sends on one press. A multipart one goes through curl, for its files. */
 export async function sendHttp(io: HttpIo) {
   if (busy.get() !== '') return
   const v = await io.getHttp()
@@ -336,22 +469,22 @@ export async function sendHttp(io: HttpIo) {
 
       return
     }
-    const headers: Record<string, string> = {}
-    for (const h of req.headers) headers[h.name] = headers[h.name] === undefined ? h.value : `${headers[h.name]}, ${h.value}`
-    const init: HttpInit = req.body === '' ? { method: r.method, headers } : { method: r.method, headers, body: req.body }
+    const parts = partsOf(req)
+    const files = parts === undefined ? undefined : await curlFiles(io, r.file, parts)
     const started = await io.now()
-    const res = await fetchWithin(io, req.url, init).catch((err: unknown) => {
+    const sent = files === undefined ? fetchRequest(io, r.method, req) : curlSend(io, { method: r.method, url: req.url, headers: req.headers, parts: files })
+    const res = await sent.catch((err: unknown) => {
       throw new Error(`Couldn't reach ${req.url}: ${errorText(err)}`)
     })
     const ms = Math.max(0, (await io.now()) - started)
-    const contentType = Object.entries(res.headers).find(([k]) => k.toLowerCase() === 'content-type')?.[1] ?? ''
+    const headers = Object.entries(res.headers).map(([name, value]) => ({ name, value }))
     const result: HttpResult = {
       id: r.id,
       status: res.status,
       ms,
       size: utf8Size(res.text),
-      headers: Object.entries(res.headers).map(([name, value]) => ({ name, value })),
-      ...formatBody(res.text, contentType),
+      headers,
+      ...formatBody(res.text, contentTypeOf(headers)),
       ...runCaptures(r, v.env, res),
     }
     // 送出期間換了請求或環境：回應不是畫面上那個的，不寫。
@@ -448,7 +581,6 @@ function varsOf(data: Record<string, unknown>, env: string) {
   return fresh
 }
 
-/** Adds an environment and opens it. */
 export async function addHttpEnv(io: HttpIo, text?: string) {
   const v = await io.getHttp()
   const name = (text ?? v.newEnvName).trim()
@@ -460,14 +592,13 @@ export async function addHttpEnv(io: HttpIo, text?: string) {
 
 /** Deletes an environment from the file, on a second press; its saved secrets stay in the Keychain. */
 export async function deleteHttpEnv(io: HttpIo, env: string) {
-  const v = await io.getHttp()
   if (!isConfirmed(io, `http:env:${env}`)) return
   await envChange(io, data => {
     delete data[env]
   })
 }
 
-/** Opens an environment to its variables (Environment's second level); opening one picks it for Send. */
+/** Opens an environment to its variables (Environment's second level); opening one picks it for Run. */
 export async function openHttpEnv(io: HttpIo, env: string) {
   // 已經在用的：不重選（API 那邊的回應留著）。
   if ((await io.getHttp()).env === env) await io.setHttp(NO_ENV_FORM)

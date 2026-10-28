@@ -1,13 +1,13 @@
-// HTTP 子分頁的純函式：讀 .http 檔（REST Client／JetBrains 格式）、環境檔、代換 {{變數}}、@capture 取值、回應的排版。
-
 import type { HttpCapture, HttpHeader, HttpRequest } from '../../types'
+import { byName } from '../files/list'
+import { splitPath } from '../git/parse'
 import { isObject } from '../json'
 import { cutAtLineEnd } from '../text'
 
 const METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'TRACE', 'CONNECT'])
-const COMMENT = /^\s*(?:#|\/\/)/
-const NAME_TAG = /^\s*(?:#|\/\/)\s*@name\s+(.+?)\s*$/
-const CAPTURE_TAG = /^\s*(?:#|\/\/)\s*@capture\s+([\w.-]+)\s*=\s*(\S+)\s*$/
+export const COMMENT = /^\s*(?:#|\/\/)/
+export const NAME_TAG = /^\s*(?:#|\/\/)\s*@name\s+(.+?)\s*$/
+export const CAPTURE_TAG = /^\s*(?:#|\/\/)\s*@capture\s+([\w.-]+)\s*=\s*(\S+)\s*$/
 const HEADER = /^([^:\s][^:]*?)\s*:\s?(.*)$/
 // 變數：{{name}}，前後可以有空白；$ 開頭的是 REST Client 的系統變數（{{$guid}}），不管它。
 const VARIABLE = /\{\{\s*([^{}\s]+)\s*\}\}/g
@@ -42,7 +42,7 @@ function stripHandlers(lines: string[]) {
 }
 
 // ### 之間的一段：前面的註解（@name、@capture）、請求那行、headers、空行後的 body。沒有請求那行的（只有註解）回 undefined。
-function parseBlock(file: string, index: number, block: number, raw: string, title: string, lines: string[]): HttpRequest | undefined {
+function parseBlock(file: string, index: number, block: number, raw: string, title: string, lines: string[]): Omit<HttpRequest, 'isOwnFile'> | undefined {
   let name = title
   const captures: HttpCapture[] = []
   const headers: HttpHeader[] = []
@@ -105,9 +105,9 @@ export function httpBlocks(text: string): string[][] {
 /** A block's text as the editor shows it: without the blank lines that end it. */
 export const blockText = (lines: readonly string[]) => lines.join('\n').replace(/\s+$/, '')
 
-/** The requests of one `.http` file, separated by `###` lines (the text after `###` names the next one). */
+/** The requests of one `.http` file, separated by `###` lines (the text after `###` names the request its block starts). */
 export function parseHttpFile(file: string, text: string): HttpRequest[] {
-  const requests: HttpRequest[] = []
+  const requests: Omit<HttpRequest, 'isOwnFile'>[] = []
   httpBlocks(text).forEach((lines, i) => {
     const hasTitle = i > 0
     const title = hasTitle ? (lines[0] ?? '').slice(3).trim() : ''
@@ -115,7 +115,7 @@ export function parseHttpFile(file: string, text: string): HttpRequest[] {
     if (r !== undefined) requests.push(r)
   })
 
-  return requests
+  return requests.map(r => ({ ...r, isOwnFile: requests.length === 1 }))
 }
 
 /** `http-client.env.json`: each environment's variables (values that are not text become text; nested objects are dropped). Throws when it is not such an object. */
@@ -190,10 +190,17 @@ export function parseJson(text: string): unknown {
   }
 }
 
+/** Text that starts like a JSON object or list. */
+export const looksJson = (text: string) => /^\s*[[{]/.test(text)
+
+/** Adds a header to a record, a repeated one joined with `, ` as HTTP folds them. */
+export function addHeader(headers: Record<string, string>, name: string, value: string) {
+  headers[name] = headers[name] === undefined ? value : `${headers[name]}, ${value}`
+}
+
 /** The body as drawn: JSON laid out (by its content type, or when it parses as an object or list), cut to fit. */
 export function formatBody(text: string, contentType: string) {
-  const looksJson = /json/i.test(contentType) || /^\s*[[{]/.test(text)
-  const data = looksJson ? parseJson(text) : undefined
+  const data = /json/i.test(contentType) || looksJson(text) ? parseJson(text) : undefined
   const isJson = data !== undefined && (/json/i.test(contentType) || typeof data === 'object')
   const cut = cutAtLineEnd(isJson ? JSON.stringify(data, null, 2) : text)
 
@@ -215,4 +222,14 @@ export function utf8Size(text: string): number {
   return size
 }
 
-export const requestTitle = (r: HttpRequest) => (r.name !== '' ? r.name : `${r.method} ${r.url}`)
+/** A file's name as the panel shows it: without its folder and `.http`. */
+export const fileTitle = (file: string) => splitPath(file).name.replace(/\.http$/i, '')
+
+/** The folder under `.soap/http` a request file is in (one level), '' for none. */
+export const folderOf = (file: string) => splitPath(file).dir
+
+/** The folders the requests are in, by name. */
+export const httpFolders = (requests: readonly HttpRequest[]) => [...new Set(requests.map(r => folderOf(r.file)))].filter(f => f !== '').sort(byName)
+
+/** The request's name on the panel: its file's for a file's only request, else the text after `###`, else the method and URL. */
+export const requestTitle = (r: HttpRequest) => (r.isOwnFile ? fileTitle(r.file) : r.name !== '' ? r.name : `${r.method} ${r.url}`)
