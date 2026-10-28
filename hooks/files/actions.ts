@@ -145,8 +145,11 @@ const REVEAL_ARGV = powershellArgv(
 export async function revealFile(io: FilesIo, path: string) {
   const abs = absPath(await io.root(), path)
   try {
-    if (await isWindows(io)) await runOk(io, REVEAL_ARGV, 'Explorer', { env: { SOAP_PATH: abs.replace(/\//g, '\\') } })
+    const onWindows = await isWindows(io)
+    if (onWindows) await runOk(io, REVEAL_ARGV, 'Explorer', { env: { SOAP_PATH: abs.replace(/\//g, '\\') } })
     else await runOk(io, ['open', '-R', abs], 'open')
+    // Explorer 常開在後面，看不出有沒有打開。
+    io.toast(`Shown in ${onWindows ? 'Explorer' : 'Finder'}`)
   } catch (err) {
     await io.setFiles({ menuError: `Couldn't show ${splitPath(path).name}: ${errorText(err)}` })
 

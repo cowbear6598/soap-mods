@@ -7,7 +7,7 @@ import { EMPTY_MR } from '../defaults'
 import { errorText } from '../errors'
 import { type GitLabIo, TokenRefused, api, isDue, openGitLabUrl, repoProject } from '../gitlab'
 import { latestOnly } from '../latest'
-import { busyFlag, isConfirmed } from '../shell'
+import { busyFlag, isConfirmed, pressFlag } from '../shell'
 import {
   applyLines,
   approvalsUrl,
@@ -162,6 +162,18 @@ export async function refreshMr(io: MrIo, { isTimer = false }: { isTimer?: boole
   if (isTimer && !isDue(await io.now(), readAt, isRunning(mr.open))) return
   if (mr.opening !== 0) await loadDetail(io, mr.opening, { withSuggestions: !isTimer })
   else await loadMrList(io)
+}
+
+const refreshing = pressFlag()
+export const mrRefreshingNow = refreshing.get
+
+export async function pressRefreshMr(io: MrIo) {
+  await refreshing.run(io, 'mr:refresh', async () => {
+    await refreshMr(io)
+    const mr = await io.getMr()
+
+    return mr.error === '' && mr.detailError === ''
+  })
 }
 
 export async function toggleMrResolved(io: MrIo) {

@@ -10,7 +10,7 @@ import { errorText } from '../errors'
 import { type GitLabIo, TokenRefused, api, isDue, openGitLabUrl, repoProject } from '../gitlab'
 import { lastRead, latestOnly } from '../latest'
 import { filterWords, hasQuery, searchWords } from '../search'
-import { busyFlag, isConfirmed } from '../shell'
+import { busyFlag, isConfirmed, pressFlag } from '../shell'
 import { clampPage } from '../text'
 import {
   type GitLabProject,
@@ -294,6 +294,19 @@ export async function refreshCi(io: CiIo, { isTimer = false }: { isTimer?: boole
   } else if (!isTimer || (await isListDue(io, !ci.isLoaded || ci.branches.some(b => b.pipeline !== null && isActive(b.pipeline.status))))) {
     await loadBranches(io)
   }
+}
+
+// 按 Refresh：讀的時候那顆寫「Refreshing…」，讀好了綠勾亮一下；看分頁時自動讀、定時重讀不畫這些。
+const refreshing = pressFlag()
+export const ciRefreshingNow = refreshing.get
+
+export async function pressRefreshCi(io: CiIo) {
+  await refreshing.run(io, 'ci:refresh', async () => {
+    await refreshCi(io)
+    const ci = await io.getCi()
+
+    return [ci.error, ci.pipelinesError, ci.jobsError, ci.traceError, ci.tokenError].every(e => e === '')
+  })
 }
 
 // 跑、重跑：按第一次變成 Confirm，ARM 的時間內再按一次才問 GitLab；沒按就收回。同時只跑一個。

@@ -39,8 +39,6 @@ export type GitView = {
   error: string
   /** Why the last branch switch or delete failed, '' when none; cleared on any tab change. */
   branchError: string
-  /** Branch whose copy button was just pressed and shows a check for COPIED_MS, '' when none. */
-  copied: string
   /** The operation stopped for conflicts, '' when none. */
   op: MergeOp
   /** Why the last abort, continue or resolve failed, '' when none; cleared on any tab change. */

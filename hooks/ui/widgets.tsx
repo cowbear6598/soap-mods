@@ -9,6 +9,7 @@ import type { IconName, Tint } from '../config'
 import {
   ACTIVE_BG,
   ARMED_TINT,
+  COPIED_TINT,
   DIVIDER_CHAR,
   DIVIDER_PX,
   FIELD_MIN_WIDTH,
@@ -111,6 +112,20 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, columns: number, press:
         variant={state.isArmed ? 'primary' : 'secondary'}
         onPress={press(action)}
       />
+    )
+
+  // 做好了亮一下的圖示按鈕（isDone）：綠底打勾，終端機是綠字 done。
+  const flashButton = (key: string, icon: IconName, label: string, state: { isDone: boolean; done: string }, action: () => unknown) =>
+    state.isDone ? iconButton(key, 'check', state.done, false, action, COPIED_TINT) : iconButton(key, icon, label, false, action)
+
+  // CI、MR 的 Refresh：讀的時候換成淡色的 Refreshing…（同 confirmButton 的 Working…），讀好了亮一下。
+  const refreshButton = (key: string, state: { isBusy: boolean; isDone: boolean }, action: () => unknown) =>
+    state.isBusy ? (
+      <Text key={key} dimColor>
+        Refreshing…
+      </Text>
+    ) : (
+      flashButton(key, 'restart', 'Refresh', { isDone: state.isDone, done: 'Updated' }, action)
     )
 
   // 整行都能點的列表項目；indent 是名稱前面空幾格（預設 2；不縮排的列：標題、Files、log、DB、wiki 頁面給 0）。
@@ -498,7 +513,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, columns: number, press:
       stretched(DIVIDER_SVG, 'Divider', 1)
     )
 
-  return { Box, Button, Code, Markdown, Text, cell, diff, hasSvg: Svg !== undefined, press, iconButton, armedButton, deleteButton, rollbackButton, confirmButton, pressRow, pathRow, pager, searchField, field, select, iconBar, stretched, divider }
+  return { Box, Button, Code, Markdown, Text, cell, diff, hasSvg: Svg !== undefined, press, iconButton, armedButton, deleteButton, rollbackButton, confirmButton, flashButton, refreshButton, pressRow, pathRow, pager, searchField, field, select, iconBar, stretched, divider }
 }
 
 export type Widgets = ReturnType<typeof makeWidgets>

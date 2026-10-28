@@ -24,6 +24,7 @@ import {
   openTool,
   posix,
   proc,
+  recordToasts,
   stubPanel,
   waitFor,
 } from './test-fixtures'
@@ -334,6 +335,9 @@ test('switching to another branch moves the current marker there, and the log ta
   const switches: string[] = []
   const logRefs: string[] = []
   let current = 'main'
+  // git switch 等它才回（看切的時候畫什麼）。
+  let release = () => {}
+  const held = new Promise<void>(resolve => (release = resolve))
   stubPanel(on)
   gitRepo(on, {
     status: () => `## ${current}\0`,
@@ -341,9 +345,12 @@ test('switching to another branch moves the current marker there, and the log ta
     run: cmd => {
       if (cmd[0] === 'switch') {
         switches.push(cmd.join(' '))
-        current = cmd[1] ?? ''
 
-        return ok('')
+        return held.then(() => {
+          current = cmd[1] ?? ''
+
+          return ok('')
+        })
       }
       if (cmd[0] !== 'log') return undefined
       logRefs.push(cmd[1] ?? '')
@@ -365,9 +372,16 @@ test('switching to another branch moves the current marker there, and the log ta
   await ui.press({ key: 'switch:l:dev' })
   expect(switches).toEqual([])
   expect((await ui.find({ key: 'switch:l:dev:row' }))?.text.includes(SWITCH_ARMED_HINT)).toBe(true)
+  const switching = ui.press({ key: 'switch:l:dev' })
+  await ui.redraw()
+  expect(switches).toEqual(['switch dev'])
+  expect((await ui.find({ key: 'switch:l:dev:row' }))?.text.includes('switching…')).toBe(true)
   await ui.press({ key: 'switch:l:dev' })
   expect(switches).toEqual(['switch dev'])
+  release()
+  await switching
   expect(await ui.find({ type: 'Text', text: SWITCH_ARMED_HINT })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: 'switching…' })).toBeUndefined()
   // ● 移到 dev；main 變成一般的分支，多了垃圾桶，dev 的垃圾桶不見了。
   expect(await marked('dev')).toBe(true)
   expect(await marked('main')).toBe(false)
@@ -511,15 +525,10 @@ const PULL_FAILED = 'fatal: Not possible to fast-forward, aborting.'
 
 test('Fetch and Pull run git without asking for a password, toast when done, and show why a pull failed', async ($, on) => {
   const syncs: string[] = []
-  const toasts: string[] = []
+  const toasts = recordToasts(on)
   let isDiverged = false
   mock.clock(on)
   stubPanel(on, { now: null })
-  on('ui.toast', (_$, e) => {
-    toasts.push(e.text)
-
-    return { value: undefined }
-  })
   gitRepo(on, {
     status: '## main\0',
     branches: [branchLine('main', { isCurrent: true, upstream: 'origin/main' })],
@@ -1039,7 +1048,7 @@ test('the ⋯ of a Files row opens a menu: Show in Explorer selects it in Explor
 
     return ok('')
   })
-  on('ui.toast', () => ({ value: undefined }))
+  const toasts = recordToasts(on)
 
   const ui = await mountPane($, 'desktop')
   await ui.press({ key: 'tab:files' })
@@ -1061,6 +1070,7 @@ test('the ⋯ of a Files row opens a menu: Show in Explorer selects it in Explor
   await ui.press({ key: 'files:reveal:src' })
   expect(runs.map(r => [r.argv[0], r.path])).toEqual([['powershell', '\\proj\\src']])
   expect(await ui.find({ key: 'files:reveal:src' })).toBeUndefined()
+  expect(toasts).toEqual(['Shown in Explorer'])
 
   // Delete 按一次只換成紅字；刪不掉寫原因，那列還在。
   runs.length = 0

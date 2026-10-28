@@ -1,29 +1,35 @@
 // branch 分頁：切換、刪除分支，Fetch／Pull，複製分支名稱。
 
-import type { RenderSurface, Timer } from 'claude-code'
+import type { RenderSurface } from 'claude-code'
 
 import type { GitSync } from '../../types'
-import { COPIED_MS, SYNC_TIMEOUT_MS } from '../config'
+import { SYNC_TIMEOUT_MS } from '../config'
 import { NO_MESSAGES } from '../defaults'
-import { arm, armedNow, busyFlag, disarm } from '../shell'
+import { arm, armedNow, busyFlag, disarm, flash } from '../shell'
 import { branchId } from './parse'
 import { SYNC_ARGS, gitErrorText } from './repo'
 import { type GitInit, type GitIo, gitOk, isGitConfirmed } from './run'
 
 // 切換分支要按兩次：第一次只把那列標成「再按一次」，DELETE_ARM_MS 內再按同一列才切；按別列就改標那列。
+// 切的時候那列寫「switching…」，再按不理；切好、重讀完（● 移過去）才拿掉。
+const switching = busyFlag('')
+
+export const switchingNow = switching.get
+
 export async function switchBranch(io: GitIo, name: string, isRemote: boolean) {
-  if (!(await isGitConfirmed(io, `switch:${branchId({ name, isRemote })}`))) return
+  const id = branchId({ name, isRemote })
+  if (switching.get() !== '' || !(await isGitConfirmed(io, `switch:${id}`))) return
+  switching.set(io, id)
   try {
     await gitOk(io, isRemote ? ['switch', '--track', name] : ['switch', name])
+    // 不跳 toast：目前分支的 ● 本來就會移過去。丟掉的焦點交給 focusWhenShown 補。
+    await io.setView(NO_MESSAGES)
+    await io.refresh()
   } catch (err) {
     await io.setView({ branchError: gitErrorText(err) })
-
-    return
+  } finally {
+    switching.set(io, '')
   }
-
-  // 不跳 toast：目前分支的 ● 本來就會移過去。丟掉的焦點交給 focusWhenShown 補。
-  await io.setView(NO_MESSAGES)
-  await io.refresh()
 }
 
 // 遠端分支（my/fork/feature/x）屬於哪個遠端：名稱最長的那個前綴，遠端名稱裡也可以有「/」。
@@ -93,14 +99,9 @@ export async function syncBranches(io: GitIo, kind: GitSync) {
   await io.refresh()
 }
 
-let uncopyTimer: Timer | undefined
-
-// branch 分頁的複製按鈕：把分支名稱（遠端的含 origin/）放到按的那個畫面的剪貼簿，
-// 按鈕變成綠底打勾 COPIED_MS 再換回來。
+// branch 分頁的複製按鈕：把分支名稱（遠端的含 origin/）放到按的那個畫面的剪貼簿，按鈕亮一下。
 export async function copyBranchName(io: GitIo, name: string, surface: RenderSurface) {
   const r = await io.copy({ text: name, surface })
   if (!r.isCopied) return io.setView({ ...NO_MESSAGES, branchError: `Couldn't copy ${name} (${r.reason})` })
-  uncopyTimer?.cancel()
-  await io.setView({ copied: name })
-  uncopyTimer = io.after(COPIED_MS, () => void io.setView({ copied: '' }))
+  flash(io, `copy:${name}`)
 }

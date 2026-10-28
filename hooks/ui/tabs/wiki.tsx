@@ -94,9 +94,11 @@ function folderRow({ w, a }: TabContext, row: Extract<TreeRow | DraftTreeRow, { 
 
 // 頁面列、草稿列最右邊：@ 把檔案路徑插進聊天框，垃圾桶按兩次才刪。path 是 .soap/wiki 底下的（草稿是 .drafts/<id>）。
 function fileButtons({ w, d, a }: TabContext, path: string) {
+  const full = wikiPath(path)
+
   return (
     <w.Box key={`wiki:trailing:${path}`} gap={1} alignItems="center">
-      {w.iconButton(`wiki:mention:${path}`, 'at', '@', false, () => a.mentionPath(wikiPath(path)))}
+      {w.flashButton(`wiki:mention:${path}`, 'at', '@', { isDone: d.flashed === `mention:${full}`, done: 'Added' }, () => a.mentionPath(full))}
       {w.deleteButton(`wiki:delete:${path}`, d.armed === `wiki:delete:${path}`, () => a.deleteWikiFile(path))}
     </w.Box>
   )

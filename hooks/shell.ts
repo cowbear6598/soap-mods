@@ -2,7 +2,7 @@
 
 import type { ProcessRunInit, Timer } from 'claude-code'
 
-import { DELETE_ARM_MS } from './config'
+import { COPIED_MS, DELETE_ARM_MS } from './config'
 import { failure } from './errors'
 import type { Io } from './io'
 import { powershellArgv } from './services/scan'
@@ -65,6 +65,37 @@ export function busyFlag<T>(init: T) {
       if (Object.is(value, next)) return
       value = next
       io.invalidate()
+    },
+  }
+}
+
+// 做好了綠底打勾亮一下的按鈕（branch 的 Copy、Wiki 的 @、CI 和 MR 的 Refresh）：整個面板一次只亮一顆，記著它的 key（'' 是沒有），
+// COPIED_MS 後收回。放模組變數不放 atom：熱重載後計時器沒了，atom 會一直亮著。
+const flashed = busyFlag('')
+let flashTimer: Timer | undefined
+
+export const flashedNow = flashed.get
+
+export function flash(io: Io, key: string) {
+  flashTimer?.cancel()
+  flashed.set(io, key)
+  flashTimer = io.after(COPIED_MS, () => flashed.set(io, ''))
+}
+
+// 按了要等的按鈕（CI、MR 的 Refresh）：做的時候 get() 是 true（再按不理）；work 回 true（沒失敗，錯誤另外畫）就讓 key 亮一下。
+export function pressFlag() {
+  const busy = busyFlag(false)
+
+  return {
+    get: busy.get,
+    run: async (io: Io, key: string, work: () => Promise<boolean>) => {
+      if (busy.get()) return
+      busy.set(io, true)
+      try {
+        if (await work()) flash(io, key)
+      } finally {
+        busy.set(io, false)
+      }
     },
   }
 }

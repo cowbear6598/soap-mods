@@ -1,5 +1,5 @@
 import type { GitBranch } from '../../../types'
-import { BRANCH_ROW_LIMIT, BRANCH_TREE_LIMIT, COPIED_TINT, FOLDER_COLOR, SWITCH_ARMED_HINT } from '../../config'
+import { BRANCH_ROW_LIMIT, BRANCH_TREE_LIMIT, FOLDER_COLOR, SWITCH_ARMED_HINT } from '../../config'
 import { branchId, filterBranches } from '../../git/parse'
 import { hasQuery } from '../../search'
 import { pathTree, treeRows } from '../../tree'
@@ -26,34 +26,28 @@ export const branchTab: TabBody = ({ w, d, a }) => {
   // 遠端分支的垃圾桶會刪掉遠端上的分支。
   const branchRow = (b: GitBranch, label = b.name, depth = 0) => {
     const id = branchId(b)
-    const isCopied = v.copied === b.name
-    const copyButton = w.iconButton(
-      `copy:${id}`,
-      isCopied ? 'check' : 'copy',
-      isCopied ? 'Copied' : 'Copy',
-      false,
-      () => a.copyBranchName(b.name),
-      isCopied ? COPIED_TINT : undefined,
-    )
+    const copyButton = w.flashButton(`copy:${id}`, 'copy', 'Copy', { isDone: d.flashed === `copy:${b.name}`, done: 'Copied' }, () => a.copyBranchName(b.name))
     const logButton = w.iconButton(`log:${id}`, 'log', 'Log', false, () => a.viewLog(b))
     const isForceArmed = d.armed === `force:${id}`
     const deleteButton =
       !b.isCurrent &&
       w.deleteButton(`delete:${id}`, isForceArmed || d.armed === `delete:${id}`, () => a.deleteBranch(b.name, b.isRemote), isForceArmed ? 'Force delete' : 'Confirm')
 
-    const isSwitchArmed = !b.isCurrent && d.armed === `switch:${id}`
+    const isSwitching = !b.isCurrent && d.switching === id
+    // 等著再按一次，或正在切。
+    const isSwitchPending = isSwitching || (!b.isCurrent && d.armed === `switch:${id}`)
 
     return w.pressRow({
       key: `switch:${id}`,
       label,
-      isDim: b.isRemote && !isSwitchArmed,
-      isBold: b.isCurrent || isSwitchArmed,
-      color: b.isCurrent ? 'success' : isSwitchArmed ? 'warning' : undefined,
+      isDim: b.isRemote && !isSwitchPending,
+      isBold: b.isCurrent || isSwitchPending,
+      color: b.isCurrent ? 'success' : isSwitchPending ? 'warning' : undefined,
       indent: b.isCurrent ? 0 : indentAt(depth),
       lead: b.isCurrent ? <Text color="success">●</Text> : undefined,
       // 終端機上提示畫進名稱那顆按鈕（isWholePressable），整行都能點、右邊的圖示才貼最右邊。
-      rest: isSwitchArmed ? <Text color="warning">{SWITCH_ARMED_HINT}</Text> : undefined,
-      isWholePressable: isSwitchArmed,
+      rest: isSwitching ? <Text dimColor>switching…</Text> : isSwitchPending ? <Text color="warning">{SWITCH_ARMED_HINT}</Text> : undefined,
+      isWholePressable: isSwitchPending,
       onPress: b.isCurrent ? () => undefined : () => a.switchBranch(b.name, b.isRemote),
       trailing: (
         <Box key={`trailing:${id}`} gap={1} alignItems="center">

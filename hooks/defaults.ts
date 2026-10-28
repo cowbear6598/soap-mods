@@ -9,7 +9,6 @@ export const EMPTY: GitView = {
   branches: [],
   error: '',
   branchError: '',
-  copied: '',
   op: '',
   opError: '',
   fileError: '',

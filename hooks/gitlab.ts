@@ -65,9 +65,10 @@ export async function api(io: GitLabIo, p: GitLabProject, url: string, { method 
 // 定時重讀：有跑著的就每次讀；沒有就隔 CI_IDLE_REFRESH_MS 才讀（新開的 pipeline 晚一點才出現）。
 export const isDue = (now: number, readAt: number, isRunning: boolean) => isRunning || now - readAt >= CI_IDLE_REFRESH_MS
 
-// 只開這台 GitLab 的網址。
+// 只開這台 GitLab 的網址。瀏覽器常開在後面，跳 toast 才看得出開了。
 export async function openGitLabUrl(io: Io, url: string) {
   const p = await repoProject(io)
   if (!url.startsWith(`https://${p.host}/`) && !url.startsWith(`http://${p.host}/`)) throw new Error('not a link to this GitLab')
   await openUrl(io, url)
+  io.toast('Opened in the browser')
 }

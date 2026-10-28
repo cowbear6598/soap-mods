@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { type Pane, type TestOn, endTurn, fsEntry, mountPane, ok, posix, stubPanel, stubStore } from '../test-fixtures'
+import { type Pane, type TestOn, endTurn, fsEntry, mountPane, ok, posix, recordToasts, stubPanel, stubStore } from '../test-fixtures'
 
 const WIKI = '/proj/.soap/wiki'
 const CHECKED = 'wiki.checked:/proj'
@@ -148,12 +148,7 @@ test('Send adds the checked pages to the conversation at once, marks them sent, 
   }
   disk(on, files, { sessionId: () => session, store: { [CHECKED]: ['style.md', 'missing.md'], 'wiki.checked:/other': ['db.md'] } })
   const log = mock.session(on)
-  const toasts: string[] = []
-  on('ui.toast', (_$, e) => {
-    toasts.push(e.text)
-
-    return { value: undefined }
-  })
+  const toasts = recordToasts(on)
   const appended = () => log.appended().map(r => r.message.content.map(c => ('text' in c ? c.text : '')).join(''))
 
   const ui = await mountPane($)
@@ -200,6 +195,7 @@ test('Distill drafts what is worth keeping into an inbox; Accept writes a draft 
 
     return { value: reply as never }
   })
+  const toasts = recordToasts(on)
 
   const ui = await mountPane($)
   await ui.press({ key: 'tab:spec' })
@@ -222,6 +218,7 @@ test('Distill drafts what is worth keeping into an inbox; Accept writes a draft 
   expect(files[`${WIKI}/style.md`]).toBe('# Style\n- Tabs\n- No semicolons\n')
   expect(files[`${WIKI}/.drafts/0-2.md`]).toBeUndefined()
   expect(await drawnRows(ui, 'wiki:draft:')).toEqual(['wiki:draft:0-1.md'])
+  expect(toasts).toEqual(['Wrote style.md'])
 
   // 新頁面的草稿：看 Markdown，Discard 只刪草稿。
   await ui.press({ key: 'wiki:draft:0-1.md' })
@@ -229,6 +226,7 @@ test('Distill drafts what is worth keeping into an inbox; Accept writes a draft 
   await ui.press({ key: 'wiki:discard' })
   expect(files[`${WIKI}/testing.md`]).toBeUndefined()
   expect(await drawnRows(ui, 'wiki:draft:')).toEqual([])
+  expect(toasts).toEqual(['Wrote style.md', 'Discarded the draft'])
 
   // 沒東西可整理、還不能整理：說原因，不寫草稿。
   reply = { isAnswered: true, text: 'NOTHING', usage: {} }
@@ -330,16 +328,11 @@ test('the Wiki tab draws the pages as a tree of folders that open and close, Unc
   disk(on, { [`${WIKI}/style.md`]: '# Style\n', [`${WIKI}/db/schema.md`]: '# Schema\n', [`${WIKI}/db/ops/backup.md`]: '# Backup\n' }, { store })
   const fills: { text: string; mode: string }[] = []
   let isFilled = true
-  const toasts: string[] = []
+  const toasts = recordToasts(on)
   on('prompt.fill', (_$, e) => {
     fills.push({ text: e.text, mode: e.mode })
 
     return isFilled ? { isFilled, text: e.text, cursor: e.text.length } : { isFilled, text: '', cursor: 0 }
-  })
-  on('ui.toast', (_$, e) => {
-    toasts.push(e.text)
-
-    return { value: undefined }
   })
   const ui = await mountPane($)
   await ui.press({ key: 'tab:spec' })
@@ -368,10 +361,12 @@ test('the Wiki tab draws the pages as a tree of folders that open and close, Unc
   expect(CHECKED in store).toBe(false)
   expect(await ui.find({ key: 'wiki:uncheck' })).toBeUndefined()
 
-  // @：把頁面路徑插進聊天框的游標位置；放不進去就跳提示。
+  // @：把頁面路徑插進聊天框的游標位置，那顆換成綠色的 Added；放不進去就跳提示。
   await ui.press({ key: 'wiki:mention:db/schema.md' })
   expect(fills).toEqual([{ text: '@.soap/wiki/db/schema.md ', mode: 'insert' }])
   expect(toasts).toEqual([])
+  expect((await ui.find({ key: 'wiki:mention:db/schema.md' }))?.props.label).toBe('Added')
+  expect((await ui.find({ key: 'wiki:mention:style.md' }))?.props.label).toBe('@')
   isFilled = false
   await ui.press({ key: 'wiki:mention:style.md' })
   // hook 擋下的不帶原因（引擎會拿掉），只能說放不進去。
@@ -465,14 +460,9 @@ test('drafts can move and delete pages; accepting them in order applies each, ch
 
 test('writing a wiki draft with Write checks its first line: one the Wiki tab cannot read adds what to fix for Claude', async ($, on) => {
   const files: Record<string, string> = {}
-  const toasts: string[] = []
+  const toasts = recordToasts(on)
   stubPanel(on, { root: '/proj' })
   on('process.run', () => ok(''))
-  on('ui.toast', (_$, e) => {
-    toasts.push(e.text)
-
-    return { value: undefined }
-  })
   on('fs.read', (_$, e) => ({ value: files[posix(e.path) ?? ''] ?? '' }))
   on('tool.call', (_$, e) => {
     if (e.tool === 'Write') files[posix(String(e.file_path)) ?? ''] = String(e.content)

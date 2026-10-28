@@ -239,6 +239,8 @@ export type PanelData = {
   diffPages: Readonly<Record<string, DiffPage>>
   // 正在跑的 Fetch／Pull，'' 是沒有。
   syncing: GitSync | ''
+  // 正在切過去的分支（branchId），'' 是沒有。
+  switching: string
   services: ServicesView
   files: FilesView
   // Files 的選單寫 Show in Explorer 還是 Show in Finder；選單沒開時沒問，一律 false。
@@ -265,13 +267,18 @@ export type PanelData = {
   ciSaving: boolean
   // 正在跑、重跑（等 GitLab 回）。
   ciActing: boolean
+  // 按了 Refresh，正在讀。
+  ciRefreshing: boolean
   mr: MrView
   // 正在 approve、merge、套用建議（等 GitLab 回）。
   mrActing: boolean
+  mrRefreshing: boolean
   // 正在停掉／重跑的服務。
   servicePending: readonly ServicePending[]
   // 等著再按一次的按鈕的 key（見 shell.ts 的 isConfirmed），'' 是沒有。
   armed: string
+  // 做好了亮一下的按鈕（見 shell.ts 的 flash），'' 是沒有。
+  flashed: string
   log: LogView
   logQuery: string
   // 蓋住分頁的差異、三欄合併或檔案內容；kind 是 none 時畫分頁。isMergeBusy：合併正在套用。

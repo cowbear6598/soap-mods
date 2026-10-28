@@ -1,9 +1,9 @@
 import type { HttpInit, ProcessRunInit } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
-import { CI_IDLE_REFRESH_MS, CI_REFRESH_MS, CI_SEARCH_DEBOUNCE_MS, CI_STORE_KEY } from '../../hooks/config'
+import { CI_IDLE_REFRESH_MS, CI_REFRESH_MS, CI_SEARCH_DEBOUNCE_MS, CI_STORE_KEY, COPIED_MS } from '../../hooks/config'
 import { KEYCHAIN, OLD_KEYCHAIN, fromHex, toHex } from '../../hooks/secret'
-import { type TestEngine, type TestOn, branchLine, fakeKeychain, gitRepo, json, mountPane, ok, stubPanel, stubStore } from '../test-fixtures'
+import { type TestEngine, type TestOn, branchLine, fakeKeychain, gitRepo, json, mountPane, ok, recordToasts, stubPanel, stubStore } from '../test-fixtures'
 
 type Run = { argv: readonly string[]; init?: ProcessRunInit }
 type Fetch = { url: string; init?: HttpInit }
@@ -58,7 +58,7 @@ function ciWorld(on: TestOn, { hasToken = true, valid = [TOKEN], remote = `https
   stubStore(on, store)
   on('ui.scroll', () => ({}))
   on('ui.focus', () => ({}))
-  on('ui.toast', () => ({ value: undefined }))
+  const toasts = recordToasts(on)
   on('env.get', () => ({ value: undefined }))
   gitRepo(on, {
     status: '',
@@ -113,7 +113,7 @@ function ciWorld(on: TestOn, { hasToken = true, valid = [TOKEN], remote = `https
     return json(404, { message: '404 Project Not Found' })
   })
 
-  return { runs, fetches, store, keychain: keychain.items, counts: keychain.counts, posts: world.posts, clock }
+  return { runs, fetches, store, keychain: keychain.items, counts: keychain.counts, posts: world.posts, toasts, clock }
 }
 
 async function openCi($: TestEngine, surface: 'desktop' | 'terminal' = 'desktop') {
@@ -153,6 +153,7 @@ test('the CI sub tab lists the branches that ran pipelines, opens one to its pip
   expect(await ui.find({ type: 'Text', text: 'manual' })).toBeDefined()
   await ui.press({ key: 'ci:web' })
   expect(world.runs.some(r => r.argv[0] === 'open' && r.argv[1] === `https://${HOST}/web-team/app/-/pipelines/1002`)).toBe(true)
+  expect(world.toasts).toEqual(['Opened in the browser'])
 
   await ui.press({ key: 'ci:job:12' })
   await ui.redraw()
@@ -170,6 +171,20 @@ test('the CI sub tab lists the branches that ran pipelines, opens one to its pip
   expect(world.counts.reads).toBe(1)
   expect(world.fetches.every(f => f.init?.method === undefined || f.init.method === 'GET')).toBe(true)
   expect(world.runs.some(r => r.argv[0]?.includes('glab') === true)).toBe(false)
+  await ui.unmount()
+})
+
+test('Refresh turns into a green Updated for a moment', async ($, on) => {
+  const world = ciWorld(on)
+  const ui = await openCi($, 'terminal')
+  const label = async () => (await ui.find({ key: 'ci:refresh' }))?.props.label
+
+  await ui.press({ key: 'ci:refresh' })
+  await ui.redraw()
+  expect(await label()).toBe('Updated')
+  await world.clock.advance(COPIED_MS)
+  await ui.redraw()
+  expect(await label()).toBe('Refresh')
   await ui.unmount()
 })
 

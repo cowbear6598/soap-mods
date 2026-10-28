@@ -1,4 +1,3 @@
-// token 用 CI 子分頁存的那組；還沒存就叫人去 CI 存。
 // 不採用的建議沒有按鈕可按（不 Resolve）：直接 Approve。衝突不在這裡解，Open Conflicts 開 GitLab 的頁面。
 
 import type { MrDetail, MrItem, MrSuggestion, MrView } from '../../../types'
@@ -31,7 +30,7 @@ function noToken({ w, a }: TabContext, mr: MrView) {
   )
 }
 
-const refreshButton = ({ w, a }: TabContext) => w.iconButton('mr:refresh', 'restart', 'Refresh', false, () => a.refreshMr())
+const refreshButton = ({ w, d, a }: TabContext) => w.refreshButton('mr:refresh', { isBusy: d.mrRefreshing, isDone: d.flashed === 'mr:refresh' }, () => a.refreshMr())
 
 function reviewList(ctx: TabContext, mr: MrView) {
   const { w, d, a } = ctx
@@ -89,7 +88,7 @@ function toolbar(ctx: TabContext, open: MrDetail | null) {
 // 簡介底下那排（置中）：Approve／Unapprove、Merge（不能 merge 時不畫，原因寫在簡介最後一行）。都沒有就不畫。
 function decision(ctx: TabContext, mr: MrView, open: MrDetail) {
   const { w, d, a } = ctx
-  const { Box, Button } = w
+  const { Box, Button, Text } = w
   if (open.state !== 'opened') return null
   if (open.hasConflicts) {
     return (
@@ -101,11 +100,18 @@ function decision(ctx: TabContext, mr: MrView, open: MrDetail) {
   const canMerge = mergeBlocked(open.mergeStatus) === ''
   const canApprove = !open.hasApproved && open.canApprove
   if (!open.hasApproved && !canApprove && !canMerge) return null
+  if (d.mrActing) {
+    return (
+      <Box justifyContent="center">
+        <Text dimColor>Working…</Text>
+      </Box>
+    )
+  }
 
   return (
     <Box gap={1} alignItems="center" justifyContent="center">
-      {!d.mrActing && open.hasApproved && <Button key="mr:unapprove" label="Unapprove" onPress={w.press(() => a.approveMr(false))} />}
-      {!d.mrActing && canApprove && <Button key="mr:approve" label="Approve" variant="primary" onPress={w.press(() => a.approveMr(true))} />}
+      {open.hasApproved && <Button key="mr:unapprove" label="Unapprove" onPress={w.press(() => a.approveMr(false))} />}
+      {canApprove && <Button key="mr:approve" label="Approve" variant="primary" onPress={w.press(() => a.approveMr(true))} />}
       {canMerge && armedButton(ctx, mr, 'mr:merge', 'merge', 'Merge', () => a.mergeMr(), isProd(open.target))}
     </Box>
   )

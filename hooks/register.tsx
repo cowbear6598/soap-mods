@@ -11,6 +11,7 @@ import {
   type CiIo,
   actOnJob,
   ciActingNow,
+  ciRefreshingNow,
   ciSavingNow,
   clearCi,
   closeJob,
@@ -21,6 +22,7 @@ import {
   openJob,
   openPipeline,
   openRef,
+  pressRefreshCi,
   refreshCi,
   retryCiPipeline,
   saveCiToken,
@@ -71,7 +73,7 @@ import {
   stepFile,
   toggleFileMenu,
 } from './files/actions'
-import { copyBranchName, deleteBranch, switchBranch, syncBranches, syncingNow } from './git/branch-actions'
+import { copyBranchName, deleteBranch, switchBranch, switchingNow, syncBranches, syncingNow } from './git/branch-actions'
 import { changeFile, openCommitDiff, openDiff, stepDiffFile } from './git/diff-actions'
 import { clearLogQuery, dropLog, loadLog, openCommits, pickRange, searchLog } from './git/log-actions'
 import { abortOp, continueOp } from './git/op-actions'
@@ -120,14 +122,16 @@ import {
   loadMrList,
   mergeMr,
   mrActingNow,
+  mrRefreshingNow,
   openMr,
   openMrLink,
+  pressRefreshMr,
   refreshMr,
   toggleMrResolved,
 } from './mr/actions'
 import { patch } from './patch'
 import { type ServicesIo, pendingServices, refreshServices, runServiceAction } from './services/actions'
-import { armedNow, disarm, isWindows } from './shell'
+import { armedNow, disarm, flashedNow, isWindows } from './shell'
 import { type SpecIo, closeSpec, deleteSpec, doSpec, openSpec, reloadSpec } from './spec/actions'
 import { normalizeTabs } from './tabs'
 import type { Actions } from './ui/actions'
@@ -165,7 +169,7 @@ const PANE_ARGS: PaneOpenArgs = { id: PANE, title: PANEL_TITLE }
 const tab = atom({ plugin: 'soap-mods', key: 'tab' } as const, 'files')
 const subTabs = atom({ plugin: 'soap-mods', key: 'subTabs' } as const, DEFAULT_SUB_TABS)
 // shape：GitView、FilesView 改了樣子就換，熱重載後不沿用舊程式存的、缺欄位的值（同 wiki）。
-const view = atom({ plugin: 'soap-mods', key: 'view' } as const, EMPTY, { shape: 'git-2' })
+const view = atom({ plugin: 'soap-mods', key: 'view' } as const, EMPTY, { shape: 'git-3' })
 const showRemote = atom({ plugin: 'soap-mods', key: 'showRemote' } as const, false)
 // branch 分頁資料夾的開合，key 是「l:路徑」或「r:路徑」；沒有的照預設。
 const branchFolders = atom({ plugin: 'soap-mods', key: 'branchFolders' } as const, {})
@@ -671,7 +675,7 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     closeCiPipeline: () => closePipeline(ciIo($)),
     openCiJob: j => openJob(ciIo($), j),
     closeCiJob: () => closeJob(ciIo($)),
-    refreshCi: () => refreshCi(ciIo($)),
+    refreshCi: () => pressRefreshCi(ciIo($)),
     saveCiToken: text => saveCiToken(ciIo($), text),
     toggleCiToken: isOpen => toggleCiToken(ciIo($), isOpen),
     retryCiPipeline: () => retryCiPipeline(ciIo($)),
@@ -679,7 +683,7 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     actOnCiJob: (j, kind) => actOnJob(ciIo($), j, kind),
     openMr: iid => openMr(mrIo($), iid),
     closeMr: () => closeMr(mrIo($)),
-    refreshMr: () => refreshMr(mrIo($)),
+    refreshMr: () => pressRefreshMr(mrIo($)),
     approveMr: isApprove => approveMr(mrIo($), isApprove),
     mergeMr: () => mergeMr(mrIo($)),
     applyMrSuggestion: s => applySuggestion(mrIo($), s),
@@ -817,6 +821,7 @@ export const register: Register = on => {
         filePage: fp,
         diffPages: pages,
         syncing: syncingNow(),
+        switching: switchingNow(),
         services: sv,
         files: fileList,
         isWindows: onWindows,
@@ -834,10 +839,13 @@ export const register: Register = on => {
         ci: ciView,
         ciSaving: ciSavingNow(),
         ciActing: ciActingNow(),
+        ciRefreshing: ciRefreshingNow(),
         mr: mrView,
         mrActing: mrActingNow(),
+        mrRefreshing: mrRefreshingNow(),
         servicePending: pendingServices(),
         armed: armedNow(),
+        flashed: flashedNow(),
         log: lg,
         logQuery: lq,
         cover: shown,

@@ -1,9 +1,3 @@
-// Git 的 CI 子分頁（GitLab）：分支清單 → 點分支看它的 pipeline → 點開看它的 job（照 stage 分組）→ 點 job 看 log。
-// 一層一層蓋過去，← Back 回上一層；跟 log 分頁點開 commit 一樣。
-// pipeline 那層能 Open 到 GitLab 網頁、Retry 失敗的 job，每個 job 旁邊（和它的 log 裡）能 Run manual job、Retry 跑完的；都要按兩次。
-// 分支清單最上面有搜尋框（分支名稱），This branch 直接打開目前的分支。
-// 這台 GitLab 還沒存 token 時只畫貼 token 的框；存了之後 Refresh 左邊的 Change token 換一組。
-
 import type { RenderChildren } from 'claude-code'
 
 import type { CiBranch, CiJob, CiPipeline, CiView } from '../../../types'
@@ -78,7 +72,7 @@ const statusMark = ({ w }: TabContext, key: string, status: string | null) => {
   return w.cell(key, s.mark, 2, { color: s.theme })
 }
 
-const refreshButton = ({ w, a }: TabContext) => w.iconButton('ci:refresh', 'restart', 'Refresh', false, () => a.refreshCi())
+const refreshButton = ({ w, d, a }: TabContext) => w.refreshButton('ci:refresh', { isBusy: d.ciRefreshing, isDone: d.flashed === 'ci:refresh' }, () => a.refreshCi())
 
 const actButton = ({ w, d }: TabContext, ci: CiView, key: string, armed: string, label: string, action: () => unknown, prod = false) =>
   w.confirmButton(key, label, { isArmed: d.armed === `ci:${armed}`, isBusy: d.ciActing, isProd: prod }, action)

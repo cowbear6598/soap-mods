@@ -1,9 +1,9 @@
 import type { HttpInit } from 'claude-code'
 import { expect, mock, test } from 'claude-code/testing'
 
-import { CI_STORE_KEY } from '../../hooks/config'
+import { CI_STORE_KEY, COPIED_MS } from '../../hooks/config'
 import { OLD_KEYCHAIN, toHex } from '../../hooks/secret'
-import { type TestEngine, type TestOn, branchLine, fakeKeychain, gitRepo, json, mountPane, ok, stubPanel, stubStore } from '../test-fixtures'
+import { type TestEngine, type TestOn, branchLine, fakeKeychain, gitRepo, json, mountPane, ok, recordToasts, stubPanel, stubStore } from '../test-fixtures'
 
 type Fetch = { url: string; init?: HttpInit }
 
@@ -53,15 +53,17 @@ function mrWorld(on: TestOn, { hasToken = true, head = HEAD }: { hasToken?: bool
   const fetches: Fetch[] = []
   const writes: { method: string; url: string; body: unknown }[] = []
   const state = { approved: false, merged: false, conflict: false }
+  // 給了就等它，GitLab 才回 approve（看等的時候畫什麼）。
+  const held: { approve?: Promise<void> } = {}
   const store: Record<string, unknown> = hasToken ? { [CI_STORE_KEY]: { [HOST]: { secret: OLD_KEYCHAIN, user: 'soap' } } } : {}
   const keychain = fakeKeychain(hasToken ? { [HOST]: toHex(TOKEN) } : {})
   const runs: (readonly string[])[] = []
   stubPanel(on, { root: '/repo', now: null })
-  mock.clock(on)
+  const clock = mock.clock(on)
   stubStore(on, store)
   on('ui.scroll', () => ({}))
   on('ui.focus', () => ({}))
-  on('ui.toast', () => ({ value: undefined }))
+  const toasts = recordToasts(on)
   on('env.get', () => ({ value: undefined }))
   gitRepo(on, {
     status: '',
@@ -77,14 +79,17 @@ function mrWorld(on: TestOn, { hasToken = true, head = HEAD }: { hasToken?: bool
       return undefined
     },
   })
-  on('http.fetch', (_$, e) => {
+  on('http.fetch', async (_$, e) => {
     fetches.push(e)
     const { url } = e
     const method = e.init?.method ?? 'GET'
     if (e.init?.headers?.['PRIVATE-TOKEN'] !== TOKEN) return json(401, { message: '401 Unauthorized' })
     if (method !== 'GET') {
       writes.push({ method, url, body: e.init?.body === undefined ? undefined : JSON.parse(e.init.body) })
-      if (url === `${MR}/approve`) state.approved = true
+      if (url === `${MR}/approve`) {
+        await held.approve
+        state.approved = true
+      }
       if (url === `${MR}/unapprove`) state.approved = false
       if (url === `${MR}/merge`) state.merged = true
 
@@ -122,7 +127,7 @@ function mrWorld(on: TestOn, { hasToken = true, head = HEAD }: { hasToken?: bool
     return json(404, { message: '404 Not Found' })
   })
 
-  return { fetches, writes, runs, state }
+  return { fetches, writes, runs, state, toasts, held, clock }
 }
 
 async function openMrTab($: TestEngine, surface: 'desktop' | 'terminal' = 'terminal') {
@@ -170,9 +175,17 @@ test('Approve makes the merge request mergeable; Merge then asks twice (Confirm 
   await ui.press({ key: 'mr:item:676' })
   await ui.redraw()
 
-  await ui.press({ key: 'mr:approve' })
+  let release = () => {}
+  world.held.approve = new Promise(resolve => (release = resolve))
+  const approving = ui.press({ key: 'mr:approve' })
+  await ui.redraw()
+  expect(await ui.find({ type: 'Text', text: 'Working…' })).toBeDefined()
+  expect(await ui.find({ key: 'mr:approve' })).toBeUndefined()
+  release()
+  await approving
   await ui.redraw()
   expect(world.writes).toEqual([{ method: 'POST', url: `${MR}/approve`, body: undefined }])
+  expect(world.toasts).toEqual(['Approved !676'])
   expect(await ui.find({ type: 'Text', text: 'Ready to merge' })).toBeDefined()
   expect(await ui.find({ key: 'mr:unapprove' })).toBeDefined()
 
@@ -236,7 +249,24 @@ test('a merge request with conflicts offers only Open Conflicts, which opens Git
   expect(await ui.find({ key: 'mr:s:501:resolve' })).toBeUndefined()
   await ui.press({ key: 'mr:conflicts' })
   expect(world.runs.some(r => r[0] === 'open' && r[1] === `https://${HOST}/web-team/app/-/merge_requests/676/conflicts`)).toBe(true)
+  expect(world.toasts).toEqual(['Opened in the browser'])
   expect(world.writes).toEqual([])
+  await ui.unmount()
+})
+
+test('Refresh turns into a green Updated for a moment', async ($, on) => {
+  const world = mrWorld(on)
+  const ui = await openMrTab($)
+  await ui.press({ key: 'mr:item:676' })
+  await ui.redraw()
+  const label = async () => (await ui.find({ key: 'mr:refresh' }))?.props.label
+
+  await ui.press({ key: 'mr:refresh' })
+  await ui.redraw()
+  expect(await label()).toBe('Updated')
+  await world.clock.advance(COPIED_MS)
+  await ui.redraw()
+  expect(await label()).toBe('Refresh')
   await ui.unmount()
 })
 

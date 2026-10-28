@@ -19,7 +19,7 @@ import { type Found, byName, walkTree } from '../files/list'
 import type { Io } from '../io'
 import { latestOnly } from '../latest'
 import { unifiedDiff } from '../merge/algo'
-import { busyFlag, isConfirmed, removePath } from '../shell'
+import { busyFlag, flash, isConfirmed, removePath } from '../shell'
 import { cutAtLineEnd } from '../text'
 import {
   type PageText,
@@ -179,10 +179,12 @@ export async function toggleWikiPage(io: WikiIo, path: string) {
   await saveChecked(io, root, toggled(await readChecked(io, root), path))
 }
 
-// 把路徑（session 資料夾底下的）當 @ 引用插進聊天框的游標位置；放不進去（有對話框擋著、沒有聊天框）就跳提示。
+// 把路徑（session 資料夾底下的）當 @ 引用插進聊天框的游標位置；放進去了那顆 @ 綠勾亮一下（桌面版看不到聊天框），
+// 放不進去（有對話框擋著、沒有聊天框）就跳提示。
 export async function mentionPath(io: WikiIo, path: string) {
   const r = await io.fill({ text: `@${path} `, mode: 'insert' })
-  if (!r.isFilled) io.toast(r.refusal === 'dialog' ? 'Close the dialog first.' : "Couldn't put the path in the prompt box.")
+  if (r.isFilled) flash(io, `mention:${path}`)
+  else io.toast(r.refusal === 'dialog' ? 'Close the dialog first.' : "Couldn't put the path in the prompt box.")
 }
 
 // Uncheck all：已經不在的頁面也一起清掉。
@@ -257,15 +259,23 @@ async function applyDraft(io: WikiIo, root: string, id: string) {
   if (from !== undefined && (await io.exists(pageAbs(root, from)))) await removePath(io, pageAbs(root, from))
   await removePath(io, draftAbs(root, id))
   if (from !== undefined) await moveChecked(io, root, from, to)
+
+  return d
 }
 
-// 打開的草稿：Accept 照草稿改 wiki；Discard 只刪草稿。做完回清單。
+const appliedText = (d: ParsedDraft) => (d.kind === 'write' ? `Wrote ${d.target}` : d.kind === 'move' ? `Moved ${d.from} to ${d.target}` : `Deleted ${d.target}`)
+
+// 打開的草稿：Accept 照草稿改 wiki；Discard 只刪草稿。做完回清單，toast 說改了什麼（草稿一回清單就不見了）。
 export async function settleWikiDraft(io: WikiIo, isAccept: boolean) {
   const s = await io.getWiki()
   if (s.draft === '') return
   const root = await io.root()
   try {
-    await (isAccept ? applyDraft(io, root, s.draft) : removePath(io, draftAbs(root, s.draft)))
+    if (isAccept) io.toast(appliedText(await applyDraft(io, root, s.draft)))
+    else {
+      await removePath(io, draftAbs(root, s.draft))
+      io.toast('Discarded the draft')
+    }
   } catch (err) {
     await io.setWiki({ deleteError: `Couldn't ${isAccept ? 'accept' : 'discard'} draft ${s.draft}: ${errorText(err)}` })
 

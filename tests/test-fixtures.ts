@@ -51,6 +51,18 @@ export function stubPanel(on: TestOn, { root = '/repo', now = 0 }: { root?: stri
   if (now !== null) on('clock.now', () => ({ value: now }))
 }
 
+// 跳過的 toast，照順序。
+export function recordToasts(on: TestOn) {
+  const toasts: string[] = []
+  on('ui.toast', (_$, e) => {
+    toasts.push(e.text)
+
+    return { value: undefined }
+  })
+
+  return toasts
+}
+
 // $.store 放在記憶體裡的 store（key → 值），測試讀它看存了什麼。
 export function stubStore(on: TestOn, store: Record<string, unknown>) {
   on('store.get', (_$, e) => ({ value: store[e.key] }))
@@ -127,7 +139,7 @@ export function fakeKeychain(items: Record<string, string> = {}) {
 // run 先看每個 git 指令（cmd 從子指令開始），給了結果就用它的，沒給就照上面的回。
 export function gitRepo(
   on: TestOn,
-  repo: { status: string | (() => string); branches?: string[] | (() => string[]); run?: (cmd: string[], e: RunEvent) => RunResult | undefined },
+  repo: { status: string | (() => string); branches?: string[] | (() => string[]); run?: (cmd: string[], e: RunEvent) => RunResult | Promise<RunResult> | undefined },
 ) {
   on('process.run', (_$, e) => {
     const cmd = e.argv.slice(3)
