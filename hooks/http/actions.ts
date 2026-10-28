@@ -8,7 +8,7 @@ import { splitPath } from '../git/parse'
 import { isObject } from '../json'
 import type { Io } from '../io'
 import { latestOnly } from '../latest'
-import { busyFlag, disarm, isConfirmed, removePath } from '../shell'
+import { busyFlag, disarm, isConfirmed, isWindows, openDir, removePath } from '../shell'
 import type { HttpBusy } from '../ui/actions'
 import { type CurlRequest, contentTypeOf, curlConfig, curlResponse, partsOf } from './multipart'
 import {
@@ -193,6 +193,16 @@ export async function pickHttpFolder(io: HttpIo, folder: string) {
 export async function foldHttpFolder(io: HttpIo, folder: string, isFolded: boolean) {
   const v = await io.getHttp()
   await io.setHttp({ foldedFolders: toggled(v.foldedFolders, folder, isFolded) })
+}
+
+/** Opens .soap/http in Finder or Explorer, making it first when there is none yet. */
+export async function openHttpDir(io: HttpIo) {
+  try {
+    await openDir(io, `${await io.root()}/${HTTP_DIR}`)
+    io.toast(`Opened in ${(await isWindows(io)) ? 'Explorer' : 'Finder'}`)
+  } catch (err) {
+    await io.setHttp({ error: `Couldn't open ./${HTTP_DIR}: ${errorText(err)}` })
+  }
 }
 
 export async function openHttpFolderPicker(io: HttpIo, isOpen: boolean) {

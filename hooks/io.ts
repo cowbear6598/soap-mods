@@ -26,6 +26,6 @@ export type Io = {
   // Soap Panel：捲回最上面、把焦點圈移到某顆按鈕、按的那列要被刪掉時先把焦點圈移到鄰居（見 register.tsx 的 leaveRow）。
   scrollTop: () => Promise<void>
   scrollTo: (key: string) => Promise<void>
-  ringOn: (key: string) => Promise<void>
+  ringOn: (key: string) => Promise<boolean>
   leaveRow: (rowKey?: string) => Promise<void>
 }

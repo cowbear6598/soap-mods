@@ -102,6 +102,7 @@ import {
   newHttpVar,
   openAddHttpEnv,
   openHttpEnv,
+  openHttpDir,
   openHttpFolderPicker,
   openHttpRequest,
   pickHttpFolder,
@@ -141,7 +142,7 @@ import { armedNow, disarm, flashedNow, isWindows } from './shell'
 import { type SpecIo, closeSpec, deleteSpec, doSpec, openSpec, reloadSpec } from './spec/actions'
 import { normalizeTabs } from './tabs'
 import type { Actions } from './ui/actions'
-import { type FocusIo, act, checkCover, checkPressed, focusWhenShown, isPaneShown, leaveRow } from './ui/focus'
+import { type FocusIo, act, checkCover, checkPressed, focusInput, focusWhenShown, isPaneShown, leaveRow } from './ui/focus'
 import { renderPanel } from './ui/panel'
 import {
   type WikiIo,
@@ -201,8 +202,8 @@ const wikiFolders = atom({ plugin: 'soap-mods', key: 'wikiFolders' } as const, {
 const log = atom({ plugin: 'soap-mods', key: 'log' } as const, EMPTY_LOG)
 // DB 分頁：存著的連線（不含密碼）、打開的那個的資料表、查詢和結果。
 const db = atom({ plugin: 'soap-mods', key: 'db' } as const, EMPTY_DB)
-// HTTP 子分頁：.soap/http 的請求、選的環境、點開的請求和它的回應。shape 同 wiki。
-const http = atom({ plugin: 'soap-mods', key: 'http' } as const, EMPTY_HTTP, { shape: 'http-13' })
+// HTTP 子分頁：.soap/http 的請求、清單的搜尋字、選的環境、點開的請求和它的回應。shape 同 wiki。
+const http = atom({ plugin: 'soap-mods', key: 'http' } as const, EMPTY_HTTP, { shape: 'http-14' })
 // CI 分頁（GitLab）：分支清單、點開的分支的 pipeline、點開的 pipeline 的 job、點開的 job 的 log。shape 同 wiki。
 const ci = atom({ plugin: 'soap-mods', key: 'ci' } as const, EMPTY_CI, { shape: 'ci-6' })
 // MR 分頁（GitLab）：開著的 MR、點開的那個的狀態和建議。shape 同 wiki。
@@ -292,9 +293,11 @@ async function setMr($: EngineInterface, change: Partial<MrView>) {
 // 等 session.attach 再開。
 let isOpenPending = false
 
-// 把 Soap Panel 的焦點圈移到 key 那個按鈕上；Soap Panel 沒拿著鍵盤就算了。
+// 把 Soap Panel 的焦點圈移到 key 那個按鈕上；Soap Panel 沒拿著鍵盤就算了（回 false）。
 async function ringOn($: EngineInterface, key: string) {
-  await $.ui.focus({ requestId: PANE, key }).catch(() => undefined)
+  const r = await $.ui.focus({ requestId: PANE, key }).catch(() => undefined)
+
+  return r !== undefined && !('deny' in r)
 }
 
 // 蓋上或換掉差異、合併時，捲回 Soap Panel 最上面從頭看。
@@ -659,6 +662,8 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     typeHttpDraft: change => typeHttpDraft(httpIo($), change),
     pickHttpFolder: folder => pickHttpFolder(httpIo($), folder),
     foldHttpFolder: (folder, isFolded) => foldHttpFolder(httpIo($), folder, isFolded),
+    searchHttp: text => setHttp($, { query: text }),
+    openHttpDir: () => openHttpDir(httpIo($)),
     openHttpFolderPicker: isOpen => openHttpFolderPicker(httpIo($), isOpen),
     editHttpInVim: () => editHttpInVim(httpIo($)),
     saveHttpDraft: () => saveHttpDraft(httpIo($)),
@@ -705,7 +710,7 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     takeSide: side => takeSide(gitIo($), side),
     applyMerge: () => applyMerge(gitIo($)),
     askClaude: () => askClaude(gitIo($)),
-    focusInput: key => ringOn($, key),
+    focusInput: key => focusInput(focusIo($), key),
   }
 }
 

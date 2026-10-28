@@ -743,6 +743,8 @@ export type HttpView = {
   showHeaders: boolean
   /** The folders the list shows folded. */
   foldedFolders: string[]
+  /** The list's search, as typed: the requests whose name, method, URL or file hold every word; folders unfold while it is set. */
+  query: string
   /** The request being edited, null when none. */
   draft: HttpDraft | null
   /** Why saving the draft failed (no request in it, a bad file name, the file changed), '' when none. */

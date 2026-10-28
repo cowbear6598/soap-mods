@@ -4,6 +4,7 @@ import type { HttpDraft, HttpRequest, HttpResult } from '../../../types'
 import { FOLDER_COLOR, HTTP_PAGES, NBSP, NEW_FOLDER } from '../../config'
 import { formatSize } from '../../files/list'
 import { braced, fileTitle, folderOf, httpFolders, promptNames, requestTitle, substitute, variableNames, variableSource, variableValue } from '../../http/parse'
+import { filterWords, hasQuery } from '../../search'
 import { backButton } from '../stepBar'
 import type { TabBody, TabContext } from './context'
 
@@ -163,8 +164,13 @@ function requestList(ctx: TabContext) {
       )),
     ]
   }
+  const isSearching = hasQuery(hv.query)
+  const shown = filterWords(hv.requests, hv.query, r => `${requestTitle(r)} ${r.method} ${r.url} ${r.file}`)
   const byFolder = new Map<string, HttpRequest[]>()
-  for (const r of hv.requests) byFolder.set(folderOf(r.file), [...(byFolder.get(folderOf(r.file)) ?? []), r])
+  for (const r of shown) {
+    const folder = folderOf(r.file)
+    byFolder.set(folder, [...(byFolder.get(folder) ?? []), r])
+  }
   const inFolder = (folder: string) => byFolder.get(folder) ?? []
 
   return (
@@ -174,15 +180,19 @@ function requestList(ctx: TabContext) {
         <Box flexGrow={1} flexShrink={1}>
           {envLine(ctx)}
         </Box>
+        <Button key="http:open" label="Open" onPress={w.press(() => a.openHttpDir())} />
         <Button key="http:new" label="+ New" onPress={w.press(() => a.newHttpRequest())} />
       </Box>
+      {hv.requests.length > 0 && w.searchField('http:search', hv.query, text => a.searchHttp(text))}
       {hv.requests.length === 0 ? (
         <Text dimColor>No requests yet.</Text>
+      ) : shown.length === 0 ? (
+        <Text dimColor>No requests match.</Text>
       ) : (
         // 資料夾在上面，「▾ 會員 (2)」整列點了收起（記著），顏色同 Files、Wiki 的資料夾；沒放資料夾的在最下面。
         <Box flexDirection="column">
-          {httpFolders(hv.requests).map(folder => {
-            const isFolded = hv.foldedFolders.includes(folder)
+          {httpFolders(shown).map(folder => {
+            const isFolded = !isSearching && hv.foldedFolders.includes(folder)
 
             return (
               <Box key={`http:folder:${folder}:box`} flexDirection="column">

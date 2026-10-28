@@ -173,6 +173,9 @@ export type Actions = {
   pickHttpFolder: (folder: string) => unknown
   foldHttpFolder: (folder: string, isFolded: boolean) => unknown
   openHttpFolderPicker: (isOpen: boolean) => unknown
+  // openHttpDir 在 Finder／檔案總管打開 .soap/http（沒有就建立）。
+  searchHttp: (text: string) => unknown
+  openHttpDir: () => unknown
   saveHttpDraft: () => unknown
   deleteHttpRequest: () => unknown
   // Environment：+ New 打開（false 收起）新環境名稱的框、新增、刪那一列的環境（兩次）；

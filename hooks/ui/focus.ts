@@ -10,6 +10,7 @@
 //    要把焦點圈移到看得到的按鈕上才行：每次畫完檢查剛按的那顆還在不在（checkPressed）。
 // 3. 按了這個畫面沒綁的字母（log 分頁按 m）：桌面版把那個鍵交給輸入框，焦點跟著跑過去。
 //    這種在畫面那層擋掉（ui/panel.tsx 的 strayKeys）。
+// 4. 終端機點輸入框（底下那顆透明按鈕）時 Soap Panel 沒拿著鍵盤：引擎不肯移焦點圈（focusInput）。
 
 import type { RenderChildren, Timer, UiPane, UiPressArgument } from 'claude-code'
 
@@ -21,8 +22,8 @@ export type FocusIo = {
   findPane: () => Promise<UiPane | undefined>
   // 把焦點給 Soap Panel。
   focusPanel: () => Promise<unknown>
-  // 把 Soap Panel 的焦點圈移到 key 那個按鈕上；Soap Panel 沒拿著鍵盤就算了。
-  ringOn: (key: string) => Promise<void>
+  // 把 Soap Panel 的焦點圈移到 key 那個按鈕上；Soap Panel 沒拿著鍵盤就算了（回 false）。
+  ringOn: (key: string) => Promise<boolean>
   now: () => Promise<number>
   after: (ms: number, fn: () => unknown) => Timer
   // 看著的 Tab 和它的子分頁。
@@ -107,6 +108,13 @@ export function checkCover(io: FocusIo, kind: Cover['kind'], now: number, t: str
   drawnCover = kind
   const isPressing = pressed !== undefined && now < pressed.until
   if (wasCovered && kind === 'none' && !isPressing) io.after(0, () => void io.ringOn(tabIconKey(t, sub)))
+}
+
+// 不一律先給焦點：checkCover 那些沒按按鈕的 ringOn 不該搶鍵盤，這裡是人點了輸入框才給。
+export async function focusInput(io: FocusIo, key: string) {
+  if (await io.ringOn(key)) return
+  await io.focusPanel().catch(() => undefined)
+  await io.ringOn(key)
 }
 
 export async function focusWhenShown(io: FocusIo) {

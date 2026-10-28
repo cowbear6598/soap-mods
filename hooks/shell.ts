@@ -51,6 +51,20 @@ export async function openUrl(io: Io, url: string) {
   else await runOk(io, ['open', url], 'open')
 }
 
+// 在 Finder／檔案總管打開資料夾，沒有就先建立。Windows 由 Start-Process 開（直接跑 explorer 會照引擎隱藏子程式視窗的設定開成看不見的視窗）；
+// 路徑從環境變數給，不拼進指令。
+const OPEN_DIR_ARGV = powershellArgv(
+  "$ErrorActionPreference = 'Stop'; New-Item -ItemType Directory -Force -Path $env:SOAP_PATH | Out-Null; Start-Process $env:SOAP_PATH",
+)
+
+export async function openDir(io: Io, abs: string) {
+  if (await isWindows(io)) await runOk(io, OPEN_DIR_ARGV, 'Explorer', { env: { SOAP_PATH: abs.replace(/\//g, '\\') } })
+  else {
+    await runOk(io, ['mkdir', '-p', '--', abs], 'mkdir')
+    await runOk(io, ['open', abs], 'open')
+  }
+}
+
 /**
  * A flag for work in flight (a sync, a query) that the panel draws: a module
  * variable, not an atom, so a hot reload in the middle resets it instead of

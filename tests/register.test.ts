@@ -950,7 +950,13 @@ test('the panel opens on the Files tab; on the terminal the whole search box foc
   on('session.root', () => ({ value: '/proj' }))
   on('fs.list', () => ({ value: [fsEntry('Login.md')] }))
   on('process.run', () => ok(''))
-  on('ui.focus', () => ({}))
+  // 面板沒拿著鍵盤（測試的 pane 就是）：引擎不肯移焦點圈，要先把焦點給面板。
+  let focusOpens = 0
+  on('ui.open', (_$, e) => {
+    if (e.focus === true) focusOpens++
+
+    return { value: { isPlaced: true } }
+  })
 
   const ui = await mountPane($, 'terminal', 'files')
   expect((await ui.find({ key: 'tab:files' }))?.props).toMatchObject({ variant: 'primary' })
@@ -959,6 +965,8 @@ test('the panel opens on the Files tab; on the terminal the whole search box foc
   // 框底下墊一顆一樣大的透明按鈕：點框裡字以外的地方，它把焦點移到框上。
   expect((await ui.find({ key: 'files:search:focus' }))?.props).toMatchObject({ plain: true })
   await ui.press({ key: 'files:search:focus' })
+  // 透明按鈕不等它做完。
+  expect(await waitFor(async () => (focusOpens > 0 ? focusOpens : undefined))).toBe(1)
 
   await ui.input({ key: 'files:search', text: 'login', kind: 'change' })
   expect(await waitFor(() => ui.find({ key: 'files:found:Login.md' }))).toBeDefined()

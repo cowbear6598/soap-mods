@@ -307,6 +307,32 @@ test('a request goes in a folder picked or added in the editor; folders fold on 
   await ui.unmount()
 })
 
+test('the list searches names, methods and URLs, unfolding folders; Open shows .soap/http in Finder, making it first', async ($, on) => {
+  const world = httpWorld(on, { files: { 'a.http': '###\nGET https://x.test/a\n', '賽事/刷新.http': '###\nPOST https://x.test/refresh\n' } })
+  const ui = await mountPane($)
+  await openTool(ui, 'http')
+  await ui.press({ key: 'http:folder:賽事' })
+  expect(await reqRows(ui)).toEqual(['http:req:a.http#0'])
+
+  await ui.input({ key: 'http:search', text: 'post', kind: 'change' })
+  expect(await reqRows(ui)).toEqual(['http:req:賽事/刷新.http#0'])
+  await ui.input({ key: 'http:search', text: 'x.test/a', kind: 'change' })
+  expect(await reqRows(ui)).toEqual(['http:req:a.http#0'])
+  expect(await ui.find({ key: 'http:folder:賽事' })).toBeUndefined()
+  await ui.input({ key: 'http:search', text: 'nothing', kind: 'change' })
+  expect(await texts(ui)).toContain('No requests match.')
+  await ui.press({ key: 'http:search:clear' })
+  expect(await reqRows(ui)).toEqual(['http:req:a.http#0'])
+
+  await ui.press({ key: 'http:open' })
+  expect(world.runs.map(r => r.argv).filter(a => ['mkdir', 'open'].includes(a[0] ?? ''))).toEqual([
+    ['mkdir', '-p', '--', DIR],
+    ['open', DIR],
+  ])
+  expect(world.toasts).toEqual(['Opened in Finder'])
+  await ui.unmount()
+})
+
 test('a multipart request is sent through curl, its settings on stdin, a file relative to its .http file', async ($, on) => {
   const world = httpWorld(on, {
     files: {
