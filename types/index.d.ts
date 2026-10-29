@@ -1,13 +1,15 @@
-export type TabId = 'git' | 'files' | 'tools' | 'spec'
-/** Top tabs from before the Tools tab, kept by an older load in `$.state`: read as the Tools sub tab of that name. */
-export type OldTabId = 'services' | 'db'
+export type TabId = 'git' | 'files' | 'tools' | 'docs'
+/** Top tabs an older load may have kept in `$.state`: services and db (before the Tools tab) read as that Tools sub tab, spec (the Docs tab's old id) as docs. */
+export type OldTabId = 'services' | 'db' | 'spec'
 export type GitSubTab = 'diff' | 'branch' | 'log' | 'ci' | 'mr' | 'conflict'
-/** The Spec tab's sub tabs: the plans under `.soap/tasks`, and the wiki pages under `.soap/wiki`. */
-export type SpecSubTab = 'spec' | 'wiki'
+/** The Docs tab's sub tabs: the plans under `.soap/tasks`, and the wiki pages under `.soap/wiki`. */
+export type DocsSubTab = 'spec' | 'wiki'
 /** The Tools tab's sub tabs: the local services, SQL Server, and the requests in `.soap/http`. */
 export type ToolsSubTab = 'services' | 'db' | 'http'
 /** The tabs that have sub tabs, and the sub tab each one shows. */
-export type SubTabs = { git: GitSubTab; spec: SpecSubTab; tools: ToolsSubTab }
+export type SubTabs = { git: GitSubTab; docs: DocsSubTab; tools: ToolsSubTab }
+/** Sub tabs an older load may have kept under the Docs tab's old id: read as docs. */
+export type OldSubTabs = { spec?: DocsSubTab }
 /** The branch tab's Fetch / Pull buttons. */
 export type GitSync = 'fetch' | 'pull'
 
@@ -766,8 +768,8 @@ declare module 'claude-code' {
     'soap-mods': {
       /** An older load may have kept a tab that is now a Tools sub tab (OldTabId); read through normalizeTabs. */
       tab: TabId | OldTabId
-      /** The sub tab each tab with sub tabs shows; an older load's lacks the ones added since (normalizeTabs fills them). */
-      subTabs: Partial<SubTabs>
+      /** The sub tab each tab with sub tabs shows; an older load's lacks the ones added since or keeps Docs' under spec (normalizeTabs fills them). */
+      subTabs: Partial<SubTabs> & OldSubTabs
       /** Shaped, like wiki. */
       view: Shaped<GitView>
       /** Whether the remote branches section is expanded. */

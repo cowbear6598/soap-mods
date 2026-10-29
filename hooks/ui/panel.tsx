@@ -15,7 +15,7 @@ import { filesTab } from './tabs/files'
 import { httpPageBar } from './tabs/http'
 import { logTab } from './tabs/log'
 import { mrTab } from './tabs/mr'
-import { specTab } from './tabs/spec'
+import { docsTab } from './tabs/docs'
 import { toolsTab } from './tabs/tools'
 import { usageBar } from './usage'
 import { type Widgets, makeWidgets } from './widgets'
@@ -41,7 +41,7 @@ const TAB_BODIES: Record<TabId, TabBody> = {
   git: gitTab,
   files: filesTab,
   tools: toolsTab,
-  spec: specTab,
+  docs: docsTab,
 }
 
 // Git Tab 的那排 repo：「a*」是有未提交的變更，「!」是有衝突。session 資料夾本身是 repo 時只有它一個；

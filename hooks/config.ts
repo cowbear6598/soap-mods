@@ -132,10 +132,10 @@ export const TABS: { id: TabId; label: string; icon: IconName }[] = [
   { id: 'files', label: 'Files', icon: 'files' },
   { id: 'git', label: 'Git', icon: 'git' },
   { id: 'tools', label: 'Tools', icon: 'tools' },
-  { id: 'spec', label: 'Docs', icon: 'book' },
+  { id: 'docs', label: 'Docs', icon: 'book' },
 ]
 
-// 有子分頁的 Tab 和它的子分頁。內容：Git 在 ui/panel.tsx 的 GIT_SUB_TAB_BODIES，Spec（計劃和 wiki）在 ui/tabs/spec.tsx 的 SPEC_SUB_TAB_BODIES，
+// 有子分頁的 Tab 和它的子分頁。內容：Git 在 ui/panel.tsx 的 GIT_SUB_TAB_BODIES，Docs（計劃和 wiki）在 ui/tabs/docs.tsx 的 DOCS_SUB_TAB_BODIES，
 // Tools 在 ui/tabs/tools.tsx 的 TOOLS_SUB_TAB_BODIES。
 export const SUB_TABS: { [T in keyof SubTabs]: { id: SubTabs[T]; label: string; icon: IconName }[] } = {
   git: [
@@ -146,7 +146,7 @@ export const SUB_TABS: { [T in keyof SubTabs]: { id: SubTabs[T]; label: string; 
     { id: 'mr', label: 'MR', icon: 'mr' },
     { id: 'conflict', label: 'Conflict', icon: 'conflict' },
   ],
-  spec: [
+  docs: [
     { id: 'spec', label: 'Spec', icon: 'spec' },
     { id: 'wiki', label: 'Wiki', icon: 'library' },
   ],
@@ -158,7 +158,7 @@ export const SUB_TABS: { [T in keyof SubTabs]: { id: SubTabs[T]; label: string; 
 }
 
 // 每個有子分頁的 Tab 一開始看的子分頁。
-export const DEFAULT_SUB_TABS: SubTabs = { git: 'diff', spec: 'spec', tools: 'services' }
+export const DEFAULT_SUB_TABS: SubTabs = { git: 'diff', docs: 'spec', tools: 'services' }
 
 export const hasSubTabs = (tab: TabId): tab is keyof SubTabs => tab in SUB_TABS
 
@@ -190,7 +190,7 @@ export const FILES_WALK_BATCH = 32
 export const FILES_WALK_SKIP: readonly string[] = ['.git', 'node_modules']
 // 點檔案看內容：比這大的不讀（bytes）。
 export const FILE_VIEW_MAX_BYTES = 1_000_000
-// Spec 分頁：plan skill 把每個 feature 的計劃寫在這個資料夾（相對 session 資料夾）底下的 <feature>/plan.yaml。
+// Spec 子分頁：plan skill 把每個 feature 的計劃寫在這個資料夾（相對 session 資料夾）底下的 <feature>/plan.yaml。
 export const SPEC_DIR = '.soap/tasks'
 export const PLAN_FILE = 'plan.yaml'
 // Wiki 子分頁：頁面是這個資料夾（相對 session 資料夾）底下的 .md；勾了哪幾頁存在 $.store 的「WIKI_CHECKED_KEY:session 資料夾」，

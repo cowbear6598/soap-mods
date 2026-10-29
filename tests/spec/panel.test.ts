@@ -69,7 +69,7 @@ test('the Spec sub tab of Docs lists the plans newest first, opens one to its De
   })
 
   const ui = await mountPane($)
-  await ui.press({ key: 'tab:spec' })
+  await ui.press({ key: 'tab:docs' })
   const rows = (await ui.findAll({ type: 'Button' })).map(b => b.props.key).filter(k => String(k).startsWith('spec:item:'))
   expect(rows).toEqual(['spec:item:search', 'spec:item:login', 'spec:item:draft'])
   expect(await ui.find({ type: 'Text', text: 'no plan.yaml' })).toBeDefined()
@@ -173,7 +173,7 @@ test('an opened plan reads quotes, comments, folded and | blocks, [a, b] lists a
   tasks(on, { folders: PLAN_CASES.map(c => c.name), plans: Object.fromEntries(PLAN_CASES.map(c => [`${c.name}/plan.yaml`, { text: c.text, mtimeMs: 1 }])) })
 
   const ui = await mountPane($)
-  await ui.press({ key: 'tab:spec' })
+  await ui.press({ key: 'tab:docs' })
   for (const c of PLAN_CASES) {
     await ui.press({ key: `spec:item:${c.name}` })
     if (c.meta !== undefined) expect(await ui.find({ type: 'Text', text: c.meta })).toBeDefined()
@@ -219,7 +219,7 @@ test('the trash button of a spec asks with a check first, then deletes its whole
     toasts.length = 0
     isFailing = false
     const ui = await mountPane($, surface)
-    await ui.press({ key: 'tab:spec' })
+    await ui.press({ key: 'tab:docs' })
     // 每列一個垃圾桶；按一下只換成打勾（桌面版是紅底），不刪。
     expect(await ui.find({ key: 'spec:delete:login' })).toBeDefined()
     expect(await ui.find({ key: 'spec:delete:search' })).toBeDefined()
@@ -262,7 +262,7 @@ test('with no .soap/tasks the Spec sub tab says to run /soap-mods:plan, and at t
   tasks(on, state)
 
   const ui = await mountPane($)
-  await ui.press({ key: 'tab:spec' })
+  await ui.press({ key: 'tab:docs' })
   expect(await ui.find({ type: 'Text', text: 'No specs yet. Run /soap-mods:plan to write one.' })).toBeDefined()
 
   // Claude 跑了 /soap-mods:plan：回合結束後清單出現。

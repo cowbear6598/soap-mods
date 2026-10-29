@@ -5,7 +5,7 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, PaneOpenArgs, Register, RenderSurface } from 'claude-code'
 
-import type { CiView, DbView, FilesView, GitBranch, GitView, HttpView, LogView, MrView, ServicesView, SubTabs, SpecView, TabId, ToolsSubTab, WikiView } from '../types'
+import type { CiView, DbView, DocsSubTab, FilesView, GitBranch, GitView, HttpView, LogView, MrView, ServicesView, SubTabs, SpecView, TabId, ToolsSubTab, WikiView } from '../types'
 import { CI_REFRESH_MS, DEFAULT_SUB_TABS, FOCUS_WATCH_MS, GIT_REFRESH_MS, PANEL_TITLE, SERVICES_SCAN_MS, USAGE_TICK_MS, hasSubTabs } from './config'
 import {
   type CiIo,
@@ -172,7 +172,7 @@ const PANE_ARGS: PaneOpenArgs = { id: PANE, title: PANEL_TITLE }
 
 // ───── 狀態 ─────
 
-// 看著的 Tab、有子分頁的 Tab 各自看的子分頁。舊版存的值（上層的 services、db）讀的時候換成現在的樣子：一律經過 readTabs。
+// 看著的 Tab、有子分頁的 Tab 各自看的子分頁。舊版存的值（上層的 services、db、spec，子分頁的 spec）讀的時候換成現在的樣子：一律經過 readTabs。
 const tab = atom({ plugin: 'soap-mods', key: 'tab' } as const, 'files')
 const subTabs = atom({ plugin: 'soap-mods', key: 'subTabs' } as const, DEFAULT_SUB_TABS)
 // shape：GitView、FilesView 改了樣子就換，熱重載後不沿用舊程式存的、缺欄位的值（同 wiki）。
@@ -188,7 +188,7 @@ const logQuery = atom({ plugin: 'soap-mods', key: 'logQuery' } as const, '')
 const filePage = atom({ plugin: 'soap-mods', key: 'filePage' } as const, 0)
 const services = atom({ plugin: 'soap-mods', key: 'services' } as const, EMPTY_SERVICES)
 const files = atom({ plugin: 'soap-mods', key: 'files' } as const, EMPTY_FILES, { shape: 'files-3' })
-// Spec 分頁：.soap/tasks 底下的 feature 清單，和點開的那份 plan.yaml。
+// Spec 子分頁：.soap/tasks 底下的 feature 清單，和點開的那份 plan.yaml。
 const spec = atom({ plugin: 'soap-mods', key: 'spec' } as const, EMPTY_SPEC)
 
 const shownSub = (t: TabId, subs: SubTabs) => (hasSubTabs(t) ? subs[t] : undefined)
@@ -225,11 +225,13 @@ async function readTabs($: EngineInterface) {
 }
 
 // 把舊版存的 Tab、子分頁換成現在的樣子寫回去（session 開始、熱重載後，和換分頁前），之後存的都是新的。
+// 子分頁整個換掉而不是 patch：patch 只蓋上新欄位，舊版的 key（Docs 以前記在 spec 底下）會一直留著。
 async function settleTabs($: EngineInterface) {
   const now = await readTabs($)
+  const isSettled = (s: object) => Object.keys(s).length === Object.keys(now.subTabs).length && patch(s, now.subTabs) === s
   await Promise.all([
     update($, tab, t => (t === now.tab ? t : now.tab)),
-    update($, subTabs, s => patch(s, now.subTabs)),
+    update($, subTabs, s => (isSettled(s) ? s : now.subTabs)),
   ])
 
   return now
@@ -424,20 +426,19 @@ function filesIo($: EngineInterface): FilesIo {
   }
 }
 
-// ───── Spec 分頁 ─────
+// ───── Docs 分頁 ─────
 
 function specIo($: EngineInterface): SpecIo {
   return { ...baseIo($), getSpec: () => read($, spec), setSpec: change => setSpec($, change) }
 }
 
-// Spec 分頁看得到的子分頁：計劃或 wiki。
-async function reloadSpecTab($: EngineInterface) {
-  await ((await readTabs($)).subTabs.spec === 'wiki' ? reloadWiki(wikiIo($)) : reloadSpec(specIo($)))
-}
+// Docs 分頁看得到的子分頁：計劃或 wiki。
+const reloadDocsTab = ($: EngineInterface, sub: DocsSubTab) => (sub === 'wiki' ? reloadWiki(wikiIo($)) : reloadSpec(specIo($)))
 
-// 回合結束：Claude 可能寫了新的計劃、wiki 頁面，改了打開的那份。Spec 分頁開著就重讀看得到的那個。
-async function reloadSpecsWhenShown($: EngineInterface) {
-  if ((await readTabs($)).tab === 'spec') await reloadSpecTab($)
+// 回合結束：Claude 可能寫了新的計劃、wiki 頁面，改了打開的那份。Docs 分頁開著就重讀看得到的那個。
+async function reloadDocsWhenShown($: EngineInterface) {
+  const { tab: t, subTabs: subs } = await readTabs($)
+  if (t === 'docs') await reloadDocsTab($, subs.docs)
 }
 
 // ───── Wiki 子分頁 ─────
@@ -557,10 +558,10 @@ function loadTool($: EngineInterface, id: ToolsSubTab): Promise<void> {
 // 讀這個 Tab（和它看著的子分頁）要的資料，不等它讀完。
 function loadTab($: EngineInterface, id: TabId, subs: SubTabs) {
   if (id === 'files') void reloadFiles(filesIo($)).catch(() => undefined)
-  if (id === 'spec') void reloadSpecTab($).catch(() => undefined)
+  if (id === 'docs') void reloadDocsTab($, subs.docs).catch(() => undefined)
   if (id === 'tools') void loadTool($, subs.tools).catch(() => undefined)
-  if (id === 'git') void isSubShown($, 'git', 'ci').then(isCi => (isCi ? loadCi($) : undefined)).catch(() => undefined)
-  if (id === 'git') void isSubShown($, 'git', 'mr').then(isMr => (isMr ? loadMr($) : undefined)).catch(() => undefined)
+  if (id === 'git' && subs.git === 'ci') void loadCi($).catch(() => undefined)
+  if (id === 'git' && subs.git === 'mr') void loadMr($).catch(() => undefined)
   void refreshTab(gitIo($), id, shownSub(id, subs))?.catch(() => undefined)
 }
 
@@ -574,11 +575,11 @@ function loadTabOnce($: EngineInterface, id: TabId, subs: SubTabs, session: stri
   loadTab($, id, subs)
 }
 
-// 換子分頁。Git 的 log、CI、MR 不在看的時候不讀，換過來才讀；Spec 的（計劃、wiki）換過去就重讀它；Tools 的換過去讀那個工具的。
+// 換子分頁。Git 的 log、CI、MR 不在看的時候不讀，換過來才讀；Docs 的（計劃、wiki）換過去就重讀它；Tools 的換過去讀那個工具的。
 async function selectSubTab<T extends keyof SubTabs>($: EngineInterface, t: T, id: SubTabs[T]) {
   const now = await settleTabs($)
   await Promise.all([update($, subTabs, () => ({ ...now.subTabs, [t]: id })), leaveTab($)])
-  if (t === 'spec') await reloadSpecTab($)
+  if (t === 'docs') await reloadDocsTab($, id as DocsSubTab)
   else if (t === 'tools') {
     const tool = id as ToolsSubTab
     void refreshTab(gitIo($), 'tools', tool)?.catch(() => undefined)
@@ -748,7 +749,7 @@ export const register: Register = on => {
     $.clock.every(SERVICES_SCAN_MS, () => void scanWhenShown($).catch(() => undefined))
     $.clock.every(GIT_REFRESH_MS, () => void refreshWhenShown($).catch(() => undefined))
     $.clock.every(CI_REFRESH_MS, () => void refreshGitLabWhenShown($).catch(() => undefined))
-    // 熱重載前存的上層 services、db：換成 Tools 和它的子分頁。
+    // 熱重載前存的上層 services、db（換成 Tools 和它的子分頁）、spec（換成 docs）。
     void settleTabs($).catch(() => undefined)
     homeDir = await pinHome($)
 
@@ -789,7 +790,7 @@ export const register: Register = on => {
   on('turn.complete', ($, e, next) => {
     void refreshWhenShown($).catch(() => undefined)
     void reloadFilesWhenShown($).catch(() => undefined)
-    void reloadSpecsWhenShown($).catch(() => undefined)
+    void reloadDocsWhenShown($).catch(() => undefined)
     void reloadHttpWhenShown($).catch(() => undefined)
 
     return next(e)
@@ -835,7 +836,7 @@ export const register: Register = on => {
 
     const { tab: activeTab, subTabs: subs } = tabs
     loadTabOnce($, activeTab, subs, session)
-    const isWikiShown = activeTab === 'spec' && subs.spec === 'wiki'
+    const isWikiShown = activeTab === 'docs' && subs.docs === 'wiki'
     // 只有開著時才問：Files 的 ⋯ 選單（Show in Explorer 還是 Finder，問一次就記著）、Wiki 子分頁的模型選單。
     const [onWindows, current] = await Promise.all([fileList.menu !== '' && isWindows(baseIo($)), isWikiShown ? currentModel(wikiIo($)) : ('' as const)])
     // 這段對話送過的頁面。

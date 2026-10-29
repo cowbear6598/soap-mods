@@ -1173,8 +1173,7 @@ test('the Services tab lists the running services and stops one by killing its t
 
   const ui = await mountPane($)
   await openTool(ui, 'services')
-  // Services 是 Tools 的子分頁：上層只剩 Files、Git、Tools、Docs，子分頁列是 Tools 的，沒有 Git 的。
-  expect((await ui.findAll({ type: 'Button' })).map(b => b.key).filter(k => k?.startsWith('tab:'))).toEqual(['tab:files', 'tab:git', 'tab:tools', 'tab:spec'])
+  // Services 是 Tools 的子分頁：子分頁列是 Tools 的，沒有 Git 的。
   expect(await ui.find({ key: 'sub:db' })).toBeDefined()
   expect(await ui.find({ key: 'sub:http' })).toBeDefined()
   expect(await ui.find({ key: 'sub:diff' })).toBeUndefined()

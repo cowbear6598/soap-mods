@@ -63,6 +63,16 @@ export function recordToasts(on: TestOn) {
   return toasts
 }
 
+// 熱重載前的程式存在 $.state 的值（key → 值）：寫過一次就照實讀。
+export function stubOldState(on: TestOn, old: Record<string, unknown>) {
+  on('state.set', (_$, e, next) => {
+    delete old[e.key]
+
+    return next(e)
+  })
+  on('state.get', (_$, e, next) => (e.plugin === 'soap-mods' && e.key in old ? { value: { value: old[e.key], version: 1 } } : next(e)) as never)
+}
+
 // $.store 放在記憶體裡的 store（key → 值），測試讀它看存了什麼。
 export function stubStore(on: TestOn, store: Record<string, unknown>) {
   on('store.get', (_$, e) => ({ value: store[e.key] }))

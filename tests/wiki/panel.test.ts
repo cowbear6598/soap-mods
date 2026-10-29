@@ -1,6 +1,6 @@
 import { expect, mock, test } from 'claude-code/testing'
 
-import { type Pane, type TestOn, endTurn, fsEntry, mountPane, ok, posix, recordToasts, stubPanel, stubStore } from '../test-fixtures'
+import { type Pane, type TestOn, endTurn, fsEntry, mountPane, ok, posix, recordToasts, stubOldState, stubPanel, stubStore } from '../test-fixtures'
 
 const WIKI = '/proj/.soap/wiki'
 const CHECKED = 'wiki.checked:/proj'
@@ -72,7 +72,7 @@ test('the Docs tab has a book icon and Spec / Wiki sub tabs; Spec is the plan li
   const ui = await mountPane($, 'desktop')
   const icons = await ui.findAll({ type: 'Svg' })
   expect(icons.find(i => i.props.alt === 'Docs')?.props.source).toContain('M12 7v14')
-  await ui.press({ key: 'tab:spec' })
+  await ui.press({ key: 'tab:docs' })
   expect(await ui.find({ key: 'sub:spec' })).toBeDefined()
   expect(await ui.find({ key: 'sub:wiki' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'No specs yet. Run /soap-mods:plan to write one.' })).toBeDefined()
@@ -81,6 +81,21 @@ test('the Docs tab has a book icon and Spec / Wiki sub tabs; Spec is the plan li
   expect(await drawnRows(ui, 'wiki:page:')).toEqual(['wiki:page:style.md'])
   await ui.press({ key: 'sub:spec' })
   expect(await ui.find({ key: 'wiki:page:style.md' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a top tab kept as spec before the reload lands on Docs, on the sub tab kept under spec', async ($, on) => {
+  disk(on, { [`${WIKI}/style.md`]: '# Style\n' })
+  // 熱重載前的程式存的值：上層 Tab 的 id 是 spec，Docs 的子分頁記在 spec 底下。
+  stubOldState(on, { tab: 'spec', subTabs: { git: 'diff', spec: 'wiki', tools: 'services' } })
+  const ui = await mountPane($, 'terminal', 'files')
+  expect((await ui.find({ key: 'tab:docs' }))?.props.variant).toBe('primary')
+  expect((await ui.find({ key: 'sub:wiki' }))?.props.variant).toBe('primary')
+  expect(await drawnRows(ui, 'wiki:page:')).toEqual(['wiki:page:style.md'])
+  // 換分頁照常，回來還是 Wiki。
+  await ui.press({ key: 'tab:git' })
+  await ui.press({ key: 'tab:docs' })
+  expect((await ui.find({ key: 'sub:wiki' }))?.props.variant).toBe('primary')
   await ui.unmount()
 })
 
@@ -99,7 +114,7 @@ test('the Wiki tab lists the pages, keeps checks in the store per session folder
       [`${WIKI}/.drafts/0-1.md`]: 'not a page either',
     })
     const ui = await mountPane($, surface)
-    await ui.press({ key: 'tab:spec' })
+    await ui.press({ key: 'tab:docs' })
     await ui.press({ key: 'sub:wiki' })
     expect(await drawnRows(ui, 'wiki:page:')).toEqual(['wiki:page:db/schema.md', 'wiki:page:style.md'])
 
@@ -132,7 +147,7 @@ test('the Wiki tab lists the pages, keeps checks in the store per session folder
 test('with no .soap/wiki the Wiki tab shows only Summary Conversation: no hint, no error, no Send', async ($, on) => {
   disk(on, {})
   const ui = await mountPane($)
-  await ui.press({ key: 'tab:spec' })
+  await ui.press({ key: 'tab:docs' })
   await ui.press({ key: 'sub:wiki' })
   expect(await ui.find({ key: 'wiki:distill' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /No wiki pages|Couldn't list/ })).toBeUndefined()
@@ -152,7 +167,7 @@ test('Send adds the checked pages to the conversation at once, marks them sent, 
   const appended = () => log.appended().map(r => r.message.content.map(c => ('text' in c ? c.text : '')).join(''))
 
   const ui = await mountPane($)
-  await ui.press({ key: 'tab:spec' })
+  await ui.press({ key: 'tab:docs' })
   await ui.press({ key: 'sub:wiki' })
   // 勾選不會自己送。
   await ui.press({ key: 'wiki:check:db.md' })
@@ -198,7 +213,7 @@ test('Distill drafts what is worth keeping into an inbox; Accept writes a draft 
   const toasts = recordToasts(on)
 
   const ui = await mountPane($)
-  await ui.press({ key: 'tab:spec' })
+  await ui.press({ key: 'tab:docs' })
   await ui.press({ key: 'sub:wiki' })
   await ui.press({ key: 'wiki:distill' })
   // 提示裡有現有頁面；放不下的只給路徑、不讀。草稿進收件匣，頁面本身沒動，路徑跑出 wiki 的草稿不收。
@@ -263,7 +278,7 @@ test('Summary Conversation asks the model picked beside it: the conversation\'s 
   on('session.model', () => ({ value: 'claude-opus-5-5[1m]' }))
 
   const ui = await mountPane($)
-  await ui.press({ key: 'tab:spec' })
+  await ui.press({ key: 'tab:docs' })
   await ui.press({ key: 'sub:wiki' })
   // 終端機的 Select 點不到，自己畫的下拉選單：收著只有選的那個，還沒選過停在對話用的那種；點了隔一條線列出三種，選的在後面打勾，寬度都一樣。
   const toggle = async () => String((await ui.find({ key: 'wiki:model' }))?.props.label)
@@ -313,7 +328,7 @@ test('Summary Conversation asks the model picked beside it: the conversation\'s 
 
   // 桌面版還是下拉選單。
   const desktop = await mountPane($, 'desktop')
-  await desktop.press({ key: 'tab:spec' })
+  await desktop.press({ key: 'tab:docs' })
   await desktop.press({ key: 'sub:wiki' })
   const picker = await desktop.find({ key: 'wiki:model' })
   expect(picker?.type).toBe('Select')
@@ -335,7 +350,7 @@ test('the Wiki tab draws the pages as a tree of folders that open and close, Unc
     return isFilled ? { isFilled, text: e.text, cursor: e.text.length } : { isFilled, text: '', cursor: 0 }
   })
   const ui = await mountPane($)
-  await ui.press({ key: 'tab:spec' })
+  await ui.press({ key: 'tab:docs' })
   await ui.press({ key: 'sub:wiki' })
 
   // 資料夾在前、頁面在後，預設打開；列上寫名稱，不寫所在資料夾。
@@ -386,7 +401,7 @@ test('drafts can move and delete pages; accepting them in order applies each, ch
   }
   disk(on, files, { store })
   const ui = await mountPane($)
-  await ui.press({ key: 'tab:spec' })
+  await ui.press({ key: 'tab:docs' })
   await ui.press({ key: 'sub:wiki' })
 
   // 第一行看不懂的不列；跟頁面一樣照寫到的路徑畫成樹，資料夾在前；搬移寫完整的「舊 → 新」；列上不標它做什麼，右邊是 @ 和垃圾桶。

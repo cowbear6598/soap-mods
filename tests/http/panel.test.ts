@@ -3,7 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import { FOLDER_COLOR, HTTP_ENV_KEY, HTTP_PROMPT_KEY, HTTP_STORE_KEY, HTTP_VIM_POLL_MS } from '../../hooks/config'
 import { KEYCHAIN, toHex } from '../../hooks/secret'
-import { type Pane, type TestOn, endTurn, fakeKeychain, fsEntry, json, mountPane, ok, openTool, posix, stubPanel, stubStore } from '../test-fixtures'
+import { type Pane, type TestOn, endTurn, fakeKeychain, fsEntry, json, mountPane, ok, openTool, posix, stubOldState, stubPanel, stubStore } from '../test-fixtures'
 
 type Run = { argv: readonly string[]; init?: ProcessRunInit }
 type Fetch = { url: string; init?: HttpInit }
@@ -118,7 +118,7 @@ const reqRows = async (ui: Pane) => (await ui.findAll({ type: 'Button' })).map(b
 test('the top tabs are Files, Git, Tools and Docs; with no .soap/http the HTTP sub tab offers New, with no hints', async ($, on) => {
   httpWorld(on)
   const ui = await mountPane($)
-  expect((await ui.findAll({ type: 'Button' })).map(b => b.key).filter(k => k?.startsWith('tab:'))).toEqual(['tab:files', 'tab:git', 'tab:tools', 'tab:spec'])
+  expect((await ui.findAll({ type: 'Button' })).map(b => b.key).filter(k => k?.startsWith('tab:'))).toEqual(['tab:files', 'tab:git', 'tab:tools', 'tab:docs'])
   await openTool(ui, 'http')
   expect(await ui.find({ type: 'Text', text: 'No requests yet.' })).toBeDefined()
   expect(await ui.find({ key: 'http:new' })).toBeDefined()
@@ -681,14 +681,8 @@ test("Claude's Bash may not read or use the HTTP secrets", async ($, on) => {
 
 test('a top tab kept as services or db before the reload lands on that Tools sub tab', async ($, on) => {
   httpWorld(on)
-  // 熱重載前的程式存的值：上層 Tab 是 db、子分頁沒有 tools。寫過一次就照實讀。
-  const old: Record<string, unknown> = { tab: 'db', subTabs: { git: 'diff', spec: 'spec' } }
-  on('state.set', (_$, e, next) => {
-    delete old[e.key]
-
-    return next(e)
-  })
-  on('state.get', (_$, e, next) => (e.plugin === 'soap-mods' && e.key in old ? { value: { value: old[e.key], version: 1 } } : next(e)) as never)
+  // 熱重載前的程式存的值：上層 Tab 是 db、子分頁沒有 tools。
+  stubOldState(on, { tab: 'db', subTabs: { git: 'diff', spec: 'spec' } })
   const ui = await mountPane($, 'terminal', 'files')
   expect((await ui.find({ key: 'tab:tools' }))?.props.variant).toBe('primary')
   expect((await ui.find({ key: 'sub:db' }))?.props.variant).toBe('primary')
