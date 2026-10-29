@@ -72,7 +72,10 @@ Keep comments that explain a non-obvious reason, constraint or tradeoff, and com
 
 Wait for all six agents. Dedup findings that point at the same line or mechanism, then fix each one directly, including deleting tests and their orphaned helpers (confirm nothing else references a helper first) and rewriting uncovered regression tests as user-flow tests before deleting them.
 
-Skip a finding when its fix would change the product's intended behavior, require changes well outside the scope, or when you judge it a false positive. Note each skip instead of arguing with it.
+Leave a finding unapplied when its fix would change the product's intended behavior, require changes well outside the scope, or when you judge it a false positive. Sort each one by the reason, without arguing with it:
+
+- **建議** — the idea is right, only not for this pass: it is a rewrite that needs testing again, reaches code outside this change, or is cleanup better done later. Say what it would improve and what it would take.
+- **跳過** — not worth doing on its merits: the current behavior is intended, it would break an API or test contract, the gain is too small, the current code reads better, or it is a false positive.
 
 ## Report
 
@@ -84,6 +87,9 @@ Bullets only, grouped under these headings (in the user's language); omit an emp
 
 ## 已刪測試
 - `path` — test name: why
+
+## 建議
+- `path:line` — finding: what it would improve; why not now
 
 ## 跳過
 - `path:line` — finding: why skipped
