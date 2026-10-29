@@ -801,6 +801,8 @@ declare module 'claude-code' {
       cover: Shaped<Cover>
       /** The page each diff place (`diffpage`, `wikidiff`) shows, keyed by that place. */
       diffPages: Record<string, DiffPage>
+      /** The session's folder as it started, '' until read (homeOf). */
+      home: string
     }
   }
 }

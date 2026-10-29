@@ -40,13 +40,13 @@ export async function openTool(ui: Pane, sub: 'services' | 'db' | 'http') {
 export const openPanel = ($: TestEngine) =>
   $.command.run({ command: 'soap-mods:open', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 120 } })
 
-// 面板開起來要的引擎回應：開／列／關 pane（打開了就在前面）、session 資料夾、時間、回合結束。now 給 null：測試自己用 mock.clock
+// 面板開起來要的引擎回應：開／列／關 pane（打開了就在前面）、session 資料夾（給函式就每次問它）、時間、回合結束。now 給 null：測試自己用 mock.clock
 // （clock.now 先登記的算數，兩個都登記的話 mock.clock 推不動時間）。
-export function stubPanel(on: TestOn, { root = '/repo', now = 0 }: { root?: string; now?: number | null } = {}) {
+export function stubPanel(on: TestOn, { root = '/repo', now = 0 }: { root?: string | (() => string); now?: number | null } = {}) {
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('ui.panes', () => ({ value: [{ id: 'soap-panel', title: 'Soap Panel', isShown: true, isFocused: true, isPlaced: true }] }))
   on('ui.close', () => ({ value: undefined }))
-  on('session.root', () => ({ value: root }))
+  on('session.root', () => ({ value: typeof root === 'string' ? root : root() }))
   on('turn.complete', () => ({ text: '' }))
   if (now !== null) on('clock.now', () => ({ value: now }))
 }

@@ -38,11 +38,11 @@ async function useEnv(ui: Pane, env: string) {
 
 const ENV = JSON.stringify({ $shared: { version: 'v1' }, dev: { host: 'http://localhost:3000' }, prod: { host: 'https://api.example.com' } })
 
-// HTTP 子分頁要的引擎回應：/proj/.soap/http 的檔案（給了才有這個資料夾）、$.store 放在記憶體、Keychain 是 fakeKeychain，
+// HTTP 子分頁要的引擎回應：session 資料夾 root（預設 /proj），它的 .soap/http 的檔案（給了才有這個資料夾）、$.store 放在記憶體、Keychain 是 fakeKeychain，
 // http.fetch 交給 answer（沒給就 200 回 { id: 1 }），curl 交給 curl（拿 stdin 的設定），rm 刪掉那個檔，osascript 是開了 vim 的視窗。記下每個程序、每次 fetch、toast。
 function httpWorld(
   on: TestOn,
-  { files, answer, curl }: { files?: Record<string, string>; answer?: (f: Fetch) => unknown; curl?: (config: string) => unknown } = {},
+  { files, answer, curl, root = '/proj' }: { files?: Record<string, string>; answer?: (f: Fetch) => unknown; curl?: (config: string) => unknown; root?: string | (() => string) } = {},
 ) {
   const store: Record<string, unknown> = {}
   const keychain = fakeKeychain()
@@ -52,7 +52,7 @@ function httpWorld(
   // hold：給了就讓列出 .soap/http 等它（重讀到一半）。
   const state: { files: Record<string, string> | undefined; hold?: Promise<void> } = { files }
   const at = (path: string | undefined) => posix(path)?.slice(DIR.length + 1) ?? ''
-  stubPanel(on, { root: '/proj', now: null })
+  stubPanel(on, { root, now: null })
   const clock = mock.clock(on)
   stubStore(on, store)
   on('ui.scroll', () => ({}))
@@ -127,6 +127,18 @@ test('the top tabs are Files, Git, Tools and Docs; with no .soap/http the HTTP s
   expect(await ui.find({ key: 'http:env-add' })).toBeDefined()
   expect(await ui.find({ key: 'http:var-new' })).toBeUndefined()
   expect(await codes(ui)).toEqual([])
+  await ui.unmount()
+})
+
+test('the HTTP sub tab stays in the session folder after the session moves into a worktree', async ($, on) => {
+  let root = '/proj'
+  httpWorld(on, { files: { 'api.http': API_HTTP }, root: () => root })
+  const ui = await mountPane($)
+  await openTool(ui, 'http')
+  expect(await reqRows(ui)).toHaveLength(3)
+  root = '/proj/.claude/worktrees/fix'
+  await endTurn($, ui)
+  expect(await reqRows(ui)).toHaveLength(3)
   await ui.unmount()
 })
 

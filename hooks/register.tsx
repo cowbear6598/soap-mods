@@ -212,6 +212,11 @@ const mr = atom({ plugin: 'soap-mods', key: 'mr' } as const, EMPTY_MR, { shape: 
 const cover = atom({ plugin: 'soap-mods', key: 'cover' } as const, NO_COVER, { shape: 'cover-2' })
 // 長的差異看到第幾頁，照地方（diffpage、wikidiff）記；換一份差異（id 不同）就從頭。
 const diffPages = atom({ plugin: 'soap-mods', key: 'diffPages' } as const, {})
+// session 的資料夾：開始時記下來，之後每個分頁、每個沒給 cwd 的程序都用它。$.session.root() 會跟著 worktree、/cd 換地方
+// （Claude 自己 EnterWorktree、worktree 裡的 subagent），面板不跟著跑：.soap/http、wiki、Git 都留在原本的資料夾。
+// atom 撐過熱重載，模組變數撐過 /clear（狀態回到初始值，卻不發 session.start）。
+const home = atom({ plugin: 'soap-mods', key: 'home' } as const, '')
+let homeDir = ''
 
 async function readTabs($: EngineInterface) {
   const [t, subs] = await Promise.all([read($, tab), read($, subTabs)])
@@ -323,16 +328,30 @@ function focusIo($: EngineInterface): FocusIo {
 
 // ───── 給各分頁的 io ─────
 
+async function pinHome($: EngineInterface) {
+  const root = await $.session.root()
+  await update($, home, () => root)
+
+  return root
+}
+
+// 還沒記過（熱重載前的舊版沒存）就記下現在的。
+async function homeOf($: EngineInterface) {
+  if (homeDir === '') homeDir = (await read($, home)) || (await pinHome($))
+
+  return homeDir
+}
+
 // 各分頁的動作在自己的檔案裡（files/actions.ts…）：它們不能碰 $ 和 atom，這裡把要用的包成閉包給它們（io.ts）。
 function baseIo($: EngineInterface): Io {
   return {
-    root: () => $.session.root(),
+    root: () => homeOf($),
     list: abs => $.fs.list(abs),
     stat: abs => $.fs.stat(abs),
     readFile: abs => $.fs.read(abs),
     writeFile: (abs, text) => $.fs.write(abs, text),
     exists: abs => $.fs.exists(abs),
-    run: (argv, init) => $.process.run(argv, init),
+    run: async (argv, init) => $.process.run(argv, { ...init, cwd: init?.cwd ?? (await homeOf($)) }),
     osEnv: () => $.env.get('OS'),
     storeGet: key => $.store.get(key),
     storeSet: (key, value) => $.store.set(key, value),
@@ -731,6 +750,7 @@ export const register: Register = on => {
     $.clock.every(CI_REFRESH_MS, () => void refreshGitLabWhenShown($).catch(() => undefined))
     // 熱重載前存的上層 services、db：換成 Tools 和它的子分頁。
     void settleTabs($).catch(() => undefined)
+    homeDir = await pinHome($)
 
     return next(e)
   })
