@@ -1,7 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 
 import type { ScanResult } from '../types'
-import { DANGER, GOOD, SWITCH_ARMED_HINT, WARN, DIFF_PAGE_ROWS, CODE_MAX_CHARS, RESTART_CHECK_MS } from '../hooks/config'
+import { DANGER, GOOD, SWITCH_ARMED_HINT, WARN, DIFF_PAGE_ROWS, CODE_MAX_CHARS, RESTART_CHECK_MS, TMP_MAX_AGE_MS } from '../hooks/config'
 import {
   CONFLICTED,
   MAC_ARGS_OUT,
@@ -26,6 +26,7 @@ import {
   proc,
   recordToasts,
   stubPanel,
+  tempFiles,
   waitFor,
 } from './test-fixtures'
 
@@ -1102,6 +1103,37 @@ test('the ⋯ of a Files row opens a menu: Show in Explorer selects it in Explor
   await ui.unmount()
 })
 
+test('Open on a file page opens the file in the default app, not from the ⋯ menu, and says why when it cannot', async ($, on) => {
+  const tmp = tempFiles()
+  stubPanel(on, { root: '/proj' })
+  on('env.get', () => ({ value: undefined }))
+  on('fs.list', (_$, e) => ({ value: posix(e.path) === '/proj' ? [fsEntry('src', 'dir'), fsEntry('a b.ts', 'file', 12)] : [] }))
+  on('fs.stat', () => ({ value: { kind: 'file', size: 12, mtimeMs: 0, isLink: false } }))
+  on('fs.read', () => ({ value: 'const a = 1\n' }))
+  on('process.run', (_$, e) => tmp.open(e.argv) ?? ok(''))
+  const toasts = recordToasts(on)
+
+  const ui = await mountPane($, 'desktop')
+  await ui.press({ key: 'tab:files' })
+  // ⋯ 選單沒有 Open。
+  await ui.press({ key: 'files:more:a b.ts' })
+  expect(await ui.find({ key: 'files:reveal:a b.ts' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'Open' })).toBeUndefined()
+  await ui.press({ key: 'files:more:a b.ts' })
+
+  await ui.press({ key: 'files:file:a b.ts' })
+  await ui.press({ key: 'fileview:open' })
+  expect(tmp.opens).toEqual([['open', '/proj/a b.ts']])
+  expect(toasts).toEqual(['Opened a b.ts'])
+
+  // 開不成：原因寫在內容上面，內容還在。
+  tmp.isFailing = true
+  await ui.press({ key: 'fileview:open' })
+  expect(await ui.find({ type: 'Text', text: /^Couldn't open a b\.ts: .*No application knows/ })).toBeDefined()
+  expect((await ui.find({ type: 'Code' }))?.props).toMatchObject({ source: 'const a = 1\n' })
+  await ui.unmount()
+})
+
 test('in the Files tab Previous steps back through the files, and inside a folder Previous/Next stay on its files', async ($, on) => {
   const reads: string[] = []
   stubPanel(on, { root: '/proj' })
@@ -1528,8 +1560,9 @@ function conflictRepo(
   const prompts: string[] = []
   // 解掉的檔案 → 它在 status 的新樣子（加進暫存區、或刪掉了）。
   const resolved = new Map<string, string>()
+  const tmp = tempFiles()
   stubPanel(on)
-  on('ui.toast', () => ({ value: undefined }))
+  const toasts = recordToasts(on)
   on('fs.list', () => ({ value: gitDir.map(name => fsEntry(name)) }))
   on('fs.read', () => ({ value: text }))
   on('fs.write', (_$, e) => {
@@ -1543,6 +1576,8 @@ function conflictRepo(
     return { text: e.text }
   })
   on('process.run', (_$, e) => {
+    const opened = tmp.open(e.argv)
+    if (opened !== undefined) return opened
     const args = e.argv.slice(3)
     calls.push({ args, cwd: posix(e.init?.cwd), env: e.init?.env })
     const own = run?.(args)
@@ -1561,7 +1596,7 @@ function conflictRepo(
     return ok('')
   })
 
-  return { calls, writes, prompts }
+  return { calls, writes, prompts, toasts, tmp }
 }
 
 // 跑過的 git 指令（從子指令開始，空白隔開）。
@@ -1639,6 +1674,26 @@ test('Ask Claude in the merge view sends the file to the model, and Back returns
   expect(prompts[0]).toContain('`/repo/src/a.ts`')
   await ui.press({ key: 'merge:back' })
   expect(await ui.find({ key: 'op:abort' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('Open in the merge view opens the conflicted file in the default app, and says why when it cannot', async ($, on) => {
+  on('env.get', () => ({ value: undefined }))
+  const { toasts, tmp } = conflictRepo(on)
+  await openPanel($)
+
+  const ui = await mountPane($)
+  await ui.press({ key: 'sub:conflict' })
+  await ui.press({ key: 'conflict:src/a.ts' })
+  await ui.press({ key: 'merge:open' })
+  // 開 repo 裡的完整路徑。
+  expect(tmp.opens).toEqual([['open', '/repo/src/a.ts']])
+  expect(toasts).toEqual(['Opened src/a.ts'])
+
+  tmp.isFailing = true
+  await ui.press({ key: 'merge:open' })
+  expect(await ui.find({ type: 'Text', text: /^Couldn't open src\/a\.ts: .*No application knows/ })).toBeDefined()
+  expect(await ui.find({ key: 'merge:ours:1' })).toBeDefined()
   await ui.unmount()
 })
 
@@ -1973,6 +2028,34 @@ test('with no screen attached at start, Soap Panel waits for session.attach to o
   // 再接上一個不重開（人可能已經關掉了）。
   await $.session.attach({ surface: 'desktop', clientId: 'desktop:2' })
   expect(opened).toEqual(['soap-panel'])
+})
+
+test('session start deletes the files in .soap/tmp older than a day, keeping newer ones and its .gitignore', async ($, on) => {
+  const now = Date.parse('2026-10-29T10:00:00Z')
+  const removed: string[] = []
+  const old = (name: string, ago: number) => ({ ...fsEntry(name), mtimeMs: now - ago })
+  stubPanel(on, { now })
+  on('ui.toast', () => ({ value: undefined }))
+  on('ui.scroll', () => ({}))
+  on('env.get', () => ({ value: undefined }))
+  on('session.start', (_$, e) => ({ cwd: e.cwd }))
+  on('fs.list', (_$, e) => ({
+    value:
+      posix(e.path) === '/repo/.soap/tmp'
+        ? [old('.gitignore', 3 * TMP_MAX_AGE_MS), old('response-old.json', TMP_MAX_AGE_MS + 1), old('rows-today.csv', 3_600_000)]
+        : [],
+  }))
+  gitRepo(on, {
+    status: '## main\0',
+    run: (_cmd, e) => {
+      if (e.argv[0] !== 'rm') return undefined
+      removed.push(e.argv.at(-1) ?? '')
+
+      return ok('')
+    },
+  })
+  await $.session.start({ cwd: '/repo', surface: 'desktop', isInteractive: true })
+  expect(await waitFor(async () => (removed.length > 0 ? removed : undefined), 200)).toEqual(['/repo/.soap/tmp/response-old.json'])
 })
 
 test('Soap Panel brought to the front, or just pressed, gets the keyboard back', async ($, on) => {

@@ -8,7 +8,7 @@ import { splitPath } from '../git/parse'
 import { isObject } from '../json'
 import type { Io } from '../io'
 import { latestOnly } from '../latest'
-import { busyFlag, disarm, isConfirmed, isWindows, openDir, removePath } from '../shell'
+import { busyFlag, disarm, isConfirmed, isWindows, openDir, openReason, removePath } from '../shell'
 import type { HttpBusy } from '../ui/actions'
 import { type CurlRequest, contentTypeOf, curlConfig, curlResponse, partsOf } from './multipart'
 import {
@@ -34,6 +34,7 @@ import {
   variableValue,
 } from './parse'
 import { deleteHttpSecret, readHttpSecret, saveEnv, saveHttpSecret, savePrompt, savedEnv, savedPrompts, savedSecrets } from './secrets'
+import { openTemp } from '../tmp'
 import { closeVim, openVim } from './vim'
 
 export type HttpIo = Io & {
@@ -523,6 +524,14 @@ export async function sendHttp(io: HttpIo) {
   } finally {
     busy.set(io, '')
   }
+}
+
+// 回應頁的 Open：畫面上那份回應（前 CODE_MAX_CHARS 字）寫成暫存檔（JSON 是 .json，其他 .txt），用系統預設的 app 開。
+export async function openHttpResponse(io: HttpIo) {
+  const v = await io.getHttp()
+  const res = v.result
+  if (res === null || res.id !== v.open) return
+  await io.setHttp({ sendError: await openReason(io, 'the response', () => openTemp(io, 'response', res.isJson ? 'json' : 'txt', res.body)) })
 }
 
 // 存進 Keychain／DPAPI（依 session 資料夾和環境），換掉舊的。錯誤訊息裡不放值。

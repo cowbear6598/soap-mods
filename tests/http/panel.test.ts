@@ -3,7 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import { FOLDER_COLOR, HTTP_ENV_KEY, HTTP_PROMPT_KEY, HTTP_STORE_KEY, HTTP_VIM_POLL_MS } from '../../hooks/config'
 import { KEYCHAIN, toHex } from '../../hooks/secret'
-import { type Pane, type TestOn, endTurn, fakeKeychain, fsEntry, json, mountPane, ok, openTool, posix, stubOldState, stubPanel, stubStore } from '../test-fixtures'
+import { type Pane, type TestOn, endTurn, fakeKeychain, fsEntry, json, mountPane, ok, openTool, posix, stubOldState, stubPanel, stubStore, tempFiles } from '../test-fixtures'
 
 type Run = { argv: readonly string[]; init?: ProcessRunInit }
 type Fetch = { url: string; init?: HttpInit }
@@ -39,7 +39,8 @@ async function useEnv(ui: Pane, env: string) {
 const ENV = JSON.stringify({ $shared: { version: 'v1' }, dev: { host: 'http://localhost:3000' }, prod: { host: 'https://api.example.com' } })
 
 // HTTP 子分頁要的引擎回應：session 資料夾 root（預設 /proj），它的 .soap/http 的檔案（給了才有這個資料夾）、$.store 放在記憶體、Keychain 是 fakeKeychain，
-// http.fetch 交給 answer（沒給就 200 回 { id: 1 }），curl 交給 curl（拿 stdin 的設定），rm 刪掉那個檔，osascript 是開了 vim 的視窗。記下每個程序、每次 fetch、toast。
+// http.fetch 交給 answer（沒給就 200 回 { id: 1 }），curl 交給 curl（拿 stdin 的設定），rm 刪掉那個檔，osascript 是開了 vim 的視窗，
+// 暫存檔和 open 交給 tmp。記下每個程序、每次 fetch、toast。
 function httpWorld(
   on: TestOn,
   { files, answer, curl, root = '/proj' }: { files?: Record<string, string>; answer?: (f: Fetch) => unknown; curl?: (config: string) => unknown; root?: string | (() => string) } = {},
@@ -49,6 +50,7 @@ function httpWorld(
   const runs: Run[] = []
   const fetches: Fetch[] = []
   const toasts: string[] = []
+  const tmp = tempFiles()
   // hold：給了就讓列出 .soap/http 等它（重讀到一半）。
   const state: { files: Record<string, string> | undefined; hold?: Promise<void> } = { files }
   const at = (path: string | undefined) => posix(path)?.slice(DIR.length + 1) ?? ''
@@ -83,12 +85,15 @@ function httpWorld(
     return { value: text }
   })
   on('fs.write', (_$, e) => {
+    if (tmp.write(e.path, e.text)) return { value: undefined }
     state.files = { ...state.files, [at(e.path)]: e.text }
 
     return { value: undefined }
   })
   on('process.run', (_$, e) => {
     runs.push(e)
+    const opened = tmp.open(e.argv)
+    if (opened !== undefined) return opened
     if (e.argv[0] === 'curl') return (curl?.(e.init?.stdin ?? '') ?? ok('')) as never
     // Edit in vim 開的 Terminal 視窗是 42。
     if (e.argv[0] === 'osascript') return ok(e.argv.includes('return id of front window') ? '42\n' : '')
@@ -107,7 +112,7 @@ function httpWorld(
     return (answer?.(e) ?? json(200, { id: 1 }, { 'content-type': 'application/json' })) as never
   })
 
-  return { store, keychain, runs, fetches, toasts, clock, state }
+  return { store, keychain, runs, fetches, toasts, clock, state, tmp }
 }
 
 const texts = async (ui: Pane) => (await ui.findAll({ type: 'Text' })).map(t => t.text)
@@ -539,6 +544,40 @@ test('a # @prompt variable is filled in on the request page, kept by session fol
   await ui.press({ key: 'http:send' })
   expect(world.fetches.map(f => f.url)).toEqual(['http://localhost:3000/open', 'https://api.example.com/open'])
   expect(JSON.parse(String(world.fetches[1]?.init?.body))).toEqual(sent)
+  await ui.unmount()
+})
+
+test('Open on the response page writes the body to a new file under .soap/tmp, .json or .txt, and opens it in the default app', async ($, on) => {
+  let answer = json(200, '{"id":1}', { 'content-type': 'application/json' })
+  const world = httpWorld(on, { files: { 'a.http': 'GET http://localhost:9/x\n' }, answer: () => answer })
+  const { tmp } = world
+  const ui = await mountPane($)
+  await openTool(ui, 'http')
+  await ui.press({ key: 'http:run:a.http#0' })
+  await ui.press({ key: 'http:response:open' })
+  // 先放 .gitignore（*），暫存檔不進 Git；檔名帶到毫秒的時間。
+  const [ignore, first] = Object.keys(tmp.written)
+  expect(ignore).toBe('/proj/.soap/tmp/.gitignore')
+  expect(tmp.written[ignore ?? '']).toBe('*\n')
+  expect(first).toMatch(/^\/proj\/\.soap\/tmp\/response-\d{8}-\d{6}-\d{3}\.json$/)
+  expect(tmp.written[first ?? '']).toBe('{\n  "id": 1\n}')
+  expect(tmp.opens).toEqual([['open', first]])
+  expect(world.toasts).toEqual(['Opened the response'])
+
+  // 不是 JSON 的寫成 .txt，每次開都是新檔，舊的留著。
+  answer = json(200, 'plain text', { 'content-type': 'text/plain' })
+  await world.clock.advance(5)
+  await ui.press({ key: 'http:send' })
+  await ui.press({ key: 'http:response:open' })
+  const files = Object.keys(tmp.written)
+  expect(files).toHaveLength(3)
+  expect(files[2]).toMatch(/\.txt$/)
+  expect(tmp.written[files[2] ?? '']).toBe('plain text')
+
+  // 開不成：原因寫在回應頁上。
+  tmp.isFailing = true
+  await ui.press({ key: 'http:response:open' })
+  expect(await ui.find({ type: 'Text', text: /^Couldn't open the response: .*No application knows/ })).toBeDefined()
   await ui.unmount()
 })
 

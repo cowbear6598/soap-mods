@@ -101,6 +101,7 @@ export type Actions = {
   revealFile: (path: string) => unknown
   // 刪掉檔案或整個資料夾：按第一次只是待確認，再按才刪。
   deleteFile: (path: string) => unknown
+  openShownFile: () => unknown
   // spec：name 是 .soap/tasks 底下的 feature 資料夾。
   openSpec: (name: string) => unknown
   closeSpec: () => unknown
@@ -148,6 +149,7 @@ export type Actions = {
   setDbQuery: (text: string) => unknown
   // text：按 Enter 時框裡的字。
   runDbQuery: (text: string) => unknown
+  openDbResult: () => unknown
   // http：id 是請求（<資料夾/檔名>#<第幾個>）。點一列是編輯它，Run 是送出並打開它的回應。
   openHttpRequest: (id: string) => unknown
   runHttpRequest: (id: string) => unknown
@@ -161,6 +163,7 @@ export type Actions = {
   // @prompt 的那格：打字跟著存（依 session 資料夾、每個環境共用），Enter 存了就送出。
   typeHttpPrompt: (name: string, value: string) => unknown
   toggleHttpHeaders: (isOpen: boolean) => unknown
+  openHttpResponse: () => unknown
   // HTTP 底下那排：API（請求）或 Environment（環境、變數、機密）。
   selectHttpPage: (page: HttpPage) => unknown
   // 在面板上寫 .soap/http：新請求、編輯點開的請求（Folder、Name 在面板上打，那段原文在新視窗的 vim 裡改）；
@@ -228,6 +231,7 @@ export type Actions = {
   takeSide: (side: 'ours' | 'theirs' | 'as-is') => unknown
   applyMerge: () => unknown
   askClaude: () => unknown
+  openMergeFile: () => unknown
   // 把焦點圈移到這個輸入框（終端機點框裡的空白時）。
   focusInput: (key: string) => unknown
 }

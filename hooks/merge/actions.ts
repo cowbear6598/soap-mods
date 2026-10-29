@@ -7,7 +7,7 @@ import { errorText } from '../errors'
 import { isConflict, isPromptSafePath } from '../git/parse'
 import { type GitIo, git, gitOk, inRepo } from '../git/run'
 import { neighbour } from '../neighbour'
-import { busyFlag } from '../shell'
+import { busyFlag, openFile, openReason } from '../shell'
 import { buildResult, isResolved, keepChoices, merge3, nextConflict, parseConflicts, splitLines } from './algo'
 
 // 開著的合併；開著的不是合併就是空的（path 是 ''）。
@@ -170,6 +170,13 @@ export async function takeSide(io: GitIo, side: 'ours' | 'theirs' | 'as-is') {
 
     return gitOk(io, ['add', '--', path])
   })
+}
+
+// 用系統預設的 app 開衝突中的檔案（在那邊選取、複製）。
+export async function openMergeFile(io: GitIo) {
+  const m = await readMerge(io)
+  if (m.path === '') return
+  await setMerge(io, { error: await openReason(io, m.path, () => openFile(io, inRepo(m.path))) })
 }
 
 // 交給 Claude 解這個檔案：當作使用者自己打的訊息送出，session 空下來就會跑。

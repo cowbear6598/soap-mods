@@ -75,7 +75,7 @@ function resultNote(r: DbResult, shown: number) {
 }
 
 function connectionView({ w, d, a }: TabContext) {
-  const { Box, Markdown, Text } = w
+  const { Box, Button, Markdown, Text } = w
   const db = d.db
   const c = db.connections.find(x => x.id === db.open)
   const table = db.result !== null && db.result.columns.length > 0 ? resultTable(db.result) : undefined
@@ -125,7 +125,12 @@ function connectionView({ w, d, a }: TabContext) {
       ) : (
         db.result !== null && (
           <Box flexDirection="column">
-            <Text dimColor>{resultNote(db.result, table?.rows ?? db.result.rows.length)}</Text>
+            <Box gap={1} alignItems="center">
+              <Box flexGrow={1}>
+                <Text dimColor>{resultNote(db.result, table?.rows ?? db.result.rows.length)}</Text>
+              </Box>
+              {table !== undefined && <Button key="db:result:open" label="Open" onPress={w.press(() => a.openDbResult())} />}
+            </Box>
             {table !== undefined && <Markdown text={table.text} />}
           </Box>
         )

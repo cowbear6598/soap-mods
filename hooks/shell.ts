@@ -3,7 +3,7 @@
 import type { ProcessRunInit, Timer } from 'claude-code'
 
 import { COPIED_MS, DELETE_ARM_MS } from './config'
-import { failure } from './errors'
+import { errorText, failure } from './errors'
 import type { Io } from './io'
 import { powershellArgv } from './services/scan'
 
@@ -63,6 +63,23 @@ export async function openDir(io: Io, abs: string) {
     await runOk(io, ['mkdir', '-p', '--', abs], 'mkdir')
     await runOk(io, ['open', abs], 'open')
   }
+}
+
+// 用系統預設的 app 開檔案：同 openUrl，Windows 的路徑換成反斜線。
+export async function openFile(io: Io, abs: string) {
+  await openUrl(io, (await isWindows(io)) ? abs.replace(/\//g, '\\') : abs)
+}
+
+// 各處的 Open：開了跳 toast，回 ''；開不成回原因，由呼叫的地方寫在原地。label 是 toast 和原因裡的名稱。
+export async function openReason(io: Io, label: string, open: () => Promise<unknown>) {
+  try {
+    await open()
+  } catch (err) {
+    return `Couldn't open ${label}: ${errorText(err)}`
+  }
+  io.toast(`Opened ${label}`)
+
+  return ''
 }
 
 /**

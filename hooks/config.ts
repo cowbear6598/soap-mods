@@ -278,6 +278,9 @@ export const NEW_FOLDER = ':new'
 // Edit in vim：那段請求寫成這個資料夾（. 開頭，列表不讀）底下的暫存檔，vim 開著時每 HTTP_VIM_POLL_MS 讀一次，存了就更新面板。
 export const HTTP_EDIT_DIR = `${HTTP_DIR}/.edit`
 export const HTTP_VIM_POLL_MS = 500
+// 交給系統預設 app 開的暫存檔放在 session 資料夾的這個資料夾，放超過 TMP_MAX_AGE_MS 的刪掉（見 tmp.ts）。
+export const TMP_DIR = '.soap/tmp'
+export const TMP_MAX_AGE_MS = 86_400_000
 // Keychain 讀機密（GitLab token、DB 密碼、HTTP 的機密）會跳視窗等人輸入密碼，最多等這麼久。
 export const KEYCHAIN_TIMEOUT_MS = 120_000
 // pipeline、job 狀態的顏色和符號；沒列到的（created、preparing…）照 pending 畫（ci/parse 的 statusStyle）。

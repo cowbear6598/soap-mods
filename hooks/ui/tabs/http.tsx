@@ -267,7 +267,7 @@ function secretRows({ w, d, a }: TabContext, names: string[]) {
 
 function resultView(ctx: TabContext, res: HttpResult) {
   const { w, d, a } = ctx
-  const { Box, Code, Text } = w
+  const { Box, Button, Code, Text } = w
   const isOk = res.status >= 200 && res.status < 300
   const isOpen = d.http.showHeaders
 
@@ -275,7 +275,10 @@ function resultView(ctx: TabContext, res: HttpResult) {
     <Box flexDirection="column" gap={1}>
       <Box gap={1} alignItems="center">
         <Text bold color={isOk ? 'success' : 'error'}>{String(res.status)}</Text>
-        <Text dimColor>{`${res.ms} ms · ${formatSize(res.size)}`}</Text>
+        <Box flexGrow={1}>
+          <Text dimColor>{`${res.ms} ms · ${formatSize(res.size)}`}</Text>
+        </Box>
+        {res.body !== '' && <Button key="http:response:open" label="Open" onPress={w.press(() => a.openHttpResponse())} />}
       </Box>
       {res.captured.length > 0 && <Text color="success">{`Captured ${braced(res.captured)}`}</Text>}
       {res.missed.length > 0 && <Text color="warning">{`Not in the response, not captured: ${braced(res.missed)}`}</Text>}

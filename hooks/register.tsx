@@ -39,6 +39,7 @@ import {
   deleteDbConnection,
   loadDbConnections,
   openDbConnection,
+  openDbResult,
   runDbQuery,
   toggleDbTable,
 } from './db/actions'
@@ -65,6 +66,7 @@ import {
   deleteFile,
   dropFileRead,
   loadFiles,
+  openShownFile,
   reloadFiles,
   reloadShownFiles,
   revealFile,
@@ -105,6 +107,7 @@ import {
   openHttpDir,
   openHttpFolderPicker,
   openHttpRequest,
+  openHttpResponse,
   pickHttpFolder,
   reloadHttp,
   runHttpRequest,
@@ -119,7 +122,7 @@ import {
   typeHttpVar,
 } from './http/actions'
 import type { Io } from './io'
-import { applyMerge, askClaude, editChunks, jumpConflict, mergeBusy, openMerge, resetMerge, takeSide } from './merge/actions'
+import { applyMerge, askClaude, editChunks, jumpConflict, mergeBusy, openMerge, openMergeFile, resetMerge, takeSide } from './merge/actions'
 import {
   type MrIo,
   applySuggestion,
@@ -162,6 +165,7 @@ import {
   uncheckAllWikiPages,
 } from './wiki/actions'
 import { secretCommandReason } from './secret-guard'
+import { cleanTemp } from './tmp'
 import { checkWrite } from './write-check'
 
 // ───── 面板 id（引擎要在這個檔案裡直接看到值，不能 import）─────
@@ -209,7 +213,7 @@ const ci = atom({ plugin: 'soap-mods', key: 'ci' } as const, EMPTY_CI, { shape: 
 // MR 分頁（GitLab）：開著的 MR、點開的那個的狀態和建議。shape 同 wiki。
 const mr = atom({ plugin: 'soap-mods', key: 'mr' } as const, EMPTY_MR, { shape: 'mr-3' })
 // 蓋住分頁的畫面：差異、三欄合併或檔案內容，一次一個（cover.ts）。
-const cover = atom({ plugin: 'soap-mods', key: 'cover' } as const, NO_COVER, { shape: 'cover-2' })
+const cover = atom({ plugin: 'soap-mods', key: 'cover' } as const, NO_COVER, { shape: 'cover-3' })
 // 長的差異看到第幾頁，照地方（diffpage、wikidiff）記；換一份差異（id 不同）就從頭。
 const diffPages = atom({ plugin: 'soap-mods', key: 'diffPages' } as const, {})
 // session 的資料夾：開始時記下來，之後每個分頁、每個沒給 cwd 的程序都用它。$.session.root() 會跟著 worktree、/cd 換地方
@@ -423,6 +427,7 @@ function filesIo($: EngineInterface): FilesIo {
     updateFiles: fn => update($, files, fn),
     getFileCover: () => readFileCover($),
     showFileCover: shown => update($, cover, c => showCover(c, 'file', shown)),
+    updateCover: fn => update($, cover, fn),
   }
 }
 
@@ -641,6 +646,7 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     toggleFileMenu: path => toggleFileMenu(filesIo($), path),
     revealFile: path => revealFile(filesIo($), path),
     deleteFile: path => deleteFile(filesIo($), path),
+    openShownFile: () => openShownFile(filesIo($)),
     openSpec: name => openSpec(specIo($), name),
     closeSpec: () => closeSpec(specIo($)),
     doSpec: () => doSpec(specIo($)),
@@ -667,6 +673,7 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     toggleDbTable: t => toggleDbTable(dbIo($), t),
     setDbQuery: text => setDb($, { query: text, queryError: '' }),
     runDbQuery: text => runDbQuery(dbIo($), text),
+    openDbResult: () => openDbResult(dbIo($)),
     openHttpRequest: id => openHttpRequest(httpIo($), id),
     runHttpRequest: id => runHttpRequest(httpIo($), id),
     closeHttpRequest: () => closeHttpRequest(httpIo($)),
@@ -676,6 +683,7 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     editHttpSecret: name => editHttpSecret(httpIo($), name),
     typeHttpPrompt: (name, value) => typeHttpPrompt(httpIo($), name, value),
     toggleHttpHeaders: isOpen => setHttp($, { showHeaders: isOpen }),
+    openHttpResponse: () => openHttpResponse(httpIo($)),
     selectHttpPage: page => selectHttpPage(httpIo($), page),
     newHttpRequest: () => newHttpRequest(httpIo($)),
     editHttpRequest: () => editHttpRequest(httpIo($)),
@@ -730,6 +738,7 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     takeSide: side => takeSide(gitIo($), side),
     applyMerge: () => applyMerge(gitIo($)),
     askClaude: () => askClaude(gitIo($)),
+    openMergeFile: () => openMergeFile(gitIo($)),
     focusInput: key => focusInput(focusIo($), key),
   }
 }
@@ -752,6 +761,8 @@ export const register: Register = on => {
     // 熱重載前存的上層 services、db（換成 Tools 和它的子分頁）、spec（換成 docs）。
     void settleTabs($).catch(() => undefined)
     homeDir = await pinHome($)
+    // 不等它。
+    void cleanTemp(baseIo($)).catch(() => undefined)
 
     return next(e)
   })

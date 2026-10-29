@@ -1,7 +1,8 @@
 // Files 分頁的動作。引擎不讓 $ 跨檔，所以這裡不碰 $，只呼叫 register.tsx 給的 FilesIo（每個都是抓著 $ 的閉包）。
 
-import type { FileView, FilesView } from '../../types'
+import type { Cover, FileView, FilesView } from '../../types'
 import { FILES_ROW_LIMIT, FILES_SEARCH_ALL_DELAY, FILES_WALK_LIMIT, FILES_WALK_SKIP, FILE_VIEW_MAX_BYTES } from '../config'
+import { coverData, patchCover } from '../cover'
 import { EMPTY_FILE_VIEW, NO_FILE_MENU } from '../defaults'
 import { errorText } from '../errors'
 import { splitPath } from '../git/parse'
@@ -12,7 +13,7 @@ import { neighbour } from '../neighbour'
 import { patch } from '../patch'
 import { hasQuery } from '../search'
 import { powershellArgv } from '../services/scan'
-import { disarm, isConfirmed, isWindows, removePath, runOk } from '../shell'
+import { disarm, isConfirmed, isWindows, openFile, openReason, removePath, runOk } from '../shell'
 import {
   type WalkRule,
   absPath,
@@ -33,6 +34,7 @@ export type FilesIo = Io & {
   updateFiles: (fn: (f: FilesView) => FilesView) => Promise<unknown>
   getFileCover: () => Promise<FileView>
   showFileCover: (shown: FileView) => Promise<unknown>
+  updateCover: (fn: (c: Cover) => Cover) => Promise<unknown>
 }
 
 // 連點兩個資料夾時，先點的讀得比較慢也不會蓋掉後點的。
@@ -156,6 +158,14 @@ export async function revealFile(io: FilesIo, path: string) {
     return
   }
   await io.setFiles(NO_FILE_MENU)
+}
+
+// 檔案內容頁的 Open：用系統預設的 app 開（終端機裡選取、捲動不好用，到外面複製）；開的期間換了檔案就不寫原因。
+export async function openShownFile(io: FilesIo) {
+  const { path } = await io.getFileCover()
+  if (path === '') return
+  const openError = await openReason(io, splitPath(path).name, async () => openFile(io, absPath(await io.root(), path)))
+  await io.updateCover(c => (coverData(c, 'file')?.path === path ? patchCover(c, 'file', { openError }) : c))
 }
 
 // 刪檔案或整個資料夾要按兩次：Delete 按了換成紅字，DELETE_ARM_MS 內再按才刪，不經過資源回收筒。

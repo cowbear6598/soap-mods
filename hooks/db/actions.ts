@@ -1,14 +1,15 @@
 // DB 分頁（SQL Server）的動作：存連線（密碼放 Keychain／DPAPI）、打開、列資料表和欄位、跑 SELECT。
 // 不碰 $ 和 atom，用 register.tsx 給的 DbIo（見 io.ts）。
 
-import type { DbTable, DbView } from '../../types'
+import type { DbResult, DbTable, DbView } from '../../types'
 import { DB_KEYCHAIN_SERVICE, DB_PROCESS_TIMEOUT_MS, DB_STORE_KEY } from '../config'
 import { NO_DB_CONNECTION } from '../defaults'
 import { errorText, failure, isMissingCommand } from '../errors'
 import type { Io } from '../io'
 import { latestOnly } from '../latest'
 import { OLD_KEYCHAIN, deleteSecret, readSecret, saveSecret } from '../secret'
-import { busyFlag, isConfirmed } from '../shell'
+import { busyFlag, isConfirmed, openReason } from '../shell'
+import { openTemp } from '../tmp'
 import type { DbBusy } from '../ui/actions'
 import {
   type SavedConnection,
@@ -187,6 +188,22 @@ export async function runDbQuery(io: DbIo, query: string) {
   } finally {
     if (!isStale()) dbBusy.set(io, '')
   }
+}
+
+const csvCell = (value: string) => (/[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value)
+
+// 開頭放 BOM：Excel 才會照 UTF-8 讀，中文不會變亂碼。
+function resultCsv(r: DbResult) {
+  const line = (cells: string[]) => cells.map(csvCell).join(',')
+
+  return `\uFEFF${[line(r.columns), ...r.rows.map(row => line(r.columns.map((_, i) => row[i] ?? '')))].join('\r\n')}\r\n`
+}
+
+// 結果的 Open：留著的那些列（前 DB_ROW_LIMIT 列）寫成 .csv 暫存檔，用系統預設的 app（macOS 是試算表）開。
+export async function openDbResult(io: DbIo) {
+  const { result } = await io.getDb()
+  if (result === null || result.columns.length === 0) return
+  await io.setDb({ queryError: await openReason(io, 'the rows', () => openTemp(io, 'rows', 'csv', resultCsv(result))) })
 }
 
 async function loadColumns(io: DbIo, t: DbTable) {

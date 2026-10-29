@@ -3,7 +3,7 @@ import { expect, mock, test } from 'claude-code/testing'
 
 import { DB_STORE_KEY } from '../../hooks/config'
 import { KEYCHAIN, OLD_KEYCHAIN, toHex } from '../../hooks/secret'
-import { type Pane, type TestOn, fakeKeychain, mountPane, ok, openTool, stubPanel, stubStore } from '../test-fixtures'
+import { type Pane, type TestOn, fakeKeychain, mountPane, ok, openTool, stubPanel, stubStore, tempFiles } from '../test-fixtures'
 
 const PASSWORD = 'S3crét;"pw密'
 const CONN_STRING = `Server=db.local;Database=shop;User Id=reader;Password="${PASSWORD.replace(/"/g, '""')}";TrustServerCertificate=True`
@@ -27,13 +27,15 @@ function dbWorld(
     hasSqlcmd = true,
     tablesOut = TABLES_OUT,
     hasOldConnection = false,
-  }: { isWindows?: boolean; hasSqlcmd?: boolean; tablesOut?: string; hasOldConnection?: boolean } = {},
+    rowsOut = ROWS_OUT,
+  }: { isWindows?: boolean; hasSqlcmd?: boolean; tablesOut?: string; hasOldConnection?: boolean; rowsOut?: string } = {},
 ) {
   // hasOldConnection：舊版存的一條連線，Keychain 項目沒加 -T ""。
   const store: Record<string, unknown> = hasOldConnection ? { [DB_STORE_KEY]: [OLD_CONNECTION] } : {}
   const keychain = fakeKeychain(hasOldConnection ? { [OLD_CONNECTION.id]: toHex(PASSWORD) } : {})
   const runs: Run[] = []
   const toasts: string[] = []
+  const tmp = tempFiles()
   stubPanel(on, { root: '/proj', now: null })
   mock.clock(on)
   on('ui.scroll', () => ({}))
@@ -45,8 +47,15 @@ function dbWorld(
   })
   stubStore(on, store)
   on('env.get', (_$, e) => ({ value: isWindows && e.name === 'OS' ? 'Windows_NT' : undefined }))
+  on('fs.write', (_$, e) => {
+    tmp.write(e.path, e.text)
+
+    return { value: undefined }
+  })
   on('process.run', (_$, e) => {
     runs.push(e)
+    const opened = tmp.open(e.argv)
+    if (opened !== undefined) return opened
     const secret = keychain.run(e)
     if (secret !== undefined) return secret
     const [cmd] = e.argv
@@ -59,7 +68,7 @@ function dbWorld(
       if (query.includes('INFORMATION_SCHEMA.TABLES')) return ok(tablesOut)
       if (query.includes('INFORMATION_SCHEMA.COLUMNS')) return ok(COLUMNS_OUT)
 
-      return ok(ROWS_OUT)
+      return ok(rowsOut)
     }
 
     return ok('')
@@ -68,7 +77,7 @@ function dbWorld(
   const saved = () => (store[DB_STORE_KEY] ?? []) as { id: string; secret: string }[]
   const sqlcmds = () => runs.filter(r => r.argv[0] === 'sqlcmd')
 
-  return { store, keychain: keychain.items, keychainReads: () => keychain.counts.reads, runs, toasts, saved, sqlcmds }
+  return { store, keychain: keychain.items, keychainReads: () => keychain.counts.reads, runs, toasts, saved, sqlcmds, tmp }
 }
 
 // 打開 DB 分頁、貼上連線字串存好，回傳存好的那筆的 id。
@@ -197,6 +206,27 @@ test('opening a connection lists its tables; a SELECT runs with the password in 
   await ui.press({ key: 'db:back' })
   expect(await ui.find({ type: 'Text', text: 'shop @ db.local' })).toBeDefined()
   expect(await ui.find({ key: 'db:query' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('Open writes the rows to a new .csv under .soap/tmp, quoting commas and quotes, and opens it in the default app', async ($, on) => {
+  const world = dbWorld(on, { rowsOut: 'id\tcustomer\n--\t--------\n1\tAda, "Co"\n2\t李\n' })
+  const { tmp } = world
+  const ui = await mountPane($, 'desktop')
+  const id = await addConnection(ui, world)
+  await ui.press({ key: `db:item:${id}` })
+  await ui.input({ key: 'db:query', text: 'SELECT id, customer FROM dbo.orders' })
+  await ui.press({ key: 'db:result:open' })
+  const csv = Object.keys(tmp.written).find(p => p.endsWith('.csv')) ?? ''
+  expect(csv).toMatch(/^\/proj\/\.soap\/tmp\/rows-\d{8}-\d{6}-\d{3}\.csv$/)
+  // 開頭的 BOM 讓 Excel 照 UTF-8 讀。
+  expect(tmp.written[csv]).toBe('\uFEFFid,customer\r\n1,"Ada, ""Co""' + '"\r\n2,李\r\n')
+  expect(tmp.opens).toEqual([['open', csv]])
+  expect(world.toasts).toContain('Opened the rows')
+
+  tmp.isFailing = true
+  await ui.press({ key: 'db:result:open' })
+  expect(await ui.find({ type: 'Text', text: /^Couldn't open the rows: .*No application knows/ })).toBeDefined()
   await ui.unmount()
 })
 

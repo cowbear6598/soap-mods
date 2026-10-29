@@ -300,6 +300,8 @@ export type FileView = {
   note: string
   /** Why reading the file failed, '' when none. */
   error: string
+  /** Why Open (the default app) failed, '' when none. */
+  openError: string
   /** The file's modified time and size when read (`mtimeMs:size`), '' when it could not be read; unchanged, a reread skips the file. */
   stamp: string
 }

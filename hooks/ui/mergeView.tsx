@@ -25,6 +25,7 @@ export function mergeView(ui: Ui, m: MergeView, op: MergeOp, isBusy: boolean, a:
         {KIND_STYLE.conflict.label}
       </Text>
       <Text bold>{m.path}</Text>
+      <Button key="merge:open" label="Open" onPress={press(() => a.openMergeFile())} />
     </Box>
   )
   const error = m.error !== '' ? <Text color="error">{m.error}</Text> : null

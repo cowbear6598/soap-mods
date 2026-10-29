@@ -62,7 +62,7 @@ export const NO_FILE_MENU = { menu: '', menuError: '' } satisfies Partial<FilesV
 
 export const EMPTY_FILES: FilesView = { dir: '', isLoaded: false, entries: [], total: 0, error: '', query: '', found: null, ...NO_FILE_MENU }
 
-export const EMPTY_FILE_VIEW: FileView = { path: '', text: '', isTruncated: false, note: '', error: '', stamp: '' }
+export const EMPTY_FILE_VIEW: FileView = { path: '', text: '', isTruncated: false, note: '', error: '', openError: '', stamp: '' }
 
 export const EMPTY_PLAN: Plan = { branch: '', issueNumber: '', description: '', goals: [], constraints: [], related: [], verify: [] }
 

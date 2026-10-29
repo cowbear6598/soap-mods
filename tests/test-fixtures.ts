@@ -63,6 +63,31 @@ export function recordToasts(on: TestOn) {
   return toasts
 }
 
+// 交給預設 app 開的東西：寫進 .soap/tmp 的暫存檔記在 written（路徑 → 內容），isFailing 時 open 失敗。
+// 同一個事件只能登記一次，所以各個 world 在自己的 fs.write、process.run 裡先問它：write 接下暫存檔回 true，
+// open 是 open 就回結果，不是回 undefined。
+export function tempFiles() {
+  const isTemp = (path: string | undefined) => posix(path)?.includes('/.soap/tmp/') === true
+  const tmp = {
+    written: {} as Record<string, string>,
+    opens: [] as string[][],
+    isFailing: false,
+    write: (path: string, text: string) => {
+      if (isTemp(path)) tmp.written[posix(path) ?? ''] = text
+
+      return isTemp(path)
+    },
+    open: (argv: readonly string[]) => {
+      if (argv[0] !== 'open') return undefined
+      tmp.opens.push([...argv])
+
+      return tmp.isFailing ? fail('No application knows how to open it', 1) : ok('')
+    },
+  }
+
+  return tmp
+}
+
 // 熱重載前的程式存在 $.state 的值（key → 值）：寫過一次就照實讀。
 export function stubOldState(on: TestOn, old: Record<string, unknown>) {
   on('state.set', (_$, e, next) => {
