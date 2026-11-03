@@ -54,6 +54,8 @@ export type Actions = {
   selectTab: (id: TabId) => unknown
   selectSubTab: <T extends keyof SubTabs>(tab: T, id: SubTabs[T]) => unknown
   selectRepo: (name: string) => unknown
+  selectWorktree: (root: string) => unknown
+  toggleWorktree: (isOpen: boolean) => unknown
   // diff
   openDiff: (path: string) => unknown
   openMerge: (path: string) => unknown

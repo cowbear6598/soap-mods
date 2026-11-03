@@ -1,4 +1,6 @@
-import type { GitSubTab, SubTabs, TabId } from '../../types'
+import type { RenderChildren } from 'claude-code'
+
+import type { GitSubTab, RepoSummary, SubTabs, TabId } from '../../types'
 import { DANGER, SUB_TABS, TABS, type Tint, hasSubTabs } from '../config'
 import { isConflict } from '../git/parse'
 import type { Actions, PanelData, Press, Ui } from './actions'
@@ -44,28 +46,63 @@ const TAB_BODIES: Record<TabId, TabBody> = {
   docs: docsTab,
 }
 
-// Git Tab 的那排 repo：「a*」是有未提交的變更，「!」是有衝突。session 資料夾本身是 repo 時只有它一個；
+// repo 名稱加上記號：「a*」是有未提交的變更，「!」是有衝突。
+const marked = (name: string, r: RepoSummary | undefined) => `${name}${r?.isDirty === true ? '*' : ''}${r?.hasConflict === true ? ' !' : ''}`
+
+// Git Tab 的那排 repo。session 資料夾本身是 repo 時只有它一個；
 // 不是的話是下一層的 repo，點了換 Git 分頁看的 repo；面板不會自己換。
-function repoBar({ w, d, a }: TabContext) {
+// rest 是底下的子分頁和內容：worktree 選單打開時浮在它們上面，要畫在它們後面才蓋得住（見 floatSelect）。
+function repoBar(ctx: TabContext, rest: RenderChildren) {
+  const { w, d, a } = ctx
   const { Box, Button } = w
   const v = d.view
-  if (v.repos.length === 0) return null
+  if (v.repos.length === 0) return rest
+  const labels = v.repos.map(r => marked(r.name, r))
+  // 終端機的按鈕畫成「[ 名稱 ]」，一顆後面空一格。
+  const menu = worktreeMenu(ctx, labels.reduce((n, l) => n + l.length + 5, 0))
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" flexGrow={1}>
       <Box gap={1} flexWrap="wrap" justifyContent="center" width="100%">
-        {v.repos.map(r => (
+        {v.repos.map((r, i) => (
           <Button
             key={`repo:${r.name}`}
-            label={`${r.name}${r.isDirty ? '*' : ''}${r.hasConflict ? ' !' : ''}`}
+            label={labels[i]}
             variant={r.name === v.repo ? 'primary' : 'secondary'}
             onPress={w.press(() => a.selectRepo(r.name))}
           />
         ))}
+        {menu.field}
       </Box>
-      {divider(w)}
+      <Box flexDirection="column" flexGrow={1} position="relative">
+        {divider(w)}
+        {rest}
+        {menu.card}
+      </Box>
     </Box>
   )
+}
+
+// 選中的 repo 有 worktree 時，repo bar 下面的「worktree:」選單：main 是 repo 本身，其他的是它的 worktree，
+// 記號跟 repo bar 一樣。選了 Git 分頁就看那個 worktree；面板不會自己換到 Claude 進去的 worktree。
+// 放在那排 repo 最後面；打開時選項從那排底下的分隔線開始往下浮。before 是前面那些 repo 按鈕佔幾欄。
+function worktreeMenu({ w, d, a }: TabContext, before: number) {
+  const v = d.view
+  if (v.worktrees.length === 0) return { field: null, card: null }
+
+  return w.floatSelect('worktree', {
+    label: 'worktree',
+    value: v.worktree,
+    options: [
+      { value: '', label: marked('main', v.repos.find(r => r.name === v.repo)) },
+      ...v.worktrees.map(r => ({ value: r.root, label: marked(r.name, r) })),
+    ],
+    onSelect: root => a.selectWorktree(root),
+    isOpen: v.isWorktreeOpen,
+    onToggle: a.toggleWorktree,
+    top: 0,
+    before,
+  })
 }
 
 // 面板上的分隔線左右各空一格，跟分頁內容一樣不貼邊。
@@ -107,24 +144,30 @@ export function renderPanel(drawUi: Ui, d: PanelData, a: Actions, press: Press) 
   const isGit = d.tab === 'git'
   const cover = coverView(ui, w, d, a, press)
 
+  // 分頁列底下的：子分頁列和分頁內容。
+  const tabBody = (
+    <Box flexDirection="column" gap={1} flexGrow={1}>
+      <Box flexDirection="column">
+        {isGit ? subTabBar(ctx, 'git', d.view.files.some(isConflict) ? { conflict: DANGER } : {}) : hasSubTabs(d.tab) && subTabBar(ctx, d.tab)}
+        {d.tab === 'tools' && d.subTabs.tools === 'http' && [httpPageBar(ctx), divider(w)]}
+      </Box>
+      <Box flexDirection="column" gap={1} paddingX={1}>
+        {isGit && d.view.error !== '' && <Text color="error">{d.view.error}</Text>}
+        {TAB_BODIES[d.tab](ctx)}
+      </Box>
+    </Box>
+  )
+
   const content =
     cover !== null ? (
       <Box flexDirection="column" flexGrow={1}>
         {cover}
       </Box>
     ) : (
-      <Box flexDirection="column" gap={1} flexGrow={1}>
-        <Box flexDirection="column">
-          {w.iconBar('tab', TABS, d.tab, id => a.selectTab(id))}
-          {divider(w)}
-          {isGit && repoBar(ctx)}
-          {isGit ? subTabBar(ctx, 'git', d.view.files.some(isConflict) ? { conflict: DANGER } : {}) : hasSubTabs(d.tab) && subTabBar(ctx, d.tab)}
-          {d.tab === 'tools' && d.subTabs.tools === 'http' && [httpPageBar(ctx), divider(w)]}
-        </Box>
-        <Box flexDirection="column" gap={1} paddingX={1}>
-          {isGit && d.view.error !== '' && <Text color="error">{d.view.error}</Text>}
-          {TAB_BODIES[d.tab](ctx)}
-        </Box>
+      <Box flexDirection="column" flexGrow={1}>
+        {w.iconBar('tab', TABS, d.tab, id => a.selectTab(id))}
+        {divider(w)}
+        {isGit ? repoBar(ctx, tabBody) : tabBody}
       </Box>
     )
 

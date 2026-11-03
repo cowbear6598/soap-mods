@@ -54,6 +54,15 @@ export type GitView = {
   repos: RepoSummary[]
   /** Folder name of the repo the Git tab shows, '' when none. */
   repo: string
+  /**
+   * The picked repo's own worktrees under the session folder (`git worktree list`, Claude Code's `.claude/worktrees/*`),
+   * by name: the worktree menu below the repo bar. [] when it has none.
+   */
+  worktrees: RepoSummary[]
+  /** Root of the worktree the Git tab shows instead of the picked repo, '' for the repo itself (main). */
+  worktree: string
+  /** The worktree menu is open (the terminal draws its own select). */
+  isWorktreeOpen: boolean
 }
 
 /** One commit in the log tab. */

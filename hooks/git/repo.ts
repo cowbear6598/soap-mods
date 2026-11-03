@@ -14,6 +14,7 @@ export const REPO_ARGS = ['rev-parse', '--show-toplevel', '--absolute-git-dir']
 export const STATUS_ARGS = ['status', '--porcelain=v1', '-b', '-z', '-uall']
 // 其他 repo 只看有沒有變更、有沒有衝突：不用分支、不展開未追蹤的資料夾，比較快。
 export const SUMMARY_ARGS = ['status', '--porcelain=v1', '-z']
+export const WORKTREE_ARGS = ['worktree', 'list', '--porcelain']
 
 // branch 分頁的 Fetch／Pull。fetch 抓所有遠端、清掉遠端已經刪的分支；pull 只快轉，跟遠端分岔了就失敗，
 // 讓人自己決定 merge 還是 rebase。
@@ -47,6 +48,16 @@ export function parseRepo(r: ProcessRunResult): Repo | undefined {
   const [root = '', gitDir = ''] = r.exitCode === 0 ? r.stdout.split('\n').map(s => s.trim()) : []
 
   return root === '' || gitDir === '' ? undefined : { name: splitPath(root).name, root, gitDir }
+}
+
+// git worktree list --porcelain：一個 worktree 一段（空行隔開），各段第一行是「worktree 路徑」。
+// 給每個 worktree 的路徑（含專案本身）；bare 的、資料夾已經不在的（prunable）不算。
+export function parseWorktrees(out: string): string[] {
+  return out
+    .split('\n\n')
+    .filter(block => !/^(bare|prunable\b)/m.test(block))
+    .map(block => /^worktree (.+)$/m.exec(block)?.[1])
+    .filter(path => path !== undefined)
 }
 
 export const toSummary = (r: Repo, files: GitFile[]): RepoSummary => ({

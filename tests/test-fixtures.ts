@@ -192,6 +192,24 @@ export function gitRepo(
   })
 }
 
+// session 資料夾 /company 不是 repo，底下的 a、b 各是一個（docs 不是 repo，.cache 是隱藏資料夾）。
+// run 先看每個 git 指令（cmd 從子指令開始，cwd 是在哪跑），給了結果就用它的；沒給的 rev-parse 回 cwd 那個 repo，其餘印空的。
+// exists：a、b 的 .git 以外還在的路徑（例如 .git/worktrees）。
+export function companyRepos(on: TestOn, run: (cmd: string[], cwd: string | undefined) => RunResult | undefined, exists: string[] = []) {
+  stubPanel(on, { root: '/company' })
+  on('fs.list', (_$, e) => ({ value: posix(e.path) === '/company' ? [fsEntry('b', 'dir'), fsEntry('a', 'dir'), fsEntry('docs', 'dir'), fsEntry('.cache', 'dir')] : [] }))
+  on('fs.exists', (_$, e) => ({ value: ['/company/a/.git', '/company/b/.git', ...exists].includes(posix(e.path) ?? '') }))
+  on('process.run', (_$, e) => {
+    const cwd = posix(e.init?.cwd)
+    const cmd = e.argv.slice(3)
+    const own = run(cmd, cwd)
+    if (own !== undefined) return own
+    if (cmd[0] === 'rev-parse') return cwd === '/company' ? fail('fatal: not a git repository (or any of the parent directories): .git') : ok(`${cwd}\n${cwd}/.git\n`)
+
+    return ok('')
+  })
+}
+
 // git for-each-ref 印出的一行分支：目前分支標 *，origin/ 開頭的是遠端分支。
 export const branchLine = (
   name: string,

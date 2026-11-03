@@ -16,6 +16,8 @@ import {
   ICON_BUTTON_LABEL,
   ICON_PX,
   KIND_STYLE,
+  MENU_BG,
+  MUTED,
   NBSP,
   PATH_NAME_WIDTH,
   ROW_BUTTON_LABEL,
@@ -402,6 +404,65 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, columns: number, press:
     )
   }
 
+  // 跟 select 一樣的下拉選單，但打開時選項浮在下面（像 Files 的 ⋯ 選單：有框、有底色的卡片），蓋住後面的東西、不推動它們。
+  // 引擎沒有疊放順序，後畫的蓋前面的，所以分成兩塊：field 排在一排置中的按鈕最後面，card 由呼叫的地方畫在要蓋住的東西後面，
+  // 放進一個跟那排一樣寬、position="relative" 的 Box，top 是 field 底下那一行在那個 Box 裡的第幾行。
+  // before：那排在 field 前面的按鈕連間隔佔幾欄，用來算「main ▾」的左緣，卡片從那裡往下長；那排放不下一行（換行了）就置中。
+  // 手機版沒有 Select，field 是 null。
+  const floatSelect = (
+    key: string,
+    props: {
+      label: string
+      value: string
+      options: { value: string; label: string }[]
+      onSelect: (value: string) => unknown
+      isOpen: boolean
+      onToggle: (isOpen: boolean) => unknown
+      top: number
+      before: number
+    },
+  ) => {
+    if (!('Select' in ui)) return { field: null, card: null }
+    if (!isTerminal) {
+      return { field: <ui.Select key={key} label={props.label} value={props.value} options={props.options} onSelect={value => void props.onSelect(value)} />, card: null }
+    }
+    const current = props.options.find(o => o.value === props.value)?.label ?? props.value
+    const width = Math.max(...props.options.map(o => o.label.length))
+    const toggle = ` ${current} ${props.isOpen ? '▴' : '▾'} `
+    const field = (
+      <Box key={`${key}:row`} gap={1}>
+        <Text>{`${props.label}:`}</Text>
+        <Box key={`${key}:bg`} backgroundColor={ACTIVE_BG}>
+          <Button key={key} label={toggle} plain onPress={press(() => props.onToggle(!props.isOpen))} />
+        </Box>
+      </Box>
+    )
+    // 卡片每列「 名稱 ✓ 」加左右框線；超出右邊就往左移。
+    const cardWidth = width + 6
+    const rowWidth = props.before + props.label.length + 2 + toggle.length
+    const toggleLeft = Math.floor((columns - rowWidth) / 2) + rowWidth - toggle.length
+    const place = rowWidth > columns ? { left: 0, right: 0, justifyContent: 'center' as const } : { left: Math.max(0, Math.min(toggleLeft, columns - cardWidth)) }
+    const card = props.isOpen && (
+      <Box key={`${key}:card`} position="absolute" top={props.top} {...place}>
+        <Box width={cardWidth} flexDirection="column" borderStyle="round" borderColor={MUTED} backgroundColor={MENU_BG}>
+          {props.options.map(o => (
+            <Button
+              key={`${key}:${o.value}`}
+              label={` ${fit(o.label, width)} ${o.value === props.value ? '✓' : ' '} `}
+              plain
+              onPress={press(async () => {
+                await props.onSelect(o.value)
+                await props.onToggle(false)
+              }, key)}
+            />
+          ))}
+        </Box>
+      </Box>
+    )
+
+    return { field, card }
+  }
+
   // branch、log、Files 分頁最上面的搜尋框。手機版沒有 Input，就不畫。邊打邊過濾；桌面版拔不掉框旁邊的 submit 按鈕，
   // 就讓它（和 Enter）清空搜尋（onInput('')）。框不能設寬度、撐不滿，所以整組水平置中。
   // trailing：同一行最右邊的按鈕（branch 的 Fetch／Pull），搜尋框靠左、中間一條直線隔開 Clear；沒有搜尋框時只剩它，靠右。
@@ -516,7 +577,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, columns: number, press:
       stretched(DIVIDER_SVG, 'Divider', 1)
     )
 
-  return { Box, Button, Code, Markdown, Text, cell, diff, hasSvg: Svg !== undefined, press, iconButton, armedButton, deleteButton, rollbackButton, confirmButton, flashButton, refreshButton, pressRow, pathRow, pager, searchField, field, select, iconBar, stretched, divider }
+  return { Box, Button, Code, Markdown, Text, cell, diff, hasSvg: Svg !== undefined, press, iconButton, armedButton, deleteButton, rollbackButton, confirmButton, flashButton, refreshButton, pressRow, pathRow, pager, searchField, field, select, floatSelect, iconBar, stretched, divider }
 }
 
 export type Widgets = ReturnType<typeof makeWidgets>

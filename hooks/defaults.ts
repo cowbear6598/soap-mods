@@ -14,6 +14,9 @@ export const EMPTY: GitView = {
   fileError: '',
   repos: [],
   repo: '',
+  worktrees: [],
+  worktree: '',
+  isWorktreeOpen: false,
 }
 
 export const EMPTY_CI: CiView = {

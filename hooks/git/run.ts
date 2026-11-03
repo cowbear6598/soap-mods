@@ -29,10 +29,11 @@ export type GitIo = Io & {
   refresh: () => Promise<void>
 }
 
-// current：Git 分頁正在看的 repo。
+// current：Git 分頁正在看的 repo：選中的專案本身，或 worktree 選單選的那個 worktree。
 // list：那排 repo 按鈕。session 資料夾本身是 repo 時只有它一個；不是的話（例如在 company/ 開，底下 a、b、c
 // 各是一個 repo）是下一層找到的 repo，照名稱排。每次 refresh 重找，新 clone 的也會出現。
-export const repos: { current: Repo | undefined; list: Repo[] } = { current: undefined, list: [] }
+// worktrees：選中的專案底下的 worktree（worktree 選單），每次 refresh 重找。
+export const repos: { current: Repo | undefined; list: Repo[]; worktrees: Repo[] } = { current: undefined, list: [], worktrees: [] }
 
 export type GitInit = { cwd?: string; env?: Record<string, string>; timeoutMs?: number }
 

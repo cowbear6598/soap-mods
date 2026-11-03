@@ -81,7 +81,7 @@ import { clearLogQuery, dropLog, loadLog, openCommits, pickRange, searchLog } fr
 import { abortOp, continueOp } from './git/op-actions'
 import { branchRef } from './git/parse'
 import type { GitIo } from './git/run'
-import { refresh, refreshRepoList, refreshTab, selectRepo } from './git/status'
+import { refresh, refreshRepoList, refreshTab, selectRepo, selectWorktree, toggleWorktree } from './git/status'
 import {
   type HttpIo,
   addHttpEnv,
@@ -180,7 +180,7 @@ const PANE_ARGS: PaneOpenArgs = { id: PANE, title: PANEL_TITLE }
 const tab = atom({ plugin: 'soap-mods', key: 'tab' } as const, 'files')
 const subTabs = atom({ plugin: 'soap-mods', key: 'subTabs' } as const, DEFAULT_SUB_TABS)
 // shape：GitView、FilesView 改了樣子就換，熱重載後不沿用舊程式存的、缺欄位的值（同 wiki）。
-const view = atom({ plugin: 'soap-mods', key: 'view' } as const, EMPTY, { shape: 'git-3' })
+const view = atom({ plugin: 'soap-mods', key: 'view' } as const, EMPTY, { shape: 'git-4' })
 const showRemote = atom({ plugin: 'soap-mods', key: 'showRemote' } as const, false)
 // branch 分頁資料夾的開合，key 是「l:路徑」或「r:路徑」；沒有的照預設。
 const branchFolders = atom({ plugin: 'soap-mods', key: 'branchFolders' } as const, {})
@@ -607,6 +607,8 @@ function actionsFor($: EngineInterface, surface: RenderSurface): Actions {
     selectTab: id => selectTab($, id),
     selectSubTab: (t, id) => selectSubTab($, t, id),
     selectRepo: name => selectRepoTab($, name),
+    selectWorktree: root => selectWorktree(gitIo($), root),
+    toggleWorktree: isOpen => toggleWorktree(gitIo($), isOpen),
     openDiff: path => openDiff(gitIo($), path),
     openMerge: path => openMerge(gitIo($), path),
     showFilePage: page => update($, filePage, () => page),

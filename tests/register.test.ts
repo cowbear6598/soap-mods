@@ -14,6 +14,7 @@ import {
   type Pane,
   type TestOn,
   branchLine,
+  companyRepos,
   endTurn,
   fail,
   fsEntry,
@@ -644,22 +645,16 @@ test('branches with / in their name group into folders that open and close', asy
 
 test('a session folder holding several repos gets a repo bar with counts, and pressing one switches the Git tab to it', async ($, on) => {
   const logCwds: (string | undefined)[] = []
-  stubPanel(on, { root: '/company' })
-  // Bash 在回合中 cd 進 a 去 commit，shell 的 cwd 跟著跑，但專案根目錄不變：repo bar 還是要列出 a、b。
-  on('session.cwd', () => ({ value: '/company/a' }))
-  // company/ 底下：a、b 是 repo，docs 不是，.cache 是隱藏資料夾；各 repo 的 .git 裡沒有進行中的操作。
-  on('fs.list', (_$, e) => ({ value: posix(e.path) === '/company' ? [fsEntry('b', 'dir'), fsEntry('a', 'dir'), fsEntry('docs', 'dir'), fsEntry('.cache', 'dir')] : [] }))
-  on('fs.exists', (_$, e) => ({ value: ['/company/a/.git', '/company/b/.git'].includes(posix(e.path) ?? '') }))
-  on('process.run', (_$, e) => {
-    const cwd = posix(e.init?.cwd)
-    const args = e.argv.slice(3)
-    if (args[0] === 'rev-parse') return cwd === '/company' ? fail('fatal: not a git repository (or any of the parent directories): .git') : ok(`${cwd}\n${cwd}/.git\n`)
+  // 各 repo 的 .git 裡沒有進行中的操作。
+  companyRepos(on, (args, cwd) => {
     if (args[0] === 'log') logCwds.push(cwd)
     if (args[0] === 'status' && cwd === '/company/a') return ok('## main\0 M a1.ts\0 M a2.ts\0')
     if (args[0] === 'status' && cwd === '/company/b') return ok('## main\0UU b1.ts\0')
 
-    return ok('')
+    return undefined
   })
+  // Bash 在回合中 cd 進 a 去 commit，shell 的 cwd 跟著跑，但專案根目錄不變：repo bar 還是要列出 a、b。
+  on('session.cwd', () => ({ value: '/company/a' }))
   await openPanel($)
 
   const ui = await mountPane($)
@@ -679,6 +674,77 @@ test('a session folder holding several repos gets a repo bar with counts, and pr
   expect(await ui.find({ key: 'file:unstaged:a1.ts' })).toBeUndefined()
   await ui.press({ key: 'sub:conflict' })
   expect(await ui.find({ key: 'conflict:b1.ts' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a picked repo with worktrees gets a worktree menu below the repo bar; picking one shows its diff and log, and it goes back to main on a repo switch or once deleted', async ($, on) => {
+  const logCwds: (string | undefined)[] = []
+  const FIX = '/company/a/.claude/worktrees/fix'
+  // a 一開始沒有 worktree；Claude 開了 fix 之後才有。/elsewhere/old 在 session 資料夾外面，不列。
+  let worktrees: string[] = []
+  companyRepos(
+    on,
+    (args, cwd) => {
+      if (args[0] === 'rev-parse' && cwd === FIX) return ok(`${FIX}\n/company/a/.git/worktrees/fix\n`)
+      if (args[0] === 'worktree' && cwd === '/company/a') {
+        const listed = ['/company/a', ...worktrees, '/elsewhere/old'].map(w => `worktree ${w}\nHEAD ${'f'.repeat(40)}\ndetached\n`)
+
+        return ok(listed.join('\n'))
+      }
+      if (args[0] === 'log') logCwds.push(cwd)
+      if (args[0] === 'diff') return ok('diff --git a/f.ts b/f.ts\n--- a/f.ts\n+++ b/f.ts\n@@ -1 +1 @@\n-a\n+b\n')
+      if (args[0] === 'status' && cwd === '/company/a') return ok('## main\0 M a1.ts\0')
+      if (args[0] === 'status' && cwd === FIX) return ok('## fix\0 M f.ts\0UU g.ts\0')
+
+      return undefined
+    },
+    ['/company/a/.git/worktrees'],
+  )
+  await openPanel($)
+  const menu = async () => (await ui.find({ key: 'worktree' }))?.props.label as string | undefined
+
+  const ui = await mountPane($)
+  expect(await menu()).toBeUndefined()
+
+  // Claude 開了 fix：回合結束後選單出現。
+  worktrees = [FIX]
+  await endTurn($, ui)
+  expect(await ui.find({ type: 'Text', text: 'worktree:' })).toBeDefined()
+  expect(await menu()).toContain('main*')
+  expect(await ui.find({ key: `repo:fix` })).toBeUndefined()
+  await ui.press({ key: 'worktree' })
+  // 選項跟 repo bar 一樣標 * 和 !；外面的不列。
+  expect((await ui.find({ key: 'worktree:' }))?.props.label).toBe(' main*  ✓ ')
+  expect((await ui.find({ key: `worktree:${FIX}` }))?.props.label).toBe(' fix* !   ')
+  expect(await ui.find({ key: 'worktree:/elsewhere/old' })).toBeUndefined()
+
+  // 選了 fix：diff、log 都換成看 fix，選單收起來。
+  await ui.press({ key: `worktree:${FIX}` })
+  expect(await menu()).toContain('fix* !')
+  expect(await ui.find({ key: `worktree:${FIX}` })).toBeUndefined()
+  expect(await ui.find({ key: 'file:unstaged:a1.ts' })).toBeUndefined()
+  expect(await ui.find({ key: 'file:unstaged:f.ts' })).toBeDefined()
+  await ui.press({ key: 'sub:log' })
+  expect(logCwds.at(-1)).toBe(FIX)
+
+  // 換專案回到 main：b 沒有 worktree 就沒有選單，回到 a 時是 main。
+  await ui.press({ key: 'repo:b' })
+  expect(await menu()).toBeUndefined()
+  await ui.press({ key: 'repo:a' })
+  expect(await menu()).toContain('main*')
+  expect(logCwds.at(-1)).toBe('/company/a')
+
+  // 再選 fix、打開 f.ts 的差異；fix 被刪了：差異回到分頁，看回 main，選單不見。
+  await ui.press({ key: 'worktree' })
+  await ui.press({ key: `worktree:${FIX}` })
+  await ui.press({ key: 'sub:diff' })
+  await ui.press({ key: 'file:unstaged:f.ts' })
+  expect(await ui.find({ key: 'diff' })).toBeDefined()
+  worktrees = []
+  await endTurn($, ui)
+  expect(await ui.find({ key: 'diff' })).toBeUndefined()
+  expect(await menu()).toBeUndefined()
+  expect(await ui.find({ key: 'file:unstaged:a1.ts' })).toBeDefined()
   await ui.unmount()
 })
 
