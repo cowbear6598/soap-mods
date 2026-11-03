@@ -6,7 +6,6 @@ import { EMPTY, EMPTY_LOG, NO_MESSAGES } from '../defaults'
 import { coalesce } from '../latest'
 import { detectOp } from '../merge/algo'
 import { mergeBusy, syncMerge } from '../merge/actions'
-import { isInFolder } from '../services/scan'
 import { disarm } from '../shell'
 import { readDiff } from './diff-actions'
 import { dropLog, loadLog } from './log-actions'
@@ -56,17 +55,16 @@ async function reloadRepos(io: GitIo) {
   repos.current = repos.worktrees.find(w => w.root === shownRoot) ?? project
 }
 
-// 選中的專案的 worktree（Claude Code 開在 .claude/worktrees 底下的那些），照名稱排。只列 session 資料夾底下的：
-// 外面的刪檔等動作碰不到。已經找過的不再問 git，只有新的才跑一次 rev-parse（.git 資料夾是 .git/worktrees/ 底下那個）。
+// 選中的專案的 worktree，照名稱排：Claude Code 開在 .claude/worktrees 底下的，和 Claude 用 git worktree add 開在別處（例如它的暫存資料夾）的。
+// 已經找過的不再問 git，只有新的才跑一次 rev-parse（.git 資料夾是 .git/worktrees/ 底下那個）。
 // 從沒開過 worktree 的專案沒有 .git/worktrees，不用每次 refresh 都跑 git worktree list。
 async function findWorktrees(io: GitIo, project: Repo): Promise<Repo[]> {
   if (!(await io.exists(`${project.gitDir}/worktrees`).catch(() => false))) return []
   const listed = await git(io, WORKTREE_ARGS, { cwd: project.root })
   if (listed.exitCode !== 0) return []
-  const root = await io.root()
   const found = await Promise.all(
     parseWorktrees(listed.stdout)
-      .filter(path => path !== project.root && isInFolder(path, root))
+      .filter(path => path !== project.root)
       .map(async path => repos.worktrees.find(w => w.root === path) ?? parseRepo(await git(io, REPO_ARGS, { cwd: path }))),
   )
 

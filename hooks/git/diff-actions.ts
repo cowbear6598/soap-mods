@@ -8,7 +8,7 @@ import { neighbour } from '../neighbour'
 import { removePath } from '../shell'
 import { commitRange, diffSteps, fileKind, letterKind, toHunks } from './parse'
 import { gitErrorText } from './repo'
-import { type GitIo, git, gitOk, inRepo, isGitConfirmed } from './run'
+import { type GitIo, git, gitOk, inRepo, isGitConfirmed, repos } from './run'
 
 // 開著的差異；開著的不是它就是空的（path 是 ''）。
 async function readDiffCover(io: GitIo) {
@@ -62,11 +62,12 @@ async function showDiff(io: GitIo, pane: DiffPaneView) {
 
 // diff 分頁的垃圾桶和 rollback 都要按兩次：按了換成打勾，DELETE_ARM_MS 內再按同一顆才做（Staged、Unstaged 都列著的兩列一起打勾，做的事一樣）。
 // delete 只刪工作區的檔案，index 不動：有追蹤的之後列成刪除。未追蹤的巢狀 repo 列成「sub/」，canDelete 不給刪。
+// 只刪 repo 根目錄底下的：worktree 可能開在 session 資料夾外面（Claude 的暫存資料夾）。
 // rollback 只把 index 和工作區都還原成 HEAD 的樣子，不刪 HEAD 沒有的檔案。不經過資源回收筒，也沒有 undo。
 export async function changeFile(io: GitIo, file: GitFile, action: 'delete' | 'rollback') {
   if (!(await isGitConfirmed(io, `file:${action}:${file.path}`))) return
   try {
-    if (action === 'delete') await removePath(io, inRepo(file.path))
+    if (action === 'delete') await removePath(io, inRepo(file.path), repos.current?.root)
     else await gitOk(io, ['restore', '--source=HEAD', '--staged', '--worktree', '--', file.path])
   } catch (err) {
     await io.setView({ ...NO_MESSAGES, fileError: `Couldn't ${action === 'delete' ? 'delete' : 'roll back'} ${file.path}: ${gitErrorText(err)}` })

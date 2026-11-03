@@ -679,15 +679,25 @@ test('a session folder holding several repos gets a repo bar with counts, and pr
 
 test('a picked repo with worktrees gets a worktree menu below the repo bar; picking one shows its diff and log, and it goes back to main on a repo switch or once deleted', async ($, on) => {
   const logCwds: (string | undefined)[] = []
+  const removed: string[] = []
   const FIX = '/company/a/.claude/worktrees/fix'
-  // a 一開始沒有 worktree；Claude 開了 fix 之後才有。/elsewhere/old 在 session 資料夾外面，不列。
+  // Claude 用 git worktree add 開在自己暫存資料夾的，在 session 資料夾外面。
+  const OUT = '/tmp/scratchpad/staging'
+  // a 一開始沒有 worktree；Claude 開了 fix 之後才有。
   let worktrees: string[] = []
+  // 不是 Windows：用 rm -rf 刪。
+  on('env.get', () => ({ value: undefined }))
   companyRepos(
     on,
-    (args, cwd) => {
-      if (args[0] === 'rev-parse' && cwd === FIX) return ok(`${FIX}\n/company/a/.git/worktrees/fix\n`)
+    (args, cwd, argv) => {
+      if (argv[0] === 'rm') {
+        removed.push(argv.join(' '))
+
+        return ok('')
+      }
+      if (args[0] === 'rev-parse' && (cwd === FIX || cwd === OUT)) return ok(`${cwd}\n/company/a/.git/worktrees/${cwd.split('/').at(-1)}\n`)
       if (args[0] === 'worktree' && cwd === '/company/a') {
-        const listed = ['/company/a', ...worktrees, '/elsewhere/old'].map(w => `worktree ${w}\nHEAD ${'f'.repeat(40)}\ndetached\n`)
+        const listed = ['/company/a', ...worktrees].map(w => `worktree ${w}\nHEAD ${'f'.repeat(40)}\ndetached\n`)
 
         return ok(listed.join('\n'))
       }
@@ -695,6 +705,7 @@ test('a picked repo with worktrees gets a worktree menu below the repo bar; pick
       if (args[0] === 'diff') return ok('diff --git a/f.ts b/f.ts\n--- a/f.ts\n+++ b/f.ts\n@@ -1 +1 @@\n-a\n+b\n')
       if (args[0] === 'status' && cwd === '/company/a') return ok('## main\0 M a1.ts\0')
       if (args[0] === 'status' && cwd === FIX) return ok('## fix\0 M f.ts\0UU g.ts\0')
+      if (args[0] === 'status' && cwd === OUT) return ok(`## staging\0${removed.length > 0 ? '' : '?? n.ts\0'}`)
 
       return undefined
     },
@@ -706,17 +717,17 @@ test('a picked repo with worktrees gets a worktree menu below the repo bar; pick
   const ui = await mountPane($)
   expect(await menu()).toBeUndefined()
 
-  // Claude 開了 fix：回合結束後選單出現。
-  worktrees = [FIX]
+  // Claude 開了 fix 和 OUT：回合結束後選單出現。
+  worktrees = [FIX, OUT]
   await endTurn($, ui)
   expect(await ui.find({ type: 'Text', text: 'worktree:' })).toBeDefined()
   expect(await menu()).toContain('main*')
   expect(await ui.find({ key: `repo:fix` })).toBeUndefined()
   await ui.press({ key: 'worktree' })
-  // 選項跟 repo bar 一樣標 * 和 !；外面的不列。
-  expect((await ui.find({ key: 'worktree:' }))?.props.label).toBe(' main*  ✓ ')
-  expect((await ui.find({ key: `worktree:${FIX}` }))?.props.label).toBe(' fix* !   ')
-  expect(await ui.find({ key: 'worktree:/elsewhere/old' })).toBeUndefined()
+  // 選項跟 repo bar 一樣標 * 和 !。
+  expect((await ui.find({ key: 'worktree:' }))?.props.label).toBe(' main*    ✓ ')
+  expect((await ui.find({ key: `worktree:${FIX}` }))?.props.label).toBe(' fix* !     ')
+  expect((await ui.find({ key: `worktree:${OUT}` }))?.props.label).toBe(' staging*   ')
 
   // 選了 fix：diff、log 都換成看 fix，選單收起來。
   await ui.press({ key: `worktree:${FIX}` })
@@ -733,6 +744,15 @@ test('a picked repo with worktrees gets a worktree menu below the repo bar; pick
   await ui.press({ key: 'repo:a' })
   expect(await menu()).toContain('main*')
   expect(logCwds.at(-1)).toBe('/company/a')
+
+  // session 資料夾外面的 worktree 一樣能刪未追蹤的檔案。
+  await ui.press({ key: 'worktree' })
+  await ui.press({ key: `worktree:${OUT}` })
+  await ui.press({ key: 'sub:diff' })
+  await ui.press({ key: 'remove:untracked:n.ts' })
+  await ui.press({ key: 'remove:untracked:n.ts' })
+  expect(removed).toEqual([`rm -rf -- ${OUT}/n.ts`])
+  expect(await ui.find({ key: 'file:untracked:n.ts' })).toBeUndefined()
 
   // 再選 fix、打開 f.ts 的差異；fix 被刪了：差異回到分頁，看回 main，選單不見。
   await ui.press({ key: 'worktree' })

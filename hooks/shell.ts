@@ -30,14 +30,14 @@ const REMOVE_ARGV = powershellArgv(
   "$ErrorActionPreference = 'Stop'; $i = Get-Item -LiteralPath $env:SOAP_PATH -Force; if ($i.Attributes -band [IO.FileAttributes]::ReparsePoint) { $i.Delete() } else { Remove-Item -LiteralPath $env:SOAP_PATH -Recurse -Force }",
 )
 
-// 只刪 session 資料夾底下的東西：不在它底下、或路徑裡有 . 和 .. 的不刪。
+// 只刪 within 底下的東西（預設 session 資料夾）：不在它底下、或路徑裡有 . 和 .. 的不刪。
 // 比的時候不分大小寫、斜線方向：repo 的根目錄是 git 給的（C:/…），session 資料夾是引擎給的。
-export async function removePath(io: Io, abs: string) {
+export async function removePath(io: Io, abs: string, within?: string) {
   const norm = (p: string) => p.replace(/\\/g, '/').toLowerCase()
-  const root = `${norm(await io.root()).replace(/\/$/, '')}/`
+  const root = `${norm(within ?? (await io.root())).replace(/\/$/, '')}/`
   const rel = norm(abs)
   if (!rel.startsWith(root) || rel.slice(root.length).split('/').some(p => p === '' || p === '.' || p === '..')) {
-    throw new Error('outside the session folder')
+    throw new Error(within === undefined ? 'outside the session folder' : 'outside the repo')
   }
   if (await isWindows(io)) await runOk(io, REMOVE_ARGV, 'Remove-Item', { env: { SOAP_PATH: abs } })
   else await runOk(io, ['rm', '-rf', '--', abs], 'rm')

@@ -55,7 +55,7 @@ export type GitView = {
   /** Folder name of the repo the Git tab shows, '' when none. */
   repo: string
   /**
-   * The picked repo's own worktrees under the session folder (`git worktree list`, Claude Code's `.claude/worktrees/*`),
+   * The picked repo's own worktrees (`git worktree list`: Claude Code's `.claude/worktrees/*`, or one Claude added elsewhere),
    * by name: the worktree menu below the repo bar. [] when it has none.
    */
   worktrees: RepoSummary[]
