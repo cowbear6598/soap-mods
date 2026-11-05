@@ -24,12 +24,22 @@ export const httpPageBar = ({ w, d, a }: TabContext) => w.iconBar('http:page', H
 
 const MASK = '••••••'
 
-// API 這邊只寫目前的環境，換環境到 Environment。
-function envLine({ w, d }: TabContext) {
+// API 這邊的「Env: dev ▾」：直接換環境給 Run 用（變數還是到 Environment 改）。手機版沒有選單，只寫目前的環境。
+// 選項浮在下面不推動內容（見 floatSelect）：field 放在一排的最左邊，card 畫在從那排開始、position="relative" 的 Box 最後。
+function envMenu({ w, d, a }: TabContext) {
   const { Text } = w
   const hv = d.http
+  if (hv.env === '') return { field: null, card: null }
+  const menu = w.floatSelect('http:env-pick', {
+    label: 'Env',
+    value: hv.env,
+    options: hv.envs.map(env => ({ value: env, label: env })),
+    onSelect: env => a.pickHttpEnv(env),
+    top: 1,
+    left: 0,
+  })
 
-  return hv.env === '' ? null : <Text dimColor>{`Env: ${hv.env}`}</Text>
+  return menu.field === null ? { field: <Text dimColor>{`Env: ${hv.env}`}</Text>, card: null } : menu
 }
 
 // 編輯頁左邊的標題欄寬（Folder 最長）。
@@ -78,13 +88,10 @@ function editor(ctx: TabContext, draft: HttpDraft, r: HttpRequest | undefined) {
         formLine(
           ctx,
           'Folder',
-          // 開合記在草稿；選了 select 自己收起。
           w.select('http:draft:folder', {
             value: isNewFolder ? NEW_FOLDER : draft.folder,
             options: [{ value: '', label: '(None)' }, ...folders.map(f => ({ value: f, label: f })), { value: NEW_FOLDER, label: '+ New folder' }],
             onSelect: folder => a.pickHttpFolder(folder),
-            isOpen: draft.isPickingFolder,
-            onToggle: isOpen => a.openHttpFolderPicker(isOpen),
           }),
         )}
       {isOwnFile &&
@@ -172,44 +179,48 @@ function requestList(ctx: TabContext) {
     byFolder.set(folder, [...(byFolder.get(folder) ?? []), r])
   }
   const inFolder = (folder: string) => byFolder.get(folder) ?? []
+  const env = envMenu(ctx)
 
   return (
     <Box flexDirection="column" gap={1}>
       {hv.error !== '' && <Text color="error">{hv.error}</Text>}
-      <Box gap={1} alignItems="center">
-        <Box flexGrow={1} flexShrink={1}>
-          {envLine(ctx)}
+      <Box flexDirection="column" gap={1} position="relative">
+        <Box gap={1} alignItems="center">
+          <Box flexGrow={1} flexShrink={1}>
+            {env.field}
+          </Box>
+          <Button key="http:open" label="Open" onPress={w.press(() => a.openHttpDir())} />
+          <Button key="http:new" label="+ New" onPress={w.press(() => a.newHttpRequest())} />
         </Box>
-        <Button key="http:open" label="Open" onPress={w.press(() => a.openHttpDir())} />
-        <Button key="http:new" label="+ New" onPress={w.press(() => a.newHttpRequest())} />
-      </Box>
-      {hv.requests.length > 0 && w.searchField('http:search', hv.query, text => a.searchHttp(text))}
-      {hv.requests.length === 0 ? (
-        <Text dimColor>No requests yet.</Text>
-      ) : shown.length === 0 ? (
-        <Text dimColor>No requests match.</Text>
-      ) : (
-        // 資料夾在上面，「▾ 會員 (2)」整列點了收起（記著），顏色同 Files、Wiki 的資料夾；沒放資料夾的在最下面。
-        <Box flexDirection="column">
-          {httpFolders(shown).map(folder => {
-            const isFolded = !isSearching && hv.foldedFolders.includes(folder)
+        {hv.requests.length > 0 && w.searchField('http:search', hv.query, text => a.searchHttp(text))}
+        {hv.requests.length === 0 ? (
+          <Text dimColor>No requests yet.</Text>
+        ) : shown.length === 0 ? (
+          <Text dimColor>No requests match.</Text>
+        ) : (
+          // 資料夾在上面，「▾ 會員 (2)」整列點了收起（記著），顏色同 Files、Wiki 的資料夾；沒放資料夾的在最下面。
+          <Box flexDirection="column">
+            {httpFolders(shown).map(folder => {
+              const isFolded = !isSearching && hv.foldedFolders.includes(folder)
 
-            return (
-              <Box key={`http:folder:${folder}:box`} flexDirection="column">
-                {w.pressRow({
-                  key: `http:folder:${folder}`,
-                  label: `${isFolded ? '▸' : '▾'} ${folder} (${inFolder(folder).length})`,
-                  color: FOLDER_COLOR,
-                  indent: 0,
-                  onPress: () => a.foldHttpFolder(folder, !isFolded),
-                })}
-                {!isFolded && block(inFolder(folder), 2)}
-              </Box>
-            )
-          })}
-          {block(inFolder(''), 0)}
-        </Box>
-      )}
+              return (
+                <Box key={`http:folder:${folder}:box`} flexDirection="column">
+                  {w.pressRow({
+                    key: `http:folder:${folder}`,
+                    label: `${isFolded ? '▸' : '▾'} ${folder} (${inFolder(folder).length})`,
+                    color: FOLDER_COLOR,
+                    indent: 0,
+                    onPress: () => a.foldHttpFolder(folder, !isFolded),
+                  })}
+                  {!isFolded && block(inFolder(folder), 2)}
+                </Box>
+              )
+            })}
+            {block(inFolder(''), 0)}
+          </Box>
+        )}
+        {env.card}
+      </Box>
     </Box>
   )
 }
@@ -372,6 +383,7 @@ function requestView(ctx: TabContext) {
     })
   const missing = variableNames(r).filter(n => sourceOf(n) === 'missing')
   const res = hv.result?.id === r.id ? hv.result : null
+  const env = envMenu(ctx)
 
   return (
     <Box flexDirection="column" gap={1}>
@@ -386,24 +398,27 @@ function requestView(ctx: TabContext) {
           {w.deleteButton('http:delete', d.armed === `http:request:${r.id}`, () => a.deleteHttpRequest())}
         </Box>
       </Box>
-      {envLine(ctx)}
-      <Box gap={1}>
-        <Text bold color="suggestion">{r.method}</Text>
-        <Text wrap="truncate-end">{show(r.url)}</Text>
-      </Box>
-      {promptFields(ctx, r)}
-      {missing.length > 0 && (
-        <Box gap={1} alignItems="center" flexWrap="wrap">
-          <Text color="warning">{`No value for ${braced(missing)}: paste it under`}</Text>
-          <Button key="http:to-env" label="Environment" onPress={w.press(() => a.openHttpEnv(hv.env))} />
+      <Box flexDirection="column" gap={1} position="relative">
+        {env.field}
+        <Box gap={1}>
+          <Text bold color="suggestion">{r.method}</Text>
+          <Text wrap="truncate-end">{show(r.url)}</Text>
         </Box>
-      )}
-      <Box justifyContent="center">
-        {d.httpBusy === 'send' ? <Text dimColor>Sending…</Text> : <Button key="http:send" label="Run" hotkey="s" onPress={w.press(() => a.sendHttp())} />}
+        {promptFields(ctx, r)}
+        {missing.length > 0 && (
+          <Box gap={1} alignItems="center" flexWrap="wrap">
+            <Text color="warning">{`No value for ${braced(missing)}: paste it under`}</Text>
+            <Button key="http:to-env" label="Environment" onPress={w.press(() => a.openHttpEnv(hv.env))} />
+          </Box>
+        )}
+        <Box justifyContent="center">
+          {d.httpBusy === 'send' ? <Text dimColor>Sending…</Text> : <Button key="http:send" label="Run" hotkey="s" onPress={w.press(() => a.sendHttp())} />}
+        </Box>
+        {hv.sendError !== '' && <Text color="error">{hv.sendError}</Text>}
+        {res !== null && w.divider}
+        {res !== null && resultView(ctx, res)}
+        {env.card}
       </Box>
-      {hv.sendError !== '' && <Text color="error">{hv.sendError}</Text>}
-      {res !== null && w.divider}
-      {res !== null && resultView(ctx, res)}
     </Box>
   )
 }

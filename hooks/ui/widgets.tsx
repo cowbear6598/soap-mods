@@ -26,6 +26,12 @@ import type { Actions, PanelData, Press, Ui } from './actions'
 import { diffBody } from './diffBody'
 import { DIVIDER_SVG, iconSvg } from './svg'
 
+// 下拉選單打開、收起的那顆：「 main ▾ 」。
+const toggleLabel = (current: string, isOpen: boolean) => ` ${current} ${isOpen ? '▴' : '▾'} `
+
+/** How wide floatSelect's field is: `label:`, a space, the toggle. Its caller works out `left` (where the field starts) from it. */
+export const floatFieldWidth = (label: string, current: string) => label.length + 2 + toggleLabel(current, false).length
+
 type Row = {
   key: string
   label: string
@@ -53,7 +59,15 @@ type Row = {
 
 // press：這個面板上的按鈕都經過它，動作做完後丟了焦點會補回來。focusInput：把焦點圈移到某個輸入框。
 // columns：面板內容有幾欄（終端機的整行按鈕、分隔線墊這麼長）。
-export function makeWidgets(ui: Ui, isTerminal: boolean, columns: number, press: Press, focusInput: (key: string) => unknown) {
+// menu：終端機開著的下拉選單（它的 key，'' 是沒有）和開合它的動作；按了別的按鈕，press 就把它收起來。
+export function makeWidgets(
+  ui: Ui,
+  isTerminal: boolean,
+  columns: number,
+  press: Press,
+  focusInput: (key: string) => unknown,
+  menu: { open: string; toggle: (key: string, isOpen: boolean) => unknown },
+) {
   const { Box, Button, Code, Markdown, Text } = ui
   // 整行按鈕的 label：比整行寬，超出的部分被裁掉。包住它的那層再寬一倍（欄數；百分比最多 100%，不夠用），
   // 按鈕才不會被壓窄而在看得到的地方畫出「…」。會被裁掉的名稱也只留這麼長：畫不出來的字照樣算進引擎的字數上限。
@@ -356,8 +370,8 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, columns: number, press:
   }
 
   // 下拉選單（Wiki 的模型）；手機版沒有 Select，是 null。終端機的 Select 只吃鍵盤（滑鼠點選項沒反應、展開還會變寬、點了收不回去），
-  // 自己畫一個：ACTIVE_BG 底的「Opus ▾」點了開合（isOpen、onToggle），底下隔一條線列出選項，選的在箭頭那欄打勾；
-  // 點了就選、收起來，焦點圈回到「Opus ▾」。每一列都補到同一個寬度，開合時不會變寬。沒給 label 不畫標題（旁邊自己畫，例如 HTTP 的表單）。
+  // 自己畫一個：ACTIVE_BG 底的「Opus ▾」點了開合（開著哪個記在 menu.open），底下隔一條線列出選項，選的在箭頭那欄打勾；
+  // 點了就選、收起來（press 收的），焦點圈回到「Opus ▾」。每一列都補到同一個寬度，開合時不會變寬。沒給 label 不畫標題（旁邊自己畫，例如 HTTP 的表單）。
   const select = (
     key: string,
     props: {
@@ -365,8 +379,6 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, columns: number, press:
       value: string
       options: { value: string; label: string }[]
       onSelect: (value: string) => unknown
-      isOpen: boolean
-      onToggle: (isOpen: boolean) => unknown
     },
   ) => {
     if (!('Select' in ui)) return null
@@ -377,13 +389,14 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, columns: number, press:
     // 每一列「 名稱 ✓ 」：名稱前後各一格、箭頭或勾一格、再一格。
     const rowWidth = width + 4
     const current = props.options.find(o => o.value === props.value)?.label ?? props.value
+    const isOpen = menu.open === key
 
     return (
       <Box key={`${key}:row`} gap={1} alignItems="flex-start">
         {props.label !== undefined && <Text>{`${props.label}:`}</Text>}
         <Box key={`${key}:bg`} flexDirection="column" backgroundColor={ACTIVE_BG}>
-          <Button key={key} label={` ${fit(current, width)} ${props.isOpen ? '▴' : '▾'} `} plain onPress={press(() => props.onToggle(!props.isOpen))} />
-          {props.isOpen && [
+          <Button key={key} label={toggleLabel(fit(current, width), isOpen)} plain onPress={press(() => menu.toggle(key, !isOpen))} />
+          {isOpen && [
             <Text key={`${key}:divider`} dimColor>
               {DIVIDER_CHAR.repeat(rowWidth)}
             </Text>,
@@ -392,10 +405,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, columns: number, press:
                 key={`${key}:${o.value}`}
                 label={` ${fit(o.label, width)} ${o.value === props.value ? '✓' : ' '} `}
                 plain
-                onPress={press(async () => {
-                  await props.onSelect(o.value)
-                  await props.onToggle(false)
-                }, key)}
+                onPress={press(() => props.onSelect(o.value), key)}
               />
             )),
           ]}
@@ -405,9 +415,9 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, columns: number, press:
   }
 
   // 跟 select 一樣的下拉選單，但打開時選項浮在下面（像 Files 的 ⋯ 選單：有框、有底色的卡片），蓋住後面的東西、不推動它們。
-  // 引擎沒有疊放順序，後畫的蓋前面的，所以分成兩塊：field 排在一排置中的按鈕最後面，card 由呼叫的地方畫在要蓋住的東西後面，
-  // 放進一個跟那排一樣寬、position="relative" 的 Box，top 是 field 底下那一行在那個 Box 裡的第幾行。
-  // before：那排在 field 前面的按鈕連間隔佔幾欄，用來算「main ▾」的左緣，卡片從那裡往下長；那排放不下一行（換行了）就置中。
+  // 引擎沒有疊放順序，後畫的蓋前面的，所以分成兩塊：field 排在一排按鈕的最後面，card 由呼叫的地方畫在要蓋住的東西後面，
+  // 放進一個 position="relative" 的 Box，top、left 是 field 底下那一行、field 的左緣在那個 Box 裡的第幾行、第幾欄
+  // （寬度見 floatFieldWidth），卡片從「main ▾」那欄往下長；沒給 left 卡片置中。onOpen：打開前先做（先讀好選項要的）。
   // 手機版沒有 Select，field 是 null。
   const floatSelect = (
     key: string,
@@ -416,10 +426,9 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, columns: number, press:
       value: string
       options: { value: string; label: string }[]
       onSelect: (value: string) => unknown
-      isOpen: boolean
-      onToggle: (isOpen: boolean) => unknown
+      onOpen?: () => unknown
       top: number
-      before: number
+      left?: number
     },
   ) => {
     if (!('Select' in ui)) return { field: null, card: null }
@@ -428,21 +437,26 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, columns: number, press:
     }
     const current = props.options.find(o => o.value === props.value)?.label ?? props.value
     const width = Math.max(...props.options.map(o => o.label.length))
-    const toggle = ` ${current} ${props.isOpen ? '▴' : '▾'} `
+    const isOpen = menu.open === key
+    const open = async () => {
+      await props.onOpen?.()
+      await menu.toggle(key, true)
+    }
     const field = (
       <Box key={`${key}:row`} gap={1}>
         <Text>{`${props.label}:`}</Text>
         <Box key={`${key}:bg`} backgroundColor={ACTIVE_BG}>
-          <Button key={key} label={toggle} plain onPress={press(() => props.onToggle(!props.isOpen))} />
+          <Button key={key} label={toggleLabel(current, isOpen)} plain onPress={press(() => (isOpen ? menu.toggle(key, false) : open()))} />
         </Box>
       </Box>
     )
     // 卡片每列「 名稱 ✓ 」加左右框線；超出右邊就往左移。
     const cardWidth = width + 6
-    const rowWidth = props.before + props.label.length + 2 + toggle.length
-    const toggleLeft = Math.floor((columns - rowWidth) / 2) + rowWidth - toggle.length
-    const place = rowWidth > columns ? { left: 0, right: 0, justifyContent: 'center' as const } : { left: Math.max(0, Math.min(toggleLeft, columns - cardWidth)) }
-    const card = props.isOpen && (
+    const place =
+      props.left === undefined
+        ? { left: 0, right: 0, justifyContent: 'center' as const }
+        : { left: Math.max(0, Math.min(props.left + props.label.length + 2, columns - cardWidth)) }
+    const card = isOpen && (
       <Box key={`${key}:card`} position="absolute" top={props.top} {...place}>
         <Box width={cardWidth} flexDirection="column" borderStyle="round" borderColor={MUTED} backgroundColor={MENU_BG}>
           {props.options.map(o => (
@@ -450,10 +464,7 @@ export function makeWidgets(ui: Ui, isTerminal: boolean, columns: number, press:
               key={`${key}:${o.value}`}
               label={` ${fit(o.label, width)} ${o.value === props.value ? '✓' : ' '} `}
               plain
-              onPress={press(async () => {
-                await props.onSelect(o.value)
-                await props.onToggle(false)
-              }, key)}
+              onPress={press(() => props.onSelect(o.value), key)}
             />
           ))}
         </Box>

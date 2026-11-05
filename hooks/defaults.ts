@@ -16,7 +16,6 @@ export const EMPTY: GitView = {
   repo: '',
   worktrees: [],
   worktree: '',
-  isWorktreeOpen: false,
 }
 
 export const EMPTY_CI: CiView = {
@@ -82,7 +81,6 @@ export const EMPTY_WIKI: WikiView = {
   error: '',
   deleteError: '',
   model: '',
-  isModelOpen: false,
   distillNote: '',
   ...NO_WIKI_OPEN,
 }

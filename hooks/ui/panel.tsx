@@ -1,7 +1,7 @@
 import type { RenderChildren } from 'claude-code'
 
 import type { GitSubTab, RepoSummary, SubTabs, TabId } from '../../types'
-import { DANGER, SUB_TABS, TABS, type Tint, hasSubTabs } from '../config'
+import { DANGER, SUB_TABS, TABS, type Tint, WORKTREE_MENU, hasSubTabs } from '../config'
 import { isConflict } from '../git/parse'
 import type { Actions, PanelData, Press, Ui } from './actions'
 import { diffView } from './diffView'
@@ -20,7 +20,7 @@ import { mrTab } from './tabs/mr'
 import { docsTab } from './tabs/docs'
 import { toolsTab } from './tabs/tools'
 import { usageBar } from './usage'
-import { type Widgets, makeWidgets } from './widgets'
+import { type Widgets, floatFieldWidth, makeWidgets } from './widgets'
 
 const GIT_SUB_TAB_BODIES: Record<GitSubTab, TabBody> = {
   diff: diffTab,
@@ -85,23 +85,25 @@ function repoBar(ctx: TabContext, rest: RenderChildren) {
 
 // 選中的 repo 有 worktree 時，repo bar 下面的「worktree:」選單：main 是 repo 本身，其他的是它的 worktree，
 // 記號跟 repo bar 一樣。選了 Git 分頁就看那個 worktree；面板不會自己換到 Claude 進去的 worktree。
-// 放在那排 repo 最後面；打開時選項從那排底下的分隔線開始往下浮。before 是前面那些 repo 按鈕佔幾欄。
+// 放在那排置中的 repo 最後面；打開時選項從那排底下的分隔線開始往下浮。before 是前面那些 repo 按鈕佔幾欄，
+// 用來算選單在置中那排的左緣；那排放不下一行（換行了）就讓卡片置中。
 function worktreeMenu({ w, d, a }: TabContext, before: number) {
   const v = d.view
   if (v.worktrees.length === 0) return { field: null, card: null }
+  const options = [
+    { value: '', label: marked('main', v.repos.find(r => r.name === v.repo)) },
+    ...v.worktrees.map(r => ({ value: r.root, label: marked(r.name, r) })),
+  ]
+  const rowWidth = before + floatFieldWidth('worktree', options.find(o => o.value === v.worktree)?.label ?? v.worktree)
 
-  return w.floatSelect('worktree', {
+  return w.floatSelect(WORKTREE_MENU, {
     label: 'worktree',
     value: v.worktree,
-    options: [
-      { value: '', label: marked('main', v.repos.find(r => r.name === v.repo)) },
-      ...v.worktrees.map(r => ({ value: r.root, label: marked(r.name, r) })),
-    ],
+    options,
     onSelect: root => a.selectWorktree(root),
-    isOpen: v.isWorktreeOpen,
-    onToggle: a.toggleWorktree,
+    onOpen: a.readWorktreeMenu,
     top: 0,
-    before,
+    left: rowWidth > d.bodyColumns ? undefined : Math.floor((d.bodyColumns - rowWidth) / 2) + before,
   })
 }
 
@@ -138,7 +140,7 @@ export function renderPanel(drawUi: Ui, d: PanelData, a: Actions, press: Press) 
   const isTerminal = d.surface === 'terminal'
   const bound = new Set<string>()
   const ui = recordHotkeys(drawUi, bound)
-  const w = makeWidgets(ui, isTerminal, d.bodyColumns, press, a.focusInput)
+  const w = makeWidgets(ui, isTerminal, d.bodyColumns, press, a.focusInput, { open: d.openMenu, toggle: a.toggleMenu })
   const { Box, Text } = w
   const ctx: TabContext = { w, d, a }
   const isGit = d.tab === 'git'

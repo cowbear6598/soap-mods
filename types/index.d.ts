@@ -61,8 +61,6 @@ export type GitView = {
   worktrees: RepoSummary[]
   /** Root of the worktree the Git tab shows instead of the picked repo, '' for the repo itself (main). */
   worktree: string
-  /** The worktree menu is open (the terminal draws its own select). */
-  isWorktreeOpen: boolean
 }
 
 /** One commit in the log tab. */
@@ -400,8 +398,6 @@ export type WikiView = {
   readError: string
   /** The model Summary Conversation asks, as picked in the tab (kept in the mod's store); '' before one is picked: the conversation's own. */
   model: WikiModel | ''
-  /** The terminal's model menu (drawn by the mod, not Select) is open. */
-  isModelOpen: boolean
   /** What the last Distill came to when it made no drafts (nothing to keep, an API error; said nothing when Claude has not replied yet); '' otherwise. */
   distillNote: string
 }
@@ -712,8 +708,6 @@ export type HttpDraft = ({ kind: 'request'; id: string } | { kind: 'new' }) & {
   /** The folder it goes in, '' for none; Save moves the file when it changed. */
   folder: string
   text: string
-  /** The Folder picker is open. */
-  isPickingFolder: boolean
   /** + New folder was picked: a field for the folder's name shows. */
   isNewFolder: boolean
 }
@@ -816,6 +810,8 @@ declare module 'claude-code' {
       diffPages: Record<string, DiffPage>
       /** The session's folder as it started, '' until read (homeOf). */
       home: string
+      /** The terminal's open drop-down menu (the worktree, the Wiki model, HTTP's Env and Folder), by its key; '' when none. */
+      openMenu: string
     }
   }
 }

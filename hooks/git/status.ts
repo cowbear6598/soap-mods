@@ -1,6 +1,7 @@
 // Git 分頁的狀態：找 repo 和它的 worktree、讀狀態、分支和其他 repo 的摘要，換 repo、換 worktree。
 
 import type { GitFile, GitView, RepoSummary, TabId } from '../../types'
+import { WORKTREE_MENU } from '../config'
 import { NO_COVER, coverData, showCover } from '../cover'
 import { EMPTY, EMPTY_LOG, NO_MESSAGES } from '../defaults'
 import { coalesce } from '../latest'
@@ -103,7 +104,7 @@ const parseActiveBranches = parseOnce(parseBranches)
 // 讀到一半又被叫（回合結束、按了按鈕、換了 repo）就讀完再補讀一次；有補讀排著時，這次讀到的可能是舊的，就不寫，交給補讀。
 const gitReads = coalesce()
 
-// worktree 選單正要打開：這次讀要連各 worktree 有沒有變更一起讀（toggleWorktree）。
+// worktree 選單正要打開：這次讀要連各 worktree 有沒有變更一起讀（readWorktreeMenu）。
 let isOpeningMenu = false
 
 export function refresh(io: GitIo): Promise<void> {
@@ -144,7 +145,7 @@ async function readShown(io: GitIo, r: Repo) {
 // worktree 的只在選單打開時（和正要打開時）讀：收著時只看得到選的那個；沒讀的沿用上次畫的。
 async function readOthers(io: GitIo, active: Repo) {
   const v = await io.getView()
-  const isFresh = v.isWorktreeOpen || isOpeningMenu
+  const isFresh = (await io.getOpenMenu()) === WORKTREE_MENU || isOpeningMenu
   const other = (c: Repo, read: () => Promise<RepoSummary> | RepoSummary) => (c.root === active.root ? undefined : read())
   const kept = (c: Repo) => v.worktrees.find(s => s.root === c.root) ?? toSummary(c, [])
 
@@ -238,12 +239,12 @@ async function readGit(io: GitIo) {
 }
 
 // 換 Git 分頁看的 repo：開著的差異／合併是上一個 repo 的檔案，回到分頁；合併正在寫檔時不換。
-// 換專案時 worktree 回到 main（專案本身）；選單先收掉，refresh 讀到新專案的 worktree 才再畫。
+// 換專案時 worktree 回到 main（專案本身）；refresh 讀到新專案的 worktree 才再畫選單（按 repo 時選單已經收了）。
 export async function selectRepo(io: GitIo, name: string) {
   const next = repos.list.find(c => c.name === name)
   if (next === undefined || next === projectOf(repos.current) || mergeBusy()) return
   repos.current = next
-  await leaveShown(io, { repo: name, worktree: '', worktrees: [], isWorktreeOpen: false })
+  await leaveShown(io, { repo: name, worktree: '', worktrees: [] })
   await refresh(io)
 }
 
@@ -257,16 +258,13 @@ export async function selectWorktree(io: GitIo, root: string) {
 }
 
 // 各 worktree 的 * 和 ! 只在選單打開時讀（見 readOthers）：打開前先讀完再打開，一打開就是最新的，不會先閃舊的。
-export async function toggleWorktree(io: GitIo, isOpen: boolean) {
-  if (isOpen) {
-    isOpeningMenu = true
-    try {
-      await refresh(io)
-    } finally {
-      isOpeningMenu = false
-    }
+export async function readWorktreeMenu(io: GitIo) {
+  isOpeningMenu = true
+  try {
+    await refresh(io)
+  } finally {
+    isOpeningMenu = false
   }
-  await io.setView({ isWorktreeOpen: isOpen })
 }
 
 // Git 分頁換看別的 repo（換專案、換 worktree、選的 worktree 被刪）：開著的差異／合併、讀到一半的 log 是上一個的，都放掉。

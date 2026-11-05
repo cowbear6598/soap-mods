@@ -463,9 +463,9 @@ test('requests are listed by file and ###; Run sends one with the picked environ
   // 有好幾個請求的檔案：檔名當標題，底下一列一個。
   expect(rows).toEqual(['http:req:api.http#0', 'http:req:api.http#1', 'http:req:api.http#2'])
   expect(await ui.find({ type: 'Text', text: 'api' })).toBeDefined()
-  // HTTP 底下一排 API | Environment；API 只寫目前的環境，選環境在 Environment。
+  // HTTP 底下一排 API | Environment；API 上的 Env 選單就能換環境。
   expect((await ui.findAll({ type: 'Button' })).map(b => String(b.key)).filter(k => /^http:page:\w+$/.test(k))).toEqual(['http:page:api', 'http:page:env'])
-  expect(await ui.find({ type: 'Text', text: 'Env: dev' })).toBeDefined()
+  expect((await ui.find({ key: 'http:env-pick' }))?.props).toMatchObject({ label: 'Env', value: 'dev', options: [{ value: 'dev' }, { value: 'prod' }] })
   expect(await ui.find({ key: 'http:env:dev' })).toBeUndefined()
 
   // Run 送出，打開回應頁：一行方法和代換好的 URL。
@@ -473,9 +473,8 @@ test('requests are listed by file and ###; Run sends one with the picked environ
   expect(await ui.find({ type: 'Text', text: 'http://localhost:3000/users/1' })).toBeDefined()
   expect(world.fetches.map(f => f.url)).toEqual(['http://localhost:3000/users/1'])
 
-  // 換 prod：回 API 點開的請求還在，URL 跟著換，選的環境記在 store（依 session 資料夾）。
-  await useEnv(ui, 'prod')
-  await page(ui, 'api')
+  // 在 API 的 Env 選單換 prod：點開的請求還在，URL 跟著換，選的環境記在 store（依 session 資料夾）。
+  await ui.select({ key: 'http:env-pick', value: 'prod' })
   expect(await ui.find({ type: 'Text', text: 'https://api.example.com/users/1' })).toBeDefined()
   expect(world.store[HTTP_ENV_KEY]).toEqual({ '/proj': 'prod' })
 
@@ -493,6 +492,30 @@ test('requests are listed by file and ###; Run sends one with the picked environ
   expect(await ui.find({ type: 'Text', text: 'x-request-id:' })).toBeUndefined()
   await ui.press({ key: 'http:headers' })
   expect(await ui.find({ type: 'Text', text: 'x-request-id:' })).toBeDefined()
+  await ui.unmount()
+})
+
+test("the terminal's Env menu on API floats the environments over the list, ticks the picked one, and picking another keeps API shown; pressing anything else closes it", async ($, on) => {
+  const world = httpWorld(on, { files: { 'api.http': API_HTTP, 'http-client.env.json': ENV } })
+  const ui = await mountPane($)
+  await openTool(ui, 'http')
+  expect(String((await ui.find({ key: 'http:env-pick' }))?.props.label)).toMatch(/dev +▾/)
+  expect(await ui.find({ key: 'http:env-pick:prod' })).toBeUndefined()
+  await ui.press({ key: 'http:env-pick' })
+  // 選項浮在下面，不推動底下的搜尋框和清單。
+  expect((await ui.find({ key: 'http:env-pick:card' }))?.props.position).toBe('absolute')
+  expect(String((await ui.find({ key: 'http:env-pick:dev' }))?.props.label)).toMatch(/✓/)
+  await ui.press({ key: 'http:env-pick:prod' })
+  expect(String((await ui.find({ key: 'http:env-pick' }))?.props.label)).toMatch(/prod +▾/)
+  expect(await ui.find({ key: 'http:env-pick:dev' })).toBeUndefined()
+  expect(await ui.find({ key: 'http:req:api.http#0' })).toBeDefined()
+  expect(world.store[HTTP_ENV_KEY]).toEqual({ '/proj': 'prod' })
+
+  // 開著時按了別的（Run 一個請求）就收起來。
+  await ui.press({ key: 'http:env-pick' })
+  await ui.press({ key: 'http:run:api.http#0' })
+  expect(await ui.find({ key: 'http:send' })).toBeDefined()
+  expect(await ui.find({ key: 'http:env-pick:card' })).toBeUndefined()
   await ui.unmount()
 })
 

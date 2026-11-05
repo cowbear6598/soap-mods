@@ -50,8 +50,6 @@ function wikiList(ctx: TabContext) {
             const model = wikiModelOf(value)
             if (model !== '') void a.selectWikiModel(model)
           },
-          isOpen: s.isModelOpen,
-          onToggle: a.toggleWikiModel,
         })}
       </Box>
       {s.distillNote !== '' && <Text dimColor>{s.distillNote}</Text>}

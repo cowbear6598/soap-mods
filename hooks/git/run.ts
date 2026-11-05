@@ -22,6 +22,8 @@ export type GitIo = Io & {
   getCover: () => Promise<Cover>
   updateCover: (fn: (c: Cover) => Cover) => Promise<unknown>
   getSubTabs: () => Promise<SubTabs>
+  // 開著的下拉選單（openMenu），'' 是沒有。
+  getOpenMenu: () => Promise<string>
   copy: EngineInterface['ui']['copy']
   // 關掉差異、合併、檔案內容，回到分頁（register.tsx 的 closeCover）。
   closeCover: () => Promise<void>

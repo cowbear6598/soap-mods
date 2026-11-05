@@ -55,7 +55,10 @@ export type Actions = {
   selectSubTab: <T extends keyof SubTabs>(tab: T, id: SubTabs[T]) => unknown
   selectRepo: (name: string) => unknown
   selectWorktree: (root: string) => unknown
-  toggleWorktree: (isOpen: boolean) => unknown
+  // worktree 選單打開前：連各 worktree 有沒有變更一起讀。
+  readWorktreeMenu: () => unknown
+  // 終端機的下拉選單打開（false 收起）；key 是選單的 key，一次只開一個。
+  toggleMenu: (key: string, isOpen: boolean) => unknown
   // diff
   openDiff: (path: string) => unknown
   openMerge: (path: string) => unknown
@@ -134,8 +137,6 @@ export type Actions = {
   sendWikiPages: () => unknown
   // Summary Conversation 問哪個模型。
   selectWikiModel: (model: WikiModel) => unknown
-  // 終端機的模型選單打開、收起。
-  toggleWikiModel: (isOpen: boolean) => unknown
   // services
   runServiceAction: (s: Service, action: ServiceAction) => unknown
   // 關掉停止／重跑失敗的提示（定時掃描不會洗掉它）。
@@ -177,7 +178,6 @@ export type Actions = {
   // Folder 選單選了一個資料夾（'' 不放），或 NEW_FOLDER 打開新資料夾名稱的框；foldHttpFolder 收起（false 展開）列表上的資料夾。
   pickHttpFolder: (folder: string) => unknown
   foldHttpFolder: (folder: string, isFolded: boolean) => unknown
-  openHttpFolderPicker: (isOpen: boolean) => unknown
   // openHttpDir 在 Finder／檔案總管打開 .soap/http（沒有就建立）。
   searchHttp: (text: string) => unknown
   openHttpDir: () => unknown
@@ -191,6 +191,8 @@ export type Actions = {
   deleteHttpEnv: (env: string) => unknown
   // 點環境：選它（Run 用它）並打開它的變數；closeHttpEnv 回環境清單。
   openHttpEnv: (env: string) => unknown
+  // API 的 Env 選單：選環境給 Run 用，留在 API。
+  pickHttpEnv: (env: string) => unknown
   closeHttpEnv: () => unknown
   newHttpVar: () => unknown
   editHttpVar: (name: string) => unknown
@@ -305,4 +307,6 @@ export type PanelData = {
   isMergeBusy: boolean
   usage: readonly UsageReading[]
   now: number
+  // 終端機開著的下拉選單的 key，'' 是沒有。
+  openMenu: string
 }

@@ -158,7 +158,7 @@ const NEW_TEXT = 'GET https://example.com'
 
 // 一個請求一個檔，名稱就是檔名，存的時候建立。
 export async function newHttpRequest(io: HttpIo) {
-  const draft: HttpDraft = { kind: 'new', file: '', folder: '', text: NEW_TEXT, isPickingFolder: false, isNewFolder: false }
+  const draft: HttpDraft = { kind: 'new', file: '', folder: '', text: NEW_TEXT, isNewFolder: false }
   await io.setHttp({ ...NO_REQUEST, draft })
   await io.scrollTop()
 }
@@ -169,7 +169,7 @@ export async function editHttpRequest(io: HttpIo) {
   const r = v.requests.find(x => x.id === v.open)
   if (r === undefined) return
   const { name, dir } = splitPath(r.file)
-  const draft: HttpDraft = { kind: 'request', id: r.id, file: name, folder: dir, text: r.raw, isPickingFolder: false, isNewFolder: false }
+  const draft: HttpDraft = { kind: 'request', id: r.id, file: name, folder: dir, text: r.raw, isNewFolder: false }
   await io.setHttp({ draft, draftError: '' })
 }
 
@@ -204,10 +204,6 @@ export async function openHttpDir(io: HttpIo) {
   } catch (err) {
     await io.setHttp({ error: `Couldn't open ./${HTTP_DIR}: ${errorText(err)}` })
   }
-}
-
-export async function openHttpFolderPicker(io: HttpIo, isOpen: boolean) {
-  await changeDraft(io, { isPickingFolder: isOpen })
 }
 
 // 一段請求要從 ### 開始（不然會接到上一段）；使用者刪了 ### 那行就補一行沒有名字的。
@@ -383,8 +379,10 @@ export async function deleteHttpRequest(io: HttpIo) {
   }
 }
 
-// 記在 $.store（依 session 資料夾），重讀環境的變數和這個環境存了哪些機密。上一個環境的回應不算數了。
-async function selectHttpEnv(io: HttpIo, env: string) {
+// 選環境給 Run 用（API 的 Env 選單、Environment 點開一個）：記在 $.store（依 session 資料夾），重讀環境的變數和這個環境存了哪些機密，
+// 上一個環境的回應不算數了。已經在用的不重選，回應留著。
+export async function pickHttpEnv(io: HttpIo, env: string) {
+  if ((await io.getHttp()).env === env) return
   await saveEnv(io, await io.root(), env)
   await io.setHttp({ result: null, sendError: '', editing: '', secretError: '', ...NO_ENV_FORM })
   await reloadHttp(io)
@@ -641,10 +639,8 @@ export async function deleteHttpEnv(io: HttpIo, env: string) {
 
 /** Opens an environment to its variables (Environment's second level); opening one picks it for Run. */
 export async function openHttpEnv(io: HttpIo, env: string) {
-  // 已經在用的：不重選（API 那邊的回應留著）。
-  if ((await io.getHttp()).env === env) await io.setHttp(NO_ENV_FORM)
-  else await selectHttpEnv(io, env)
-  await io.setHttp({ page: 'env', isEnvOpen: true })
+  await pickHttpEnv(io, env)
+  await io.setHttp({ ...NO_ENV_FORM, page: 'env', isEnvOpen: true })
   await io.scrollTop()
 }
 
